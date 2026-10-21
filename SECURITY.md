@@ -1,5 +1,7 @@
 # Reporting a security issue
 
+Security maintainer: [@vaibhavmaloo03](https://github.com/vaibhavmaloo03), designated by Origami. This account owns report triage and launch-time notification verification. Do not post vulnerability details on the maintainer’s public profile or in public issues.
+
 After public launch, use [Report a vulnerability](https://github.com/Origami-Computing/origami-firmware-public/security/advisories/new) to submit a private report to repository administrators. Do not put vulnerability details, credentials or device dumps in public issues.
 
 **Private staging status:** GitHub private vulnerability reporting is available for public repositories. Activation was attempted while this repository remained private and GitHub returned 404. The form above is a launch-time route, not a claim that reporting is enabled now. During private review, use your existing private maintainer channel.
