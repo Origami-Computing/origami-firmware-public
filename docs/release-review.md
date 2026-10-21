@@ -14,7 +14,7 @@ The repository remains private and the firmware release remains a draft. Actions
 ## Concrete remaining items
 
 1. Finish the nested vendor SDK license/notice classification before treating the original production binary as fully cleared. Package identity is now verified: all 3,407 compared framework/SDK files match the checksum-verified registry package named in the production logs. The source companion addresses the identified LGPL libraries; this is not an exhaustive legal clearance.
-2. Qualify installation, settings preservation and recovery on an identified test device. A connected USB serial device was observed but not opened: the firmware guide warns that opening it can reset the board, and its role/baseline has not been established.
+2. Finish final physical confirmation after the successful USB recovery round trip documented in [installation](installation.md). Normal operation was confirmed by the user before recovery; restoration and reinstallation passed boot, SD mount, flash hash and live NVS-entry comparison checks. Network OTA rollback was not tested.
 3. At public launch, enable GitHub private vulnerability reporting and verify a maintainer's notifications. GitHub rejected activation while private; notification access also requires an unavailable token scope.
 4. Configure required release reviewers when supported. GitHub rejected the rule on the current private-repository billing plan (422). A review environment exists without protection rules; it must not be treated as an approval barrier. The publication approval flag remains false; the manual workflow creates drafts only.
 
