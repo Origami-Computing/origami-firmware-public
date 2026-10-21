@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -8 52 58" role="img" aria-labelledby="title">
+  <title id="title">Origami Computing</title>
+  <!-- Origami-Computing/kami2: origami_landing/app/OrigamiStackIcon.tsx -->
+  <g transform="translate(0 18)">
+    <path d="M2 12 26 0 50 12 26 24Z" fill="#7097ff" />
+    <path d="M2 12 26 24 26 28 2 16Z" fill="#4e74d4" />
+    <path d="M26 24 50 12 50 16 26 28Z" fill="#5f84eb" />
+  </g>
+  <g transform="translate(0 12)">
+    <path d="M2 12 26 0 50 12 26 24Z" fill="#38c568" />
+    <path d="M2 12 26 24 26 28 2 16Z" fill="#219a4b" />
+    <path d="M26 24 50 12 50 16 26 28Z" fill="#2eaf59" />
+  </g>
+  <g transform="translate(0 6)">
+    <path d="M2 12 26 0 50 12 26 24Z" fill="#ffd33d" />
+    <path d="M2 12 26 24 26 28 2 16Z" fill="#dcae24" />
+    <path d="M26 24 50 12 50 16 26 28Z" fill="#efbf25" />
+  </g>
+  <g transform="translate(0 0)">
+    <path d="M2 12 26 0 50 12 26 24Z" fill="#ff261d" />
+    <path d="M2 12 26 24 26 28 2 16Z" fill="#d51914" />
+    <path d="M26 24 50 12 50 16 26 28Z" fill="#ed2119" />
+  </g>
+</svg>

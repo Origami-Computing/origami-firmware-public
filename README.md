@@ -1,4 +1,8 @@
-# Origami Firmware
+<p align="center">
+  <img src="docs/assets/origami-computing.svg" alt="Origami Computing" width="88" height="98">
+</p>
+<h1 align="center">Origami Firmware</h1>
+<p align="center"><strong>Origami Computing</strong></p>
 
 Firmware for Origami’s ESP32-S3 handheld: a display, camera, audio, motion sensing, and Lua widgets in one device.
 
