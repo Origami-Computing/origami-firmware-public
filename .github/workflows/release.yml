@@ -1,0 +1,79 @@
+name: Build firmware draft release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'New review tag, e.g. v0.1.213-public-review.2'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: public-firmware-review
+  cancel-in-progress: false
+jobs:
+  draft:
+    if: github.ref == 'refs/heads/main'
+    environment: release-review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      REVIEW_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Check source and review tag
+        run: |
+          python3 - <<'PY'
+          import os, re
+          if not re.fullmatch(r'v\d+\.\d+\.\d+-public-review\.\d+', os.environ['REVIEW_TAG']):
+              raise SystemExit('Use a versioned public-review tag')
+          PY
+          python3 tools/check_release_approval.py --digest > /tmp/source-digest.txt
+          python3 tools/check_tracked_secrets.py
+          python3 tools/check_architecture_dependencies.py
+          python3 tools/test_architecture_dependencies.py
+      - name: Build custom production-policy candidate
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pio-venv"
+          "$RUNNER_TEMP/pio-venv/bin/pip" install platformio==6.2.0
+          "$RUNNER_TEMP/pio-venv/bin/pio" run -e esp32-s3-menu-n16r8-production
+      - name: Collect application only
+        run: |
+          mkdir dist
+          cp .pio/build/esp32-s3-menu-n16r8-production/firmware.bin dist/firmware.bin
+          python3 - <<'PY'
+          import hashlib, os, pathlib
+          p = pathlib.Path('dist/firmware.bin')
+          pathlib.Path('dist/SHA256SUMS.txt').write_text(hashlib.sha256(p.read_bytes()).hexdigest() + '  firmware.bin\n')
+          pathlib.Path('dist/REVIEW.txt').write_text('Custom production-policy build from ' + os.environ['GITHUB_SHA'] + '\nTracked source digest: ' + pathlib.Path('/tmp/source-digest.txt').read_text().strip() + '\nNot signed official OTA firmware. Binary, notices and hardware review required before publication.\n')
+          PY
+          cp LICENSE THIRD_PARTY_NOTICES.md dist/
+      - name: Package source and full retained notices for review
+        run: |
+          python3 tools/package_source_review.py \
+            --environment esp32-s3-menu-n16r8-production \
+            --framework "$HOME/.platformio/packages/framework-arduinoespressif32" \
+            --output dist/source-review.tar.gz
+          python3 - <<'PYCODE'
+          import hashlib, pathlib
+          root = pathlib.Path('.')
+          notices = [root/'LICENSE', root/'THIRD_PARTY_NOTICES.md']
+          notices += sorted(p for p in (root/'third_party/licenses').rglob('*') if p.is_file())
+          notices += sorted(p for p in (root/'lib').rglob('*') if p.is_file() and (p.name.lower().startswith(('license', 'copying', 'notice')) or p.name == 'COPYRIGHT'))
+          pathlib.Path('dist/NOTICES-REVIEW.txt').write_text('PRELIMINARY: SDK closure remains required.\n\n' + '\n\n'.join(str(p) + '\n' + p.read_text() for p in notices))
+          paths = sorted(p for p in pathlib.Path('dist').iterdir() if p.is_file() and p.name != 'SHA256SUMS.txt')
+          pathlib.Path('dist/SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in paths))
+          PYCODE
+      - name: Create draft release only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$REVIEW_TAG" \
+            --target "$GITHUB_SHA" --draft --latest=false \
+            --title "Firmware review $REVIEW_TAG" \
+            --notes-file dist/REVIEW.txt \
+            dist/firmware.bin dist/SHA256SUMS.txt dist/REVIEW.txt dist/LICENSE dist/THIRD_PARTY_NOTICES.md dist/source-review.tar.gz dist/NOTICES-REVIEW.txt

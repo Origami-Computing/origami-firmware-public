@@ -1,0 +1,9 @@
+{
+  "name": "qrcodegen",
+  "version": "0.0.0",
+  "description": "QR code generator (C)",
+  "keywords": "qr,barcode",
+  "license": "MIT",
+  "frameworks": "*",
+  "platforms": "*"
+}

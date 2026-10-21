@@ -1,0 +1,9 @@
+{
+  "name": "minimp3",
+  "version": "0.0.0",
+  "description": "Single-header MP3 decoder",
+  "keywords": "mp3,decoder,audio",
+  "license": "CC0-1.0",
+  "frameworks": "*",
+  "platforms": "*"
+}

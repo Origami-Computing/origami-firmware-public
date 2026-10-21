@@ -1,0 +1,11 @@
+# Dual-OTA partition table for 4 MB flash.
+# Replaces huge_app.csv (single ota_0 slot) to enable OTA firmware updates.
+# Two equal app slots (~1.94 MB each) with no spiffs/coredump (SD card is used for all files).
+# WARNING: Flashing this for the first time erases NVS — re-provision WiFi credentials after.
+#
+# Name,   Type, SubType, Offset,   Size,
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+ota_0,    app,  ota_0,   0x10000,  0x1F0000,
+ota_1,    app,  ota_1,   0x200000, 0x1F0000,
+coredump, data, coredump,0x3F0000, 0x10000,

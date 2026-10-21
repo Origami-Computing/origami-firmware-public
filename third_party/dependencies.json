@@ -1,0 +1,92 @@
+[
+  {
+    "name": "Adafruit BusIO",
+    "version": "1.17.4",
+    "declared_license": "review retained notice",
+    "notices": [
+      "third_party/licenses/Adafruit BusIO/LICENSE"
+    ]
+  },
+  {
+    "name": "Adafruit TLV320 I2S",
+    "version": "1.0.0",
+    "declared_license": "review retained notice",
+    "notices": [
+      "third_party/licenses/Adafruit TLV320 I2S/LICENSE.txt"
+    ]
+  },
+  {
+    "name": "ArduinoJson",
+    "version": "7.4.3",
+    "declared_license": "review retained notice",
+    "notices": [
+      "third_party/licenses/ArduinoJson/LICENSE.txt"
+    ]
+  },
+  {
+    "name": "JPEGDEC",
+    "version": "1.2.7",
+    "declared_license": "Apache License 2.0",
+    "notices": [
+      "third_party/licenses/JPEGDEC/LICENSE"
+    ]
+  },
+  {
+    "name": "JPEGDecoder",
+    "version": "2.0.0",
+    "declared_license": "review retained notice",
+    "notices": [
+      "third_party/licenses/JPEGDecoder/license.txt"
+    ]
+  },
+  {
+    "name": "NimBLE-Arduino",
+    "version": "2.5.1",
+    "declared_license": "review retained notice",
+    "notices": [
+      "third_party/licenses/NimBLE-Arduino/LICENSE",
+      "third_party/licenses/NimBLE-Arduino/NOTICE"
+    ]
+  },
+  {
+    "name": "QRCode",
+    "version": "0.0.1",
+    "declared_license": "review retained notice",
+    "notices": [
+      "third_party/licenses/QRCode/LICENSE.txt"
+    ]
+  },
+  {
+    "name": "STM32duino LSM6DSL",
+    "version": "2.0.0",
+    "declared_license": "BSD-3-Clause (source header)",
+    "notices": [
+      "third_party/licenses/STM32duino LSM6DSL/NOTICE.txt"
+    ]
+  },
+  {
+    "name": "WebSockets",
+    "version": "2.7.3",
+    "declared_license": "LGPL-2.1-or-later (source header)",
+    "notices": [
+      "third_party/licenses/WebSockets/LICENSE"
+    ]
+  },
+  {
+    "name": "esp32-camera",
+    "version": "2.0.4",
+    "declared_license": "review retained notice",
+    "notices": [
+      "third_party/licenses/esp32-camera/LICENSE"
+    ]
+  },
+  {
+    "name": "Arduino-ESP32 framework",
+    "version": "3.20017.241212+sha.dcc1105b",
+    "declared_license": "LGPL-2.1-or-later; per-file exceptions",
+    "notices": [
+      "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "third_party/licenses/Arduino-ESP32/NOTICE.txt"
+    ]
+  }
+]

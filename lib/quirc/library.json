@@ -1,0 +1,10 @@
+{
+  "name": "quirc",
+  "version": "1.2",
+  "description": "QR code decoder (dlbeer/quirc)",
+  "license": "ISC",
+  "build": {
+    "srcDir": ".",
+    "includeDir": "."
+  }
+}

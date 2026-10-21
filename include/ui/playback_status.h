@@ -1,0 +1,17 @@
+#pragma once
+#include "ui/scene.h"
+#include "config/ui_theme.h"
+
+namespace ui {
+// The same transport shapes as Music: pause bars while running, play on pause.
+inline void playbackControl(scene::Scene& s, int width, int y, bool paused) {
+  static const uint8_t play[] = {0x20,0,0x30,0,0x38,0,0x3c,0,0x3e,0,0x3f,0,0x3f,0x80,0x3f,0xc0,
+                                0x3f,0xc0,0x3f,0x80,0x3f,0,0x3e,0,0x3c,0,0x38,0,0x30,0,0x20,0};
+  static const uint8_t pause[] = {0,0,0x39,0xc0,0x39,0xc0,0x39,0xc0,0x39,0xc0,0x39,0xc0,0x39,0xc0,0x39,0xc0,
+                                 0x39,0xc0,0x39,0xc0,0x39,0xc0,0x39,0xc0,0x39,0xc0,0x39,0xc0,0x39,0xc0,0,0};
+  const int x = width/2-110;
+  s.addBitmap("playback.icon",{(int16_t)x,(int16_t)y,28,28},paused?play:pause,16,16,kUiFg,kUiBg,3,1);
+  s.addLabel("playback.state",{(int16_t)(x+34),(int16_t)y,186,28},
+      paused?"Paused C:Resume":"C: Pause",kUiFg,kUiBg,2,scene::TextAlign::MiddleCenter,3);
+}
+}

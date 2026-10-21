@@ -1,0 +1,392 @@
+{
+  "descriptor_idf_commit": "38eeba213aa695aabfd6d89aa9f5078dbe5a94c3",
+  "descriptor_reports_dirty": true,
+  "source_archive_sha256": "fd95bb0533c180a842311e70ba9b49d17e61ff5afdf4c9528fe78971243a6f18",
+  "retained_idf_notices": [
+    "third_party/licenses/ESP-IDF/LICENSE",
+    "third_party/licenses/ESP-IDF/components/console/argtable3/LICENSE",
+    "third_party/licenses/ESP-IDF/components/console/linenoise/LICENSE",
+    "third_party/licenses/ESP-IDF/components/esptool_py/LICENSE",
+    "third_party/licenses/ESP-IDF/components/freemodbus/LICENSE",
+    "third_party/licenses/ESP-IDF/components/freertos/LICENSE.md",
+    "third_party/licenses/ESP-IDF/components/newlib/COPYING.NEWLIB",
+    "third_party/licenses/ESP-IDF/components/nghttp/COPYING",
+    "third_party/licenses/ESP-IDF/components/nghttp/LICENSE",
+    "third_party/licenses/ESP-IDF/components/wpa_supplicant/COPYING"
+  ],
+  "submodule_refs_from_upstream_idf": [
+    {
+      "path": "components/asio/asio",
+      "sha": "f31694c9f1746ba189a4bcae2e34db15135ddb22"
+    },
+    {
+      "path": "components/bootloader/subproject/components/micro-ecc/micro-ecc",
+      "sha": "24c60e243580c7868f4334a1ba3123481fe1aa48"
+    },
+    {
+      "path": "components/bt/controller/lib_esp32",
+      "sha": "e43c9b121f7fac89b73c56077ede5901f64643cd"
+    },
+    {
+      "path": "components/bt/controller/lib_esp32c3_family",
+      "sha": "e5c0f7256ecf5b5f8eb28c1793051a6b88f95124"
+    },
+    {
+      "path": "components/bt/host/nimble/nimble",
+      "sha": "49d60705f6e085e670b6d425387e75054bf5dffe"
+    },
+    {
+      "path": "components/cbor/tinycbor",
+      "sha": "7c349dbb6b8d76db39383b226d3ebdf59b8ab37d"
+    },
+    {
+      "path": "components/cmock/CMock",
+      "sha": "eeecc49ce8af123cf8ad40efdb9673e37b56230f"
+    },
+    {
+      "path": "components/coap/libcoap",
+      "sha": "3aa11612c143c9734d72022720f33e12506f7a2c"
+    },
+    {
+      "path": "components/esp_phy/lib",
+      "sha": "dcfdccf6cc2fc02d0886624b7998c890d1a19b28"
+    },
+    {
+      "path": "components/esp_wifi/lib",
+      "sha": "f2aae4d44ec7908013066e69d29b9948846c335c"
+    },
+    {
+      "path": "components/esptool_py/esptool",
+      "sha": "7b17ea072fbac0f92fc417ddbe34e28afbd8ced0"
+    },
+    {
+      "path": "components/expat/expat",
+      "sha": "454c6105bc2d0ea2521b8f8f7a5161c2abd8c386"
+    },
+    {
+      "path": "components/ieee802154/lib",
+      "sha": "f7b5e8059a3bb6f321e79ac3bf2aa4d2a9b93326"
+    },
+    {
+      "path": "components/json/cJSON",
+      "sha": "87d8f0961a01bf09bef98ff89bae9fdec42181ee"
+    },
+    {
+      "path": "components/libsodium/libsodium",
+      "sha": "4f5e89fa84ce1d178a6765b8b46f2b6f91216677"
+    },
+    {
+      "path": "components/lwip/lwip",
+      "sha": "a45be9e438f6cf9c54ec150581819c3b95d5af6b"
+    },
+    {
+      "path": "components/mbedtls/mbedtls",
+      "sha": "2b8e772fc1cb0732cda3bae7d1e9d6f4cfaf63d9"
+    },
+    {
+      "path": "components/mqtt/esp-mqtt",
+      "sha": "bb9c8af9d552b608dd3aabf9617bde757a538ebe"
+    },
+    {
+      "path": "components/nghttp/nghttp2",
+      "sha": "e2bc59bec9004bca47df961cbbad20664d7e53b2"
+    },
+    {
+      "path": "components/openthread/lib",
+      "sha": "9a8d34d8f698cad2c9468468b473e26a3dda51b9"
+    },
+    {
+      "path": "components/openthread/openthread",
+      "sha": "c36c0e77a2465355bcf13bd7dc718d8c9aa6ff64"
+    },
+    {
+      "path": "components/protobuf-c/protobuf-c",
+      "sha": "abc67a11c6db271bedbb9f58be85d6f4e2ea8389"
+    },
+    {
+      "path": "components/spiffs/spiffs",
+      "sha": "0dbb3f71c5f6fae3747a9d935372773762baf852"
+    },
+    {
+      "path": "components/tinyusb/tinyusb",
+      "sha": "c4badd394eda18199c0196ed0be1e2d635f0a5f6"
+    },
+    {
+      "path": "components/unity/unity",
+      "sha": "7d2bf62b7e6afaf38153041a9d53c21aeeca9a25"
+    },
+    {
+      "path": "examples/build_system/cmake/import_lib/main/lib/tinyxml2",
+      "sha": "7e8e249990ec491ec15990cf95b6d871a66cf64a"
+    },
+    {
+      "path": "examples/peripherals/secure_element/atecc608_ecdsa/components/esp-cryptoauthlib",
+      "sha": "36d0642e66ff5b1c7a291873f24c498ca6ffedef"
+    }
+  ],
+  "limitations": [
+    "The pinned registry package matches all 3407 compared installed source/SDK files. Seven differences against the upstream Git commit are package-level changes, not unexplained local edits.",
+    "Root/component notices are retained; nested per-file/submodule exceptions are not exhaustively classified.",
+    "Original ELF/link map is not retained in Actions; no byte-identical rebuild claim is made."
+  ],
+  "submodule_license_inventory": [
+    {
+      "path": "components/asio/asio",
+      "sha": "f31694c9f1746ba189a4bcae2e34db15135ddb22",
+      "repository": "espressif/asio",
+      "notices": [],
+      "status": "No root notice found; component header/nested license review required",
+      "scope_note": "Not referenced by the selected firmware sources; header-only dependency not established as used."
+    },
+    {
+      "path": "components/bootloader/subproject/components/micro-ecc/micro-ecc",
+      "sha": "24c60e243580c7868f4334a1ba3123481fe1aa48",
+      "repository": "kmackay/micro-ecc",
+      "notices": [
+        "third_party/licenses/SDK-submodules/kmackay/micro-ecc/LICENSE.txt"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/bt/controller/lib_esp32",
+      "sha": "e43c9b121f7fac89b73c56077ede5901f64643cd",
+      "repository": "espressif/esp32-bt-lib",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/esp32-bt-lib/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/bt/controller/lib_esp32c3_family",
+      "sha": "e5c0f7256ecf5b5f8eb28c1793051a6b88f95124",
+      "repository": "espressif/esp32c3-bt-lib",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/esp32c3-bt-lib/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/bt/host/nimble/nimble",
+      "sha": "49d60705f6e085e670b6d425387e75054bf5dffe",
+      "repository": "espressif/esp-nimble",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/esp-nimble/LICENSE",
+        "third_party/licenses/SDK-submodules/espressif/esp-nimble/NOTICE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/cbor/tinycbor",
+      "sha": "7c349dbb6b8d76db39383b226d3ebdf59b8ab37d",
+      "repository": "intel/tinycbor",
+      "notices": [
+        "third_party/licenses/SDK-submodules/intel/tinycbor/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/cmock/CMock",
+      "sha": "eeecc49ce8af123cf8ad40efdb9673e37b56230f",
+      "repository": "ThrowTheSwitch/CMock",
+      "notices": [
+        "third_party/licenses/SDK-submodules/ThrowTheSwitch/CMock/LICENSE.txt"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/coap/libcoap",
+      "sha": "3aa11612c143c9734d72022720f33e12506f7a2c",
+      "repository": "obgm/libcoap",
+      "notices": [
+        "third_party/licenses/SDK-submodules/obgm/libcoap/COPYING",
+        "third_party/licenses/SDK-submodules/obgm/libcoap/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/esp_phy/lib",
+      "sha": "dcfdccf6cc2fc02d0886624b7998c890d1a19b28",
+      "repository": "espressif/esp-phy-lib",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/esp-phy-lib/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/esp_wifi/lib",
+      "sha": "f2aae4d44ec7908013066e69d29b9948846c335c",
+      "repository": "espressif/esp32-wifi-lib",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/esp32-wifi-lib/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/esptool_py/esptool",
+      "sha": "7b17ea072fbac0f92fc417ddbe34e28afbd8ced0",
+      "repository": "espressif/esptool",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/esptool/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/expat/expat",
+      "sha": "454c6105bc2d0ea2521b8f8f7a5161c2abd8c386",
+      "repository": "libexpat/libexpat",
+      "notices": [
+        "third_party/licenses/SDK-submodules/libexpat/libexpat/COPYING"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/ieee802154/lib",
+      "sha": "f7b5e8059a3bb6f321e79ac3bf2aa4d2a9b93326",
+      "repository": "espressif/esp-ieee802154-lib",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/esp-ieee802154-lib/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/json/cJSON",
+      "sha": "87d8f0961a01bf09bef98ff89bae9fdec42181ee",
+      "repository": "DaveGamble/cJSON",
+      "notices": [
+        "third_party/licenses/SDK-submodules/DaveGamble/cJSON/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/libsodium/libsodium",
+      "sha": "4f5e89fa84ce1d178a6765b8b46f2b6f91216677",
+      "repository": "jedisct1/libsodium",
+      "notices": [
+        "third_party/licenses/SDK-submodules/jedisct1/libsodium/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/lwip/lwip",
+      "sha": "a45be9e438f6cf9c54ec150581819c3b95d5af6b",
+      "repository": "espressif/esp-lwip",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/esp-lwip/COPYING"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/mbedtls/mbedtls",
+      "sha": "2b8e772fc1cb0732cda3bae7d1e9d6f4cfaf63d9",
+      "repository": "espressif/mbedtls",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/mbedtls/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/mqtt/esp-mqtt",
+      "sha": "bb9c8af9d552b608dd3aabf9617bde757a538ebe",
+      "repository": "espressif/esp-mqtt",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/esp-mqtt/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/nghttp/nghttp2",
+      "sha": "e2bc59bec9004bca47df961cbbad20664d7e53b2",
+      "repository": "nghttp2/nghttp2",
+      "notices": [
+        "third_party/licenses/SDK-submodules/nghttp2/nghttp2/COPYING",
+        "third_party/licenses/SDK-submodules/nghttp2/nghttp2/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/openthread/lib",
+      "sha": "9a8d34d8f698cad2c9468468b473e26a3dda51b9",
+      "repository": "espressif/esp-thread-lib",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/esp-thread-lib/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/openthread/openthread",
+      "sha": "c36c0e77a2465355bcf13bd7dc718d8c9aa6ff64",
+      "repository": "espressif/openthread",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/openthread/LICENSE",
+        "third_party/licenses/SDK-submodules/espressif/openthread/NOTICE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/protobuf-c/protobuf-c",
+      "sha": "abc67a11c6db271bedbb9f58be85d6f4e2ea8389",
+      "repository": "protobuf-c/protobuf-c",
+      "notices": [
+        "third_party/licenses/SDK-submodules/protobuf-c/protobuf-c/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/spiffs/spiffs",
+      "sha": "0dbb3f71c5f6fae3747a9d935372773762baf852",
+      "repository": "pellepl/spiffs",
+      "notices": [
+        "third_party/licenses/SDK-submodules/pellepl/spiffs/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/tinyusb/tinyusb",
+      "sha": "c4badd394eda18199c0196ed0be1e2d635f0a5f6",
+      "repository": "espressif/tinyusb",
+      "notices": [
+        "third_party/licenses/SDK-submodules/espressif/tinyusb/LICENSE"
+      ],
+      "status": "Root notice retained; per-file/nested exceptions not exhaustively classified"
+    },
+    {
+      "path": "components/unity/unity",
+      "sha": "7d2bf62b7e6afaf38153041a9d53c21aeeca9a25",
+      "repository": "ThrowTheSwitch/Unity",
+      "notices": [],
+      "status": "No root notice found; component header/nested license review required",
+      "scope_note": "Test framework; production target does not build device tests."
+    },
+    {
+      "path": "examples/build_system/cmake/import_lib/main/lib/tinyxml2",
+      "sha": "7e8e249990ec491ec15990cf95b6d871a66cf64a",
+      "repository": "leethomason/tinyxml2",
+      "notices": [],
+      "status": "No root notice found; component header/nested license review required",
+      "scope_note": "ESP-IDF example component; not part of the production target."
+    },
+    {
+      "path": "examples/peripherals/secure_element/atecc608_ecdsa/components/esp-cryptoauthlib",
+      "sha": "36d0642e66ff5b1c7a291873f24c498ca6ffedef",
+      "repository": "espressif/esp-cryptoauthlib",
+      "notices": [],
+      "status": "No root notice found; component header/nested license review required",
+      "scope_note": "ESP-IDF secure-element example component; not part of the production target."
+    }
+  ],
+  "registry_package_verification": {
+    "package_version": "3.20017.241212+sha.dcc1105b",
+    "package_sha256": "7dbcfb86f9dfd5ecf6c881ed8226239d9ef63f27e1e1a2ddd87a87762e2ffbc9",
+    "download_url": "https://dl.registry.platformio.org/download/platformio/tool/framework-arduinoespressif32/3.20017.241212+sha.dcc1105b/framework-arduinoespressif32-3.20017.241212+sha.dcc1105b.tar.gz",
+    "compared_files": 3407,
+    "mismatches": []
+  },
+  "production_build_package_evidence": [
+    "toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5",
+    "toolchain-xtensa-esp32s3@8.4.0+2021r2-patch5 has been installed!",
+    "framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b",
+    "framework-arduinoespressif32@3.20017.241212+sha.dcc1105b has been installed!",
+    "framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b ",
+    "toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5"
+  ]
+}

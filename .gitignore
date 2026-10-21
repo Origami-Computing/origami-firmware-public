@@ -1,0 +1,13 @@
+/.pio
+/.pio_home/
+/build/
+/dist/
+/release-input/
+.env
+.env.*
+*.key
+*-private.pem
+include/config/secrets.h
+__pycache__/
+*.py[cod]
+.DS_Store

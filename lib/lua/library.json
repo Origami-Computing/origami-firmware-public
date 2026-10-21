@@ -1,0 +1,11 @@
+{
+  "name": "lua",
+  "version": "5.4.7",
+  "description": "Lua 5.4.7 interpreter core + safe stdlib (base/string/math/table/utf8/coroutine). io/os/package/debug libs and the standalone lua.c/luac.c are intentionally not vendored — this build is a sandboxed embed for on-device widget scripts.",
+  "license": "MIT",
+  "homepage": "https://www.lua.org",
+  "build": {
+    "flags": ["-w"],
+    "srcFilter": "+<*.c>"
+  }
+}

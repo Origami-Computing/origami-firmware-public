@@ -1,0 +1,58 @@
+#include "services/photo_library.h"
+#include "services/agent_coordination.h"
+#include "services/uploads.h"
+#include "services/background_network.h"
+#include "hal/hal_wifi.h"
+#include <string.h>
+namespace services { namespace photos {
+Library::BrowseResult Library::beginBrowsing() {
+    active_=true;
+    if (reservation_.acquire(false,8000)!=background_network::PeripheralReservation::Result::Acquired)
+        return BrowseResult::UploadsBusy;
+    agent_coordination::TransportPause agentPause;
+    if (!agentPause.acquire(8000)) {
+        reservation_.release();
+        return BrowseResult::NetworkBusy;
+    }
+    hal::wifi::stop();
+    agentPause.release();
+    return BrowseResult::Ready;
+}
+Library::LoadResult Library::load() {
+    return browsing() ? catalog_.load() : LoadResult::ReadError;
+}
+bool Library::removeAt(size_t index,int* removedUploads) {
+    if (removedUploads) *removedUploads=0;
+    if (!browsing() || index>=count()) return false;
+    char path[sizeof(File::path)];
+    memcpy(path,catalog_[index].path,sizeof(path));
+    path[sizeof(path)-1]=0;
+    if (!catalog_.removeAt(index)) return false;
+    int removed=0;
+    while (uploads::queue().removeByFilePath(path)) ++removed;
+    if (removedUploads) *removedUploads=removed;
+    return true;
+}
+int Library::beginSync() {
+    active_=true;
+    (void)uploads::ensureInit();
+    auto& queue=uploads::queue();
+    queue.setUploadPaused(false);
+    const int pending=queue.counts().pending;
+    hal::wifi::scheduleRestore();
+    reservation_.release();
+    return pending;
+}
+Library::SyncStatus Library::syncStatus() const {
+    auto& queue=uploads::queue();
+    const auto counts=queue.counts();
+    return {counts.pending,counts.failed,hal::wifi::connected()};
+}
+void Library::close() {
+    catalog_.clear();
+    if (!active_) return;
+    active_=false;
+    hal::wifi::scheduleRestore();
+    reservation_.release();
+}
+} }

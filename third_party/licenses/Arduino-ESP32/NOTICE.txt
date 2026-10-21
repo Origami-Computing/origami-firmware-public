@@ -1,0 +1,3 @@
+Arduino-ESP32 2.0.17, package 3.20017.241212+sha.dcc1105b.
+The package declares LGPL-2.1-or-later. Individual files and bundled SDK components may carry different licenses. Preserve their original headers and notices. The full SDK binary distribution closure is a separate review item.
+Source: https://github.com/espressif/arduino-esp32/tree/2.0.17

@@ -1,0 +1,13 @@
+# Dual-OTA partition table for the production ESP32-S3 N16R8 hardware.
+# NVS remains at the historical address and size so the serial migration can
+# preserve device settings and credentials. App offsets are 64 KiB aligned.
+#
+# Name,   Type, SubType, Offset,   Size,
+nvs,      data, nvs,     0x9000,   0x5000,
+otadata,  data, ota,     0xe000,   0x2000,
+ota_0,    app,  ota_0,   0x10000,  0x600000,
+ota_1,    app,  ota_1,   0x610000, 0x600000,
+coredump, data, coredump,0xC10000, 0x10000,
+# Optional shipping lock, outside default NVS recovery. Existing offsets unchanged.
+# Older partition tables boot normally but cannot arm shipping mode.
+shipping, data, nvs,     0xC20000, 0x3000,

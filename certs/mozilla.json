@@ -1,0 +1,8 @@
+{
+  "source": "https://curl.se/ca/cacert-2026-09-25.pem",
+  "sha256": "a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505",
+  "certificates": 121,
+  "license": "MPL-2.0",
+  "license_url": "https://www.mozilla.org/MPL/2.0/",
+  "retrieved": "2026-09-26"
+}

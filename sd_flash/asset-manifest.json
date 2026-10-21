@@ -1,0 +1,12 @@
+[
+  {
+    "path": "sd_flash/eyes/eyes.bmp",
+    "sha256": "f7870535dbe34c0a9c8e7311675c4f5e0ac071df16c87c8e089bedfb4cd49e57",
+    "bytes": 438330
+  },
+  {
+    "path": "sd_flash/boot/origami_logo.bmp",
+    "sha256": "c11da8c54a12a99182285cc13c412e2a8488ee76726574d7d842642e6bef802e",
+    "bytes": 806454
+  }
+]
