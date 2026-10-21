@@ -33,7 +33,7 @@ void handleAutomationHttpPost() {
   if (!s_automation_http) return;
   WebServer& server = *s_automation_http;
   const auto config = core::secrets::backendConfig();
-  if (!server.hasHeader("X-Api-Key") ||
+  if (!config.apiKey[0] || !server.hasHeader("X-Api-Key") ||
       server.header("X-Api-Key") != String(config.apiKey)) {
     server.send(401, "application/json", "{\"error\":\"unauthorized\"}");
     return;

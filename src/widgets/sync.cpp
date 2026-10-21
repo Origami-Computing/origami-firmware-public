@@ -9,6 +9,7 @@
  */
 
 #include "widgets/sync.h"
+#include "widgets/path_validation.h"
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -116,6 +117,7 @@ static void yieldBetweenRequests() { vTaskDelay(pdMS_TO_TICKS(50)); }
 // sync pays for one TLS handshake, not one per request.
 static bool fetchAndWriteWidget(const core::secrets::BackendConfig& config, WiFiClient& transport,
                                 const char* id, const char* slug) {
+    if (!validPathSegment(id, 64) || !validPathSegment(slug, 31)) return false;
     const String base(config.url);
     HTTPClient get;
     get.setReuse(true);
