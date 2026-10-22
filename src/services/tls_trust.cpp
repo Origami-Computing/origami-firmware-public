@@ -96,11 +96,11 @@ bool isRoot(mbedtls_x509_crt* crt, const uint8_t* root) {
 }
 
 int verifyAgainstBundle(void*, mbedtls_x509_crt* crt, int, uint32_t* flags) {
-    // Only the chain's untrusted top needs an anchor; a weak digest on a
-    // certificate we anchor is acceptable because the anchor itself is trusted.
+    // Only an exact trusted root may ignore its own weak signature digest.
+    // A child still needs a strong signature, even when its issuer is trusted.
     if ((*flags & ~MBEDTLS_X509_BADCERT_BAD_MD) != MBEDTLS_X509_BADCERT_NOT_TRUSTED) return 0;
     const uint8_t* issuer = findRoot(crt->issuer_raw);
-    if (issuer && signedByRoot(crt, issuer)) { *flags = 0; return 0; }
+    if (*flags == MBEDTLS_X509_BADCERT_NOT_TRUSTED && issuer && signedByRoot(crt, issuer)) { *flags = 0; return 0; }
     const uint8_t* self = findRoot(crt->subject_raw);
     if (self && isRoot(crt, self)) { *flags = 0; return 0; }
     return 0; // Leave NOT_TRUSTED; the handshake fails with a verification error.

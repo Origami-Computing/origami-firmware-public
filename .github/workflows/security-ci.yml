@@ -1,0 +1,32 @@
+name: Firmware security checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  security:
+    name: Security and firmware build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Security and architecture regressions
+        run: |
+          python3 tools/check_tracked_secrets.py
+          python3 tools/check_architecture_dependencies.py
+          python3 tools/test_architecture_dependencies.py
+          python3 tools/test_security_boundaries.py
+          python3 tools/test_bounded_http.py
+          python3 tools/test_tls_anchor_policy.py
+          python3 tools/test_ota_download_policy.py
+          python3 tools/test_lua_security.py
+          python3 -m unittest discover -s tests/ota -v
+      - name: Build production firmware
+        run: |
+          python3 -m venv "$RUNNER_TEMP/pio"
+          "$RUNNER_TEMP/pio/bin/pip" install platformio==6.2.0
+          "$RUNNER_TEMP/pio/bin/pio" run -e esp32-s3-menu-n16r8-production

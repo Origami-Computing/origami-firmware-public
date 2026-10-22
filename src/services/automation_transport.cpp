@@ -1,3 +1,4 @@
+#include "services/bounded_http.h"
 #include "services/automation.h"
 #include "services/recipe_alert_json.h"
 #include "core/menu_config.h"
@@ -77,6 +78,7 @@ void handleAutomationHttpPost() {
 }
 
 void lanAutomationEnsureStarted() {
+  if (core::release_policy::productionOnly) return;
   if (s_automation_http) return;
   s_automation_http = new WebServer(AUTOMATION_HTTP_PORT);
   // ESP32 WebServer only exposes request headers that are explicitly collected;
@@ -113,6 +115,7 @@ void pollAutomationsFromBackend() {
                          : static_cast<WiFiClient&>(plainClient);
 
   HTTPClient http;
+  services::bounded_http::configure(http);
   http.setConnectTimeout(5000);
   http.setTimeout(5000);
   if (!http.begin(wc, url)) return;
@@ -124,10 +127,11 @@ void pollAutomationsFromBackend() {
     http.end();
     return;
   }
-  const String payload = http.getString();
+  String payload;
+  const bool bodyOk = services::bounded_http::read(http, 16u * 1024u, payload);
   http.end();
 
-  queueRecipeSnapshotJson(payload.c_str());
+  if (bodyOk) queueRecipeSnapshotJson(payload.c_str());
 
 }
 

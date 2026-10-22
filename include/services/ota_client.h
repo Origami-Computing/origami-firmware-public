@@ -6,8 +6,10 @@ namespace services {
 namespace ota_client {
 
 enum class ReleaseChannel : uint8_t {
-    Production = 0,
-    Staging    = 1,
+    Public     = 0,
+    Production = Public, // Source compatibility; never maps to private firmware.
+    Staging    = 1, // Preserve existing saved staging selection.
+    Private    = 2,
 };
 
 struct ReleaseInfo {
@@ -33,9 +35,8 @@ const char* buildKindName();
 // configured rollback support retains the previous valid slot.
 void serviceBootHealth(bool setupHealthy);
 
-// Persisted update-channel preference. Production is the default.
-// Production-policy images always report Production and reject staging in
-// selection, manifest retrieval and download, even with a developer access key.
+// Persisted preference defaults to Public. Private and Staging require a
+// server-confirmed developer role at selection, retrieval and download.
 // Selection failure preserves its actionable reason in lastError().
 ReleaseChannel releaseChannel();
 bool setReleaseChannel(ReleaseChannel channel);

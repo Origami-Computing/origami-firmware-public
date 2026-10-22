@@ -1,3 +1,4 @@
+#include "core/release_policy.h"
 #include "services/wifi_portal.h"
 #include <Arduino.h>
 #include <WiFi.h>
@@ -430,6 +431,8 @@ void stopHttp() {
 } // namespace
 
 bool open() {
+  // Production provisioning uses QR/Bluetooth; never start the legacy AP.
+  if (core::release_policy::productionOnly) return false;
   if (s_open) return s_ready;
   s_open = true;
   // Block any deferred STA restore that some other app scheduled; otherwise

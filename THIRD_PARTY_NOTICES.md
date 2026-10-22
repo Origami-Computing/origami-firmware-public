@@ -4,7 +4,7 @@ MIT at the repository root applies to approved Origami-original work only. Retai
 
 | Component | Evidence retained | Review status |
 | --- | --- | --- |
-| Lua 5.4.7 | `lib/lua/LICENSE` | MIT notice retained |
+| Lua 5.4.9 | `lib/lua/LICENSE` | MIT notice retained |
 | minimp3 | `lib/minimp3/LICENSE` | CC0 notice retained |
 | qrcodegen | `lib/qrcodegen/LICENSE` | MIT notice retained |
 | quirc 1.2 | License headers in `lib/quirc` | ISC-style permission retained |

@@ -1,0 +1,9 @@
+Lua 5.4.9 source: https://www.lua.org/ftp/lua-5.4.9.tar.gz
+SHA256: 2335b6c582a52654f94612bf10d2f4672805d05329aa6568b1d8cd9e5c6fb8e6
+Retrieved and verified 2026-10-22. MIT notice remains in LICENSE.
+Only the previously vendored C/header subset is retained. No io/os/package/debug
+library or standalone interpreter is added. luaconf.h retains LUA_32BITS=1.
+lapi.c locally saturates the GC-step KB conversion and debt addition, addressing
+the overflow family described at https://www.lua.org/bugs.html#5.5.0-1 for 5.4's
+older debt implementation. Host sanitizer coverage is tools/test_lua_security.py.
+Host size_t is wider than the ESP32 target; host checks are not a device proof.

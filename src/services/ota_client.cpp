@@ -1,3 +1,6 @@
+#ifndef OTA_BUILD_CHANNEL
+#define OTA_BUILD_CHANNEL "public"
+#endif
 #include "services/ota_client.h"
 #include "services/ota_access.h"
 #include "services/manufacturing.h"
@@ -111,21 +114,18 @@ bool setAuthToken(const char* token) {
 }
 
 ReleaseChannel releaseChannel() {
-    if (core::release_policy::productionOnly) return ReleaseChannel::Production;
-    return hasAuthToken() && core::store::getU8(kSettingsNamespace, kChannelKey, 0) == 1
-               ? ReleaseChannel::Staging
-               : ReleaseChannel::Production;
+    if (!hasAuthToken()) return ReleaseChannel::Public;
+    const uint8_t saved = core::store::getU8(kSettingsNamespace, kChannelKey, 0);
+    return saved == 1 ? ReleaseChannel::Staging :
+           saved == 2 ? ReleaseChannel::Private : ReleaseChannel::Public;
 }
 
 bool setReleaseChannel(ReleaseChannel channel) {
     s_err[0] = '\0';
-    if (core::release_policy::productionOnly && channel != ReleaseChannel::Production) {
-        setError("Production updates only"); return false;
-    }
-    if (channel != ReleaseChannel::Production && channel != ReleaseChannel::Staging) {
+    if (channel != ReleaseChannel::Public && channel != ReleaseChannel::Staging && channel != ReleaseChannel::Private) {
         setError("Invalid update channel"); return false;
     }
-    if (channel == ReleaseChannel::Staging) {
+    if (channel != ReleaseChannel::Public) {
         // Missing enrollment is actionable even if another network owner is busy.
         if (!hasAuthToken()) { setError("Set up OTA access key"); return false; }
         firmware_update::Session session;
@@ -134,18 +134,19 @@ bool setReleaseChannel(ReleaseChannel channel) {
         }
         if (!refreshAccess()) return false;
         if (ota_access::role() != ota_access::Role::Developer) {
-            setError("Staging access denied"); return false;
+            setError("Developer OTA access required"); return false;
         }
     }
     if (!core::store::putU8(kSettingsNamespace, kChannelKey,
-                          channel == ReleaseChannel::Staging ? 1 : 0)) {
+                          static_cast<uint8_t>(channel))) {
         setError("Update channel save failed"); return false;
     }
     return true;
 }
 
 const char* releaseChannelName(ReleaseChannel channel) {
-    return channel == ReleaseChannel::Staging ? "Staging" : "Production";
+    return channel == ReleaseChannel::Staging ? "Staging" :
+           channel == ReleaseChannel::Private ? "Private" : "Public";
 }
 
 struct ParsedVersion {
@@ -178,11 +179,15 @@ bool isReleaseNewer(ReleaseChannel channel, const char* candidateTag) {
     ParsedVersion current;
     if (!parseVersion(candidateTag, &candidate) ||
         !parseVersion(OTA_FIRMWARE_VERSION, &current)) return false;
-    if (channel == ReleaseChannel::Production && candidate.stagingRun >= 0) return false;
+    if (channel != ReleaseChannel::Staging && candidate.stagingRun >= 0) return false;
 
     if (candidate.major != current.major) return candidate.major > current.major;
     if (candidate.minor != current.minor) return candidate.minor > current.minor;
     if (candidate.patch != current.patch) return candidate.patch > current.patch;
+    // A same-version build from another channel is a distinct release.
+    const char* selected = channel == ReleaseChannel::Staging ? "staging" :
+                           channel == ReleaseChannel::Private ? "private" : "public";
+    if (strcmp(OTA_BUILD_CHANNEL, selected) != 0) return true;
     // A developer may need to replace a custom build with the official build
     // carrying the same human-readable version.
     if (!isOfficialBuild()) return true;
@@ -199,7 +204,8 @@ static void setError(const char* msg) {
 }
 
 static const char* channelPath(ReleaseChannel channel) {
-    return channel == ReleaseChannel::Staging ? "staging" : "production";
+    return channel == ReleaseChannel::Staging ? "staging" :
+           channel == ReleaseChannel::Private ? "private" : "public";
 }
 
 static void configureHttp(HTTPClient& http, WiFiClientSecure& client) {
@@ -267,15 +273,12 @@ static bool decodeHash(const char* text, uint8_t out[32]) {
 }
 
 bool fetchLatestRelease(ReleaseChannel channel, ReleaseInfo* out) {
-    if (core::release_policy::productionOnly && channel != ReleaseChannel::Production) {
-        setError("Production updates only"); return false;
-    }
     if (!out || s_download.load() == DownloadState::Running) return false;
-    if (channel != ReleaseChannel::Production && channel != ReleaseChannel::Staging) return false;
+    if (channel != ReleaseChannel::Public && channel != ReleaseChannel::Staging && channel != ReleaseChannel::Private) return false;
     s_err[0] = '\0';
     if (!refreshAccess()) return false;
-    if (channel == ReleaseChannel::Staging && ota_access::role() != ota_access::Role::Developer) {
-        setError("Staging access denied"); return false;
+    if (channel != ReleaseChannel::Public && ota_access::role() != ota_access::Role::Developer) {
+        setError("Developer OTA access required"); return false;
     }
     if (!OTA_BASE_URL[0]) { setError("update host not configured"); return false; }
     // Never disable certificate validation to work around an unset clock.
@@ -474,15 +477,12 @@ static void downloadTask(void*) {
 }
 
 bool beginFlash(const ReleaseInfo& release) {
-    if (core::release_policy::productionOnly && release.channel != ReleaseChannel::Production) {
-        setError("Production updates only"); return false;
-    }
     abortFlash();
     s_err[0] = '\0';
     if (!refreshAccess()) return false;
-    if (release.channel != ReleaseChannel::Production && release.channel != ReleaseChannel::Staging) return false;
-    if (release.channel == ReleaseChannel::Staging && ota_access::role() != ota_access::Role::Developer) {
-        setError("Staging access denied"); return false;
+    if (release.channel != ReleaseChannel::Public && release.channel != ReleaseChannel::Staging && release.channel != ReleaseChannel::Private) return false;
+    if (release.channel != ReleaseChannel::Public && ota_access::role() != ota_access::Role::Developer) {
+        setError("Developer OTA access required"); return false;
     }
     char prefix[256];
     snprintf(prefix, sizeof(prefix), "%s/releases/%s/%s/%s/", OTA_BASE_URL,
