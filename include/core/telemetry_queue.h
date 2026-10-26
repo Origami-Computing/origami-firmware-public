@@ -21,6 +21,7 @@ namespace core {
 namespace telemetry_queue {
 
 enum Kind : uint8_t {
+  KIND_USAGE = 4, // versioned usage event; durable, POST /api/device/events
   KIND_VERBOSE = 3, // RAM-only diagnostic logs; reserve capacity for durable events
   KIND_LOG   = 0,  // a single log entry, batched into POST /api/device/logs
   KIND_CRASH = 1,  // a full crash object, POSTed as-is to /api/device/crashes
@@ -28,7 +29,7 @@ enum Kind : uint8_t {
 };
 
 constexpr int kMaxItems   = 512;
-constexpr int kItemJsonCap = 240;  // one event's JSON payload
+constexpr int kItemJsonCap = 320;  // one event's JSON payload
 
 struct Item {
   uint8_t kind;
@@ -55,7 +56,7 @@ int snapshot(Item* out, int maxN);
 void ack(int n);
 
 // Cumulative since boot, including capacity and lock-contention loss.
-struct Stats { uint32_t queued, droppedVerbose, droppedDurable; };
+struct Stats { uint32_t queued, droppedVerbose, droppedDurable, journalFailures; };
 Stats stats();
 
 }  // namespace telemetry_queue

@@ -1,3 +1,4 @@
+#include "core/usage_events.h"
 #include "hal/audio_retirement.h"
 #include "services/mp3_player.h"
 
@@ -219,6 +220,8 @@ bool Mp3Player::startTrack(const char* path) {
     }
 
     playing_ = true;
+    usageTrackActive_ = true;
+    core::usage::emit("music","mp3.start");
     return true;
 }
 
@@ -230,6 +233,8 @@ bool Mp3Player::stopTrack() {
 }
 
 void Mp3Player::stopTrackUnlocked() {
+    if (usageTrackActive_) core::usage::emit("music","mp3.stop");
+    usageTrackActive_ = false;
     playing_ = false;
     hal::audio::txEnd();
     if (fileOpen_) {
@@ -569,3 +574,11 @@ bool Mp3Player::stopTask() {
 
 }  // namespace audio
 }  // namespace services
+
+namespace services { namespace audio {
+void Mp3Player::pause() { if (playing_.exchange(false)) core::usage::emit("music","mp3.pause"); }
+void Mp3Player::resume() {
+ if (worker_.running() && !worker_.cleanupPending() && fileOpen_ && !playing_.exchange(true))
+  core::usage::emit("music","mp3.resume");
+}
+} }

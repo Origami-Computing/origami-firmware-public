@@ -45,8 +45,8 @@ public:
     bool stopTrack();
     bool restartTrack();
 
-    void pause()  { playing_ = false; }
-    void resume() { if (worker_.running() && !worker_.cleanupPending() && fileOpen_) playing_ = true; }
+    void pause();
+    void resume();
     bool isPlaying() const { return playing_; }
     bool isOpen() const { return fileOpen_; }
 
@@ -67,6 +67,7 @@ public:
     }
 
 private:
+    bool usageTrackActive_ = false;
     std::atomic<uint8_t> spectrum_[kVisBars]{};
     void stopTrackUnlocked(); // Caller holds PlaybackWorker::Control.
     bool init();

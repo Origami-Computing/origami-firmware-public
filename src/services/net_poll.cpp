@@ -82,7 +82,7 @@ void publishRegistrationPriority(bool active) {
   s_onboardingPriority = active || s_onboardingRegistration;
   portEXIT_CRITICAL(&s_healthMux);
 }
-static char s_healthJson[core::telemetry_queue::kItemJsonCap] = {};
+static char s_healthJson[512] = {};
 static uint32_t s_healthSequence = 0;
 static bool s_healthPending = false;
 static const char* s_phase="not_started";
@@ -248,7 +248,7 @@ String buildLogsBody(const core::telemetry_queue::Item* items, int n) {
 // Health is a latest-value mailbox, independent of the diagnostic FIFO. A
 // successful in-flight send must not clear a newer sample published by the UI.
 void sendLatestHealth() {
-  char json[core::telemetry_queue::kItemJsonCap];
+  char json[512];
   uint32_t sequence;
   portENTER_CRITICAL(&s_healthMux);
   const bool pending = s_healthPending;
@@ -292,6 +292,11 @@ void drainTelemetry() {
       if (ok2xx(code)) { sent += (j - i); i = j; continue; }
       if (!retryable(code)) { sent += (j - i); i = j; continue; }  // drop poison batch
       break;
+    }
+    if (batch[i].kind == KIND_USAGE) {
+      const int code = postJson("/api/device/events", String(batch[i].json));
+      if (ok2xx(code)) { sent++; i++; continue; }
+      break; // includes 404 before backend rollout; preserve stable event identity
     }
     const char* path = (batch[i].kind == KIND_CRASH) ? TELEMETRY_CRASH_PATH
                                                       : TELEMETRY_HEARTBEAT_PATH;

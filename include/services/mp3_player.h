@@ -80,8 +80,8 @@ public:
     int  scaledVolumeBasisPoints() const;
 
     // pause/resume only toggle the playing flag; the task loop uses it.
-    void pause()  { playing_ = false; }
-    void resume() { if (worker_.running() && !worker_.cleanupPending() && fileOpen_) playing_ = true; }
+    void pause();
+    void resume();
     bool isPlaying() const { return playing_; }
     bool isOpen()    const { return fileOpen_; }
 
@@ -101,6 +101,7 @@ public:
     bool stopTask();
 
 private:
+    bool usageTrackActive_ = false;
     void stopTrackUnlocked(); // Caller holds PlaybackWorker::Control.
     bool sessionOpen_ = false;
     bool sessionReady_ = false;
