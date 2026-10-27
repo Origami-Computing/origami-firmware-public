@@ -1,4 +1,5 @@
 #pragma once
+#include "services/photo_storage.h"
 
 /**
  * Camera workflow: live viewfinder, settings/manual/readme views, capture and
@@ -26,6 +27,11 @@ namespace camera_menu {
 
 /** The App descriptor — pass to NavHandler::push() to open the camera. */
 extern App app;
+// UI-task tutorial variant. Capture saves an unqueued still, closes Camera and
+// returns to the caller. Result is owned file metadata, never a borrowed frame.
+void beginTutorialCapture();
+services::photos::Target takeTutorialPhoto();
+
 
 void enter();
 void exitApp();
@@ -37,6 +43,7 @@ void onDraw(TFT_eSprite& canvas);
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 // One independently restarted VGA trial; -1 selects the production 600 ms settle loop.
 bool runSettleTrial(uint32_t runId, int discardFrames, unsigned repeat);
+bool copyPreviewForDevelopment(TFT_eSprite& target);
 #endif
 
 }  // namespace camera_menu

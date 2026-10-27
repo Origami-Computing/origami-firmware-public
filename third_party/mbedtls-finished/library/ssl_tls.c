@@ -1,3 +1,5 @@
+/* Modified by Origami Computing, 2026-10-27: backport Finished error
+ * propagation and check non-PSA hash/PRF failures. See README.md. */
 /*
  *  SSLv3/TLSv1 shared functions
  *

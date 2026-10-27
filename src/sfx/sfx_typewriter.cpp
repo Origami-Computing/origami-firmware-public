@@ -13,6 +13,7 @@ static bool s_open = false;
 static uint32_t s_ownedTxGen = 0;
 static uint32_t s_lastBlipMs = 0;
 static bool s_hasBlip = false;
+static TypewriterStats s_stats;
 constexpr uint32_t kBlipIntervalMs = 56; // Greeting cadence, independent of text burst speed.
 
 }  // namespace
@@ -28,14 +29,15 @@ bool typewriterOpen(uint32_t sampleRate) {
     s_open = true;
     s_ownedTxGen = hal::audio::txGeneration();
     s_hasBlip = false;
+    s_stats={};
     return true;
 }
 
-void typewriterPlayChar(char c, size_t charIndex) {
-    if (!s_open) return;
-    if (c == ' ' || c == '\n' || c == '\r' || c == '\t' || (unsigned char)c < 32u) return;
+bool typewriterPlayChar(char c, size_t charIndex) {
+    if (!s_open) return false;
+    if (c == ' ' || c == '\n' || c == '\r' || c == '\t' || (unsigned char)c < 32u) return false;
     const uint32_t now = millis();
-    if (s_hasBlip && now - s_lastBlipMs < kBlipIntervalMs) return;
+    if (s_hasBlip && now - s_lastBlipMs < kBlipIntervalMs) return false;
 
     // A4 / B4 / D5 / E5 / G5 — one octave below the original; small speakers reproduce
     // 440–784 Hz much more cleanly than 880–1568 Hz.
@@ -69,19 +71,24 @@ void typewriterPlayChar(char c, size_t charIndex) {
         // A blip is shorter than a DMA descriptor. Flush with silence so it
         // plays now instead of being joined to the next character's blip.
         hal::audio::txFinishBuffer(pdMS_TO_TICKS(20));
+        if(s_hasBlip){const uint32_t gap=now-s_lastBlipMs;s_stats.totalGapMs+=gap;if(gap>s_stats.maxGapMs)s_stats.maxGapMs=gap;}
+        ++s_stats.played;
+        ++s_stats.noteCounts[charIndex % 5u];
         s_lastBlipMs = now;
         s_hasBlip = true;
+        return true;
     }
+    return false;
 }
 
-void typewriterServiceChar(char c, size_t charIndex) {
+bool typewriterServiceChar(char c, size_t charIndex) {
     if (hal::audio::micReady()) {
         typewriterTeardown();
-        return;
+        return false;
     }
-    if ((unsigned char)c <= 32u) return;
-    typewriterOpen();
-    typewriterPlayChar(c, charIndex);
+    if ((unsigned char)c <= 32u) return false;
+    if (!typewriterOpen()) return false;
+    return typewriterPlayChar(c, charIndex);
 }
 
 void typewriterTeardown() {
@@ -94,5 +101,6 @@ void typewriterTeardown() {
 bool typewriterIsOpen() {
     return s_open && hal::audio::txReady() && s_ownedTxGen == hal::audio::txGeneration();
 }
+TypewriterStats typewriterStats(){return s_stats;}
 
 }  // namespace sfx

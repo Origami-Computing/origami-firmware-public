@@ -36,7 +36,9 @@ void tick();
 void onInput(hal::input::InputEvent ev);
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 // Exercise the post-decode flow without exposing stored passwords over USB.
-bool debugJoin(bool savedNetwork);
+bool debugJoin(bool savedNetwork, bool accountPayload=false);
+// Host-decoded visible QR, injected into the normal parser; never logs payload.
+bool debugPayload(const char* payload);
 #endif
 
 }  // namespace wifi_setup

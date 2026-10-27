@@ -41,11 +41,11 @@ CameraPreview::Result CameraPreview::decode(const uint8_t* jpeg, size_t length, 
     if (result==Result::Decoded) frameReady_=true;
     return result;
 }
-CameraPreview::Presentation CameraPreview::present(unsigned phase, int pulseAgeMs) {
+CameraPreview::Presentation CameraPreview::present(unsigned phase, int pulseAgeMs, bool tutorial) {
     if (!hasFrame()) return {};
     memcpy(composite_,frame_,280u*240u*sizeof(uint16_t));
     CameraCanvas canvas{composite_};
-    camera_photographer::overlays(canvas,phase);
+    if(!tutorial)camera_photographer::overlays(canvas,phase);
     if (pulseAgeMs>=0 && pulseAgeMs<140) {
         const int alpha=pulseAgeMs<35?15:(140-pulseAgeMs)*15/105;
         for (int i=0;i<280*240;++i) {
@@ -54,6 +54,8 @@ CameraPreview::Presentation CameraPreview::present(unsigned phase, int pulseAgeM
             composite_[i]=(p>>8)|(p<<8);
         }
     }
+    // Keep the instruction static even through the white shutter pulse.
+    if(tutorial)camera_photographer::overlays(canvas,phase,true);
     return presentNativeFrame(composite_);
 }
 bool CameraPreview::presentFallback(const uint8_t* jpeg, size_t length) {
@@ -75,5 +77,13 @@ bool CameraPreview::presentFallback(const uint8_t* jpeg, size_t length) {
   hal::display::markAllDirty();
   return true;
 }
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+bool CameraPreview::copyCompositeForDevelopment(TFT_eSprite& target)const{
+ if(!hasFrame()||!target.created())return false;
+ CameraCanvas c{composite_};
+ for(int y=0;y<240;++y)for(int x=0;x<280;++x)target.drawPixel(x,y,c.at(x,y));
+ return true;
+}
+#endif
 
 }

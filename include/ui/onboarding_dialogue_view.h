@@ -3,6 +3,7 @@
 #include "ui/pixel_text.h"
 #include "ui/onboarding_intro_view.h"
 #include "assets/onboarding_website_qr.h"
+#include "qrcodegen.h"
 namespace onboarding_wifi {
 using namespace ui::onboarding_intro;
 constexpr char kWebsite[]="kami.so/device/\nmanage";
@@ -79,7 +80,13 @@ template<class C> void websiteContent(C& c,unsigned ms,unsigned scroll,int shift
  // The entire 29-module code plus four-module white border fits at 4px/module.
  // Draw exact modules, without bitmap scaling or antialiasing QR edges.
  content.fillRect(64,240-shift,148,148,kUiBg);
- for(unsigned y=0;y<29;++y)for(unsigned x=0;x<29;++x)
+ if(core::release_policy::stagingBuild){
+  uint8_t temporary[qrcodegen_BUFFER_LEN_FOR_VERSION(6)],qr[qrcodegen_BUFFER_LEN_FOR_VERSION(6)];
+  if(qrcodegen_encodeText(assets::onboarding_website::kUrl,temporary,qr,qrcodegen_Ecc_LOW,2,6,qrcodegen_Mask_AUTO,true)){
+   const int size=qrcodegen_getSize(qr),module=148/(size+8),x0=(280-size*module)/2;
+   for(int y=0;y<size;++y)for(int x=0;x<size;++x)if(qrcodegen_getModule(qr,x,y))content.fillRect(x0+module*x,256+module*y-shift,module,module,kUiFg);
+  }
+ }else for(unsigned y=0;y<29;++y)for(unsigned x=0;x<29;++x)
   if(assets::onboarding_website::kRows[y]&(1u<<(28-x)))content.fillRect(80+4*x,256+4*y-shift,4,4,kUiFg);
  c.fillRect(246,92,2,128,kUiMuted);
  c.fillRect(245,92+shift*110/154,4,18,kUiFg);

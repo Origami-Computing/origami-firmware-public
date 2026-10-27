@@ -698,10 +698,24 @@ UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
     WiFiClient& client = isHttps ? (WiFiClient&)secClient : plainClient;
 
     static constexpr int32_t kConnectTimeoutMs = 2500;
-    // Start a fresh watchdog interval at this bounded blocking boundary:
-    // DNS <= 2.5 s, TCP <= 2.5 s, shared TLS handshake <= 8 s.
+    // A stalled first TLS flight is common on the observed staging path. Give
+    // it four seconds, then one fresh connection while retaining this worker's
+    // network reservation. No application bytes have been sent at this point.
+    // Fast certificate/TCP errors do not trigger this exception; later HTTP
+    // failures retain the queue's credential/rate-limit and lifetime policies.
+    if (isHttps) secClient.setHandshakeTimeout(4);
     core::watchdog::feed();
-    if (!client.connect(host, port, kConnectTimeoutMs)) {
+    const uint32_t connectStarted = millis();
+    bool connected = client.connect(host, port, kConnectTimeoutMs);
+    if (!connected && isHttps && millis() - connectStarted >= 4000u &&
+        !m_workerStop && !m_uploadPaused) {
+        client.stop();
+        secClient.setHandshakeTimeout(8);
+        core::watchdog::feed();
+        Serial.printf("[queue] Retrying stalled TLS connection before request\n");
+        connected = client.connect(host, port, kConnectTimeoutMs);
+    }
+    if (!connected) {
         file.close();
         free(preamble);
         strlcpy(item.lastError, "Connect failed", sizeof(item.lastError));

@@ -58,11 +58,12 @@ bool outputsOff() {
     }
     hal::bus::unlockI2c(); return ok;
 }
-void sleep(uint32_t retrySeconds) {
+void sleep(uint32_t retrySeconds,bool expectedUsb) {
     Inputs unused{}; const bool ok=read(unused); // acknowledge all ports
     esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
     if(!ok || digitalRead(IO_EXPANDER_INT_B_PIN)==LOW) retrySeconds=30;
     else if(esp_sleep_enable_ext0_wakeup((gpio_num_t)IO_EXPANDER_INT_B_PIN,0)!=ESP_OK) retrySeconds=30;
+    if(ok && unused.usb!=expectedUsb) retrySeconds=1;
     if(retrySeconds) esp_sleep_enable_timer_wakeup(uint64_t(retrySeconds)*1000000ULL);
     Serial.printf("[shipping] sleeping retry_s=%lu\n",(unsigned long)retrySeconds);
     Serial.flush(); esp_deep_sleep_start();

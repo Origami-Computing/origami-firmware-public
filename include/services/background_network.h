@@ -53,6 +53,8 @@ struct AudioSuspension {
  * Pair every successful request with resumeAfterKamiVoice(). */
 AudioSuspension suspendForKamiVoice(uint32_t timeoutMs = 3000);
 void resumeAfterKamiVoice();
+/** Idle Agent connections yield to the bounded onboarding registration window.
+ * Explicit voice sessions retain their existing foreground priority. */
 bool kamiVoiceNetworkReady();
 bool voicePriorityActive();
 bool audioPriorityActive();

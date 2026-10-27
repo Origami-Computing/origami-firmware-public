@@ -1,4 +1,5 @@
 #pragma once
+#include "config/backend_host.h"
 
 // Configuration that was historically defined inside `src/main_menu.cpp`.
 // Credentials are provisioned on-device and stored in NVS; never embed them here.
@@ -6,7 +7,7 @@
 #define WIFI_SSID       ""
 #define WIFI_PASS       ""
 #define BACKEND_URL     "http://192.168.1.163:3000"
-#define BACKEND_URL_PROD "https://api.kami.so" // staging -> "https://kami2-staging.up.railway.app"
+#define BACKEND_URL_PROD KAMI_HOSTED_API_URL
 #define AUTH_TOKEN      ""
 
 /** Outbound poll: GET BACKEND_URL + AUTOMATION_POLL_PATH (sdo ame auth as agent/upload queue). */

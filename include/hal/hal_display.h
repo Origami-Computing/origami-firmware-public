@@ -136,9 +136,12 @@ void drawImage(int32_t x, int32_t y, int32_t w, int32_t h, const uint16_t* rgb56
  * Writes into tft() — the canvas sprite when the canvas pipeline is active.
  * Falls back to center-crop at native resolution if PSRAM is unavailable.
  */
+enum class ImageFit { Contain, Cover };
+// Cover also upscales small captures, crops centrally and requires a viewport-
+// sized PSRAM surface; allocation failure returns false instead of distorting.
 bool drawJpegFileScaled(const char* path,
                         int32_t dstX, int32_t dstY,
-                        int32_t maxW, int32_t maxH);
+                        int32_t maxW, int32_t maxH, ImageFit fit=ImageFit::Contain);
 
 // ---------------------------------------------------------------------------
 // Direct-draw SPI mutex bracket

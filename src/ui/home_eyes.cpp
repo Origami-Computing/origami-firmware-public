@@ -1,4 +1,6 @@
 #include "ui/home_eyes.h"
+#include "ui/greeting_hand.h"
+#include "ui/outro_greeting.h"
 #include "core/pixel_rle.h"
 #include "ui/eye_rig.h"
 #include "ui/kami_motion.h"
@@ -128,19 +130,8 @@ static void paintWake(TFT_eSPI& t,uint32_t age,int yOff){
     t.pushImage(cx+(int)lroundf(f.x)-kWakeW/2,cy-kWakeH/2+wakeInkTop[index],kWakeW,wakeInkBottom[index]-wakeInkTop[index],wakePixels+wakeInkTop[index]*kWakeW);
     t.setSwapBytes(swap);
   }else rig::drawWakeFace(t,cx+(int)lroundf(f.x)-kWakeW/2,cy-kWakeH/2,kWakeW,kWakeH,f.face);
-  // Coverage-render the white hand and soft outline at subpixel positions.
-  if(f.handAlpha>0){
-    float hx=cx+f.handX,hy=cy+f.handY;
-    for(int yy=(int)floorf(hy-16);yy<=(int)ceilf(hy+17);++yy)
-      for(int xx=(int)floorf(hx-16);xx<=(int)ceilf(hx+16);++xx){
-        float dx=xx+.5f-hx,dy=yy+.5f-hy;
-        float d=sqrtf(dx*dx+dy*dy),shadow=sqrtf(dx*dx+(dy-1.5f)*(dy-1.5f));
-        float shade=rig::clamp((17-shadow)/3,0,1)*.23f*f.handAlpha*(1-rig::clamp(14-d,0,1));
-        if(shade>0&&xx>=0&&xx<t.width()&&yy>=kSystemStatusBarH&&yy<t.height()){
-          uint8_t v=(uint8_t)(255*(1-shade));t.drawPixel(xx,yy,t.color565(v,v,v));
-        }
-      }
-  }
+  // Coverage-render the white hand with the unchanged wake geometry.
+  ui::greeting_hand::draw(t,f,cx,cy);
   blinking=false;nextBlink=millis()+2800;
   previousExpression=true;previousTop=top;previousBottom=bottom;
   hal::display::markDirty(first,last-first);
@@ -151,6 +142,16 @@ static void sample(uint32_t now) {
   float t=rig::clamp((uint32_t)(now-transitionStart)/(float)transitionMs,0,1);
   current=rig::interpolate(from,target,rig::bezier(t,.37f,0,.63f,1));
   if(t>=1){current=target;transitioning=false;}
+}
+void drawOutroWave(TFT_eSPI& t,uint32_t age){
+ const auto f=outro_greeting::sample(age);
+ const int cx=t.width()/2,cy=kTop+kHeight/2;
+ t.fillRect(0,0,t.width(),t.height(),TFT_WHITE);
+ const int index=int(lroundf(rig::clamp(f.face,0,1)*40));
+ const auto* pixels=framePixels(wakeCache,wakeOffsets,index,kWakeFrames,kWakeW*kWakeH);
+ if(pixels){const bool swap=t.getSwapBytes();t.setSwapBytes(false);t.pushImage(cx+int(lroundf(f.x))-kWakeW/2,cy-kWakeH/2,kWakeW,kWakeH,pixels);t.setSwapBytes(swap);}
+ else rig::drawWakeFace(t,cx+int(lroundf(f.x))-kWakeW/2,cy-kWakeH/2,kWakeW,kWakeH,index/40.f);
+ greeting_hand::draw(t,f,cx,cy);
 }
 static void transition(const rig::Pose& pose,float speed) {
   sample(millis());from=current;target=pose;transitionStart=millis();

@@ -5,6 +5,12 @@
 
 // No Arduino dependency: the same rasterizer is exercised by the host preview/tests.
 namespace ui { namespace eye_rig {
+// Relative to the original web eye-center distance; eye size is unchanged.
+constexpr float kDefaultSpacing = 1.f;
+constexpr float kHomeSpacing = .9f;
+inline float centerSeparation(float nominalEyeWidth,float spacing=kDefaultSpacing) {
+  return nominalEyeWidth*1.2f*spacing;
+}
 inline float clamp(float x,float lo,float hi) { return x<lo?lo:x>hi?hi:x; }
 inline float mix(float a,float b,float t) { return a+(b-a)*t; }
 inline const Preset* preset(const char* name) {

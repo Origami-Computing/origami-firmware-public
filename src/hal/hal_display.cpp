@@ -1,4 +1,5 @@
 #include "hal/hal_display.h"
+#include "core/image_cover.h"
 #include <Arduino.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -424,7 +425,7 @@ bool drawJpegFrame(const uint8_t* buf, size_t len, int screenW, int screenH) {
 
 bool drawJpegFileScaled(const char* path,
                         int32_t dstX, int32_t dstY,
-                        int32_t maxW, int32_t maxH) {
+                        int32_t maxW, int32_t maxH, ImageFit fit) {
   if (!path || maxW <= 0 || maxH <= 0) return false;
 
   hal::bus::lockSpi();
@@ -437,6 +438,23 @@ bool drawJpegFileScaled(const char* path,
   const int imgH  = (int)JpegDec.height;
   const int mcu_w = (int)JpegDec.MCUWidth;
   const int mcu_h = (int)JpegDec.MCUHeight;
+
+  if(fit==ImageFit::Cover){
+    if(imgW<=0||imgH<=0||maxW>280||maxH>240){JpegDec.abort();hal::bus::unlockSpi();return false;}
+    auto* fb=static_cast<uint16_t*>(heap_caps_malloc(size_t(maxW)*maxH*2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(!fb){JpegDec.abort();hal::bus::unlockSpi();return false;}
+    core::images::Cover cover(imgW,imgH,maxW,maxH);
+    while(JpegDec.readSwappedBytes()){
+      const int sx0=JpegDec.MCUx*mcu_w,sy0=JpegDec.MCUy*mcu_h;
+      const int x0=cover.boundary(sx0,true),x1=cover.boundary(sx0+mcu_w,true);
+      const int y0=cover.boundary(sy0,false),y1=cover.boundary(sy0+mcu_h,false);
+      const auto* pixels=static_cast<const uint16_t*>(JpegDec.pImage);
+      for(int y=y0;y<y1;++y)for(int x=x0;x<x1;++x)
+        fb[y*maxW+x]=pixels[(cover.y(y)-sy0)*mcu_w+cover.x(x)-sx0];
+    }
+    hal::bus::unlockSpi();
+    tft().pushImage(dstX,dstY,maxW,maxH,fb);heap_caps_free(fb);return true;
+  }
 
   float scaleW = (float)maxW / (float)imgW;
   float scaleH = (float)maxH / (float)imgH;

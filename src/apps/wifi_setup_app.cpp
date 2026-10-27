@@ -7,6 +7,7 @@
 #include "apps/wifi_setup_app.h"
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <esp_camera.h>
 #include <string.h>
 #include <math.h>
@@ -23,6 +24,7 @@
 #include "hal/hal_ble.h"
 #include "hal/hal_camera.h"
 #include "services/wifi_qr_session.h"
+#include "services/net_poll.h"
 #include "hal/hal_display.h"
 #include "hal/hal_input.h"
 #include "hal/hal_sd.h"
@@ -299,7 +301,7 @@ static void showError(const char* reason, const char* title = "Couldn't join") {
 }
 
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
-bool debugJoin(bool savedNetwork) {
+bool debugJoin(bool savedNetwork, bool accountPayload) {
   if (NavHandler::instance().top() != &app || s_state != State::SCANNING) return false;
   core::wifi_qr::Credentials credentials{};
   if (savedNetwork) {
@@ -309,6 +311,16 @@ bool debugJoin(bool savedNetwork) {
   } else {
     copyField("qr-test-unavailable-53820c", credentials.ssid, sizeof(credentials.ssid));
     copyField("test-only-password", credentials.pass, sizeof(credentials.pass));
+  }
+  if(accountPayload){
+    const auto backend=core::secrets::backendConfig();
+    if(!backend.apiKey[0])return false;
+    JsonDocument doc;doc["s"]=credentials.ssid;doc["p"]=credentials.pass;doc["a"]=backend.apiKey;
+    char payload[512];const size_t n=serializeJson(doc,payload,sizeof(payload));
+    core::wifi_qr::Credentials parsed{};
+    if(n>=sizeof(payload)||!core::wifi_qr::parsePayload(payload,&parsed)||!parsed.hasApiKey)return false;
+    credentials=parsed;memset(payload,0,sizeof(payload));
+    Serial.println("[wifi-app] diagnostic compact account payload parsed apiKeyPresent=1");
   }
   beginConnect(credentials);
   return true;
@@ -333,6 +345,13 @@ static void handlePayload(const char* payload) {
   beginConnect(creds);
 }
 
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+bool debugPayload(const char* payload){
+ if(NavHandler::instance().top()!=&app||s_state!=State::SCANNING||!payload||strlen(payload)>360)return false;
+ handlePayload(payload);return true;
+}
+#endif
+
 static void prepareWorkflow() {
   Serial.println("[wifi-app] Entering WiFi QR setup");
   s_state = State::PREPARING;
@@ -344,6 +363,8 @@ static void prepareWorkflow() {
   s_statusLine[0] = s_detailLine[0] = s_lastPayload[0] = '\0';
   s_needsScanRequest = true;
 }
+
+static bool s_registrationQueued = false;
 
 static void enterView() {
   // Paint first; tick pauses network users BEFORE asking the manager to stop
@@ -416,6 +437,7 @@ void tick() {
     if (join == services::wifi_qr::Session::Join::Rejected) {
       showError("Please scan again");
     } else {
+      s_registrationQueued = false;
       s_state = State::CONNECTING;
       memset(&s_credentials, 0, sizeof(s_credentials));
       memset(s_lastPayload, 0, sizeof(s_lastPayload));
@@ -465,6 +487,14 @@ void tick() {
   if (s_state == State::CONNECTING) {
     if (status.id != s_session.id()) return;
     if (status.phase == hal::wifi::QrPhase::Joined) {
+      // Joining has committed the credentials and the scanner is stopped.
+      // Release its networking reservation before showing Connected, rather
+      // than making website registration wait for the user to press B.
+      if (s_tutorialMode && !s_registrationQueued) {
+        services::net_poll::requestOnboardingRegistration();
+        s_registrationQueued = true;
+      }
+      if (!s_session.releaseStopped()) return;
       s_state = State::SUCCESS;
       s_resultMs=millis();
       drawStatusScreen("Connected", s_statusLine, nullptr, true);

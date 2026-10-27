@@ -161,7 +161,7 @@ static const MenuEntry& visibleEntry(int index) {
 }
 
 static bool refreshPriorityRow() {
-  const MenuEntry* entry = !hal::wifi::connected() ? &kJoinWifi :
+  const MenuEntry* entry = apps::tutorial::navigationLessonActive() ? nullptr : !hal::wifi::connected() ? &kJoinWifi :
       (services::firmware_update::settingsUpdateAvailable() ? &kUpdateFirmware : nullptr);
   if (entry == s_priorityEntry) return false;
   // Preserve the selected app as the row appears/disappears. Replacing Wi-Fi
@@ -199,7 +199,7 @@ static ui::ListItem menuItemFn(int idx, void*) {
 
 static void applyMenuListLayout(bool nested) {
   if (apps::tutorial::navigationLessonActive()) {
-    s_list.rowH=26; s_list.rowPitch=32; s_list.topPad=4; s_list.leftX=14;
+    s_list.rowH=26; s_list.rowPitch=30; s_list.topPad=0; s_list.leftX=14;
     s_list.scrollbarW=3; s_list.scrollbarPad=5; s_list.scrollbarRight=7;
     return;
   }
@@ -230,6 +230,7 @@ static bool goBackOneLevel() {
 }
 
 void enter() {
+  if(apps::tutorial::navigationLessonActive()&&!apps::tutorial::navigationPracticed()){s_page=PAGE_MAIN;s_selection[PAGE_MAIN]=0;}
   refreshPriorityRow();
   if (s_page == PAGE_MAIN && s_priorityEntry) s_selection[PAGE_MAIN] = 0;
   redraw();
@@ -251,7 +252,8 @@ void exitApp() {
 }
 
 bool onChord() {
-  return goBackOneLevel();
+  if(goBackOneLevel())return true;
+  return apps::tutorial::returnFromNavigation();
 }
 
 void onInput(hal::input::InputEvent ev) {
@@ -264,7 +266,6 @@ void onInput(hal::input::InputEvent ev) {
     s_list.scroll(ev.delta);
     if (s_list.selected != selected) {
       selected = s_list.selected;
-      apps::tutorial::noteNavigation();
       redraw();
     }
     return;
@@ -313,11 +314,17 @@ static void buildMenuScene(ui::scene::Scene& scene, int16_t width, int16_t heigh
                     menu_layout::kMenuListAreaX,
                     nested ? menu_layout::kMenuSubListAreaY : menu_layout::kMenuListAreaY,
                     menu_layout::kMenuListAreaW,
-                    (apps::tutorial::navigationLessonActive() ? 132 : (nested ? menu_layout::kMenuSubListAreaH : menu_layout::kMenuListAreaH)),
+                    (apps::tutorial::navigationLessonActive() ? (apps::tutorial::navigationPracticed()?132:158) : (nested ? menu_layout::kMenuSubListAreaH : menu_layout::kMenuListAreaH)),
                     menuItemFn, nullptr,
                     kUiSelBg, kUiSelFg, kUiBg, kUiMuted, kUiFg);
 }
 
+void drawOnboardingPreview(TFT_eSprite& canvas){
+ canvas.fillSprite(kUiBg);ui::ListView list;list.totalItems=sizeof(kMainEntries)/sizeof(kMainEntries[0]);list.selected=0;
+ list.rowH=26;list.rowPitch=30;list.topPad=0;list.leftX=14;list.scrollbarW=3;list.scrollbarPad=5;list.scrollbarRight=7;
+ const auto item=[](int index,void*){ui::ListItem value;value.label=kMainEntries[index].label;value.icon=kMainEntries[index].icon;value.fg=kUiFg;return value;};
+ auto& sc=ui::scene::scratchScene();sc.clear();list.buildScene(sc,0,menu_layout::kMenuListAreaY,280,158,item,nullptr,kUiSelBg,kUiSelFg,kUiBg,kUiScrollTrack,kUiScrollThumb);sc.render(canvas);sc.clear();
+}
 void onDraw(TFT_eSprite& canvas) {
   if (!s_needRedraw) {
     if (s_iconDirty && animatedMainMenu()) {

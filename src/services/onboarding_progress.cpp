@@ -22,8 +22,10 @@ Progress load() {
     }
     progress.offered = prefs.getBool("offered", false) || word != 0 || oldWord != 0;
     prefs.end(); s_saved = word;
-    if ((word & 0xFFFFFE00u) == kTag && (word & 255) <= 28) {
+    if ((word & 0xFFFFFE00u) == kTag && (word & 255) <= 34) {
         progress.completed = (word & 0x100) != 0; progress.page = word & 255;
+        if (progress.page >= 29 && progress.page <= 31) progress.page = 29;
+        if (progress.page == 34) progress.page = 22;
         if (progress.page >= 12 && progress.page <= 15) progress.page = 9;
         if (progress.page == 19 || progress.page == 20) progress.page = 18;
         if (progress.page == 26 || progress.page == 27) progress.page = 25;
@@ -36,6 +38,9 @@ Progress load() {
 }
 bool markOffered() { return core::store::putBool(kNamespace, "offered", true); }
 bool save(unsigned page, bool completed) {
+    if(page>34)return false;
+    if(page==34)page=22;
+    if (page >= 29 && page <= 31) page = 29;
     if (page == 12) page = 9;
     if (page == 19) page = 18;
     if (page == 23) page = 22;

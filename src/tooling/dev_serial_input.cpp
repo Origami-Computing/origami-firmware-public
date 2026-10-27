@@ -15,6 +15,8 @@
 #include <esp_sleep.h>
 #include <esp_system.h>
 #include <esp_ota_ops.h>
+#include <mbedtls/sha256.h>
+#include "sfx/sfx_typewriter.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -320,7 +322,7 @@ static void printHelp() {
   Serial.println("  wifi add JSON      provision JSON credentials (supports spaces)");
   Serial.println("  wifi connect       reload saved creds + connect");
 #ifdef MENU_APP
-  Serial.println("  wifi qrtest saved|missing  test active scanner's post-decode join");
+  Serial.println("  wifi qrtest saved|account|missing  test active scanner's post-decode join");
   Serial.println("  wifi qropen|qrstatus|qrguardtest  scanner bench diagnostics");
   Serial.println("  wifi qrstopdelay MS  one-shot idle shutdown delay (0..10000)");
   Serial.println("  wifi qrfail jobqueue|resultqueue|task|off  one-shot idle startup fault");
@@ -2280,14 +2282,19 @@ static bool handleWifiCommand(const char* rawLine) {
     services::qr::logDiagnostics();
     return true;
   }
+  if (strcasecmp(cmd, "qrpayload") == 0) {
+    const bool accepted=apps::wifi_setup::debugPayload(trimInPlace(line));
+    memset(raw,0,sizeof(raw));
+    Serial.printf("[wifi-dev] qrpayload accepted=%u\n",accepted?1:0);return true;
+  }
   if (strcasecmp(cmd, "qrtest") == 0) {
     char which[16];
     if (!nextToken(line, which, sizeof(which)) ||
-        (strcmp(which, "saved") != 0 && strcmp(which, "missing") != 0)) {
-      Serial.println("[wifi-dev] usage: wifi qrtest saved|missing (scanner must be open)");
+        (strcmp(which, "saved") != 0 && strcmp(which, "account") != 0 && strcmp(which, "missing") != 0)) {
+      Serial.println("[wifi-dev] usage: wifi qrtest saved|account|missing (scanner must be open)");
       return true;
     }
-    const bool accepted = apps::wifi_setup::debugJoin(strcmp(which, "saved") == 0);
+    const bool accepted = apps::wifi_setup::debugJoin(strcmp(which, "missing") != 0, strcmp(which, "account") == 0);
     Serial.printf("[wifi-dev] qrtest accepted=%u\n", accepted ? 1 : 0);
     return true;
   }
@@ -2385,7 +2392,7 @@ static bool handleBackendCommand(const char* rawLine) {
 }
 
 static void printApiUsage() {
-  Serial.println("[api-dev] usage: api status | set KEY");
+  Serial.println("[api-dev] usage: api status | fingerprint | set KEY");
 }
 
 static bool handleApiCommand(const char* rawLine) {
@@ -2405,6 +2412,14 @@ static bool handleApiCommand(const char* rawLine) {
     return true;
   }
 
+  if (strcasecmp(cmd, "fingerprint") == 0) {
+    const auto config=core::secrets::backendConfig();const char* key=config.apiKey;
+    uint8_t digest[32];
+    if(!key||!key[0]||mbedtls_sha256_ret(reinterpret_cast<const uint8_t*>(key),strlen(key),digest,0)){
+      Serial.println("[api-dev] fingerprint unavailable");return true;
+    }
+    Serial.print("[api-dev] sha256=");for(uint8_t byte:digest)Serial.printf("%02x",byte);Serial.println();return true;
+  }
   if (strcasecmp(cmd, "set") == 0) {
     char key[96];
     if (!nextToken(line, key, sizeof(key))) {
@@ -3031,6 +3046,8 @@ static void handleLine(char* line, uint32_t nowMs) {
     return;
   }
 
+  if(!strcmp(line,"net confirm-onboarding")){services::net_poll::requestOnboardingRegistration();Serial.println("[net-dev] onboarding confirmation queued");return;}
+  if(!strcmp(line,"net retry-test")){services::net_poll::printRegistrationRetryCheck(Serial);return;}
   if(!strcmp(line,"net status")){services::net_poll::printStatus(Serial);return;}
 #ifdef MENU_APP
   if (strcmp(line, "tutorial restart") == 0) {
@@ -3043,6 +3060,12 @@ static void handleLine(char* line, uint32_t nowMs) {
     Serial.printf("[tutorial] seek=%s\n",ok?"ok":"failed");return;
   }
   if (strcmp(line,"tutorial play")==0) {apps::tutorial::debugPlay();return;}
+  if (strcmp(line, "tutorial audio") == 0) {
+    const auto a=sfx::typewriterStats();
+    Serial.printf("[tutorial-audio] played=%lu avg=%lu max=%lu notes=%lu,%lu,%lu,%lu,%lu\n",
+      (unsigned long)a.played,(unsigned long)(a.played>1?a.totalGapMs/(a.played-1):0),(unsigned long)a.maxGapMs,
+      (unsigned long)a.noteCounts[0],(unsigned long)a.noteCounts[1],(unsigned long)a.noteCounts[2],(unsigned long)a.noteCounts[3],(unsigned long)a.noteCounts[4]);return;
+  }
   if (strcmp(line, "tutorial status") == 0) {
     apps::tutorial::printStatus();
     return;
@@ -3087,7 +3110,7 @@ static void handleLine(char* line, uint32_t nowMs) {
   if (handleSdCommand(raw)) return;
   if (handleSceneCommand(raw)) return;
   if (handlePreviewCommand(raw)) return;
-  if (handleWifiCommand(raw)) return;
+  if (handleWifiCommand(raw)) {memset(raw,0,sizeof(raw));return;}
   if (handleFactoryCommand(raw)) return;
   if (handleManufacturingCommand(raw)) return;
   if (handleBackendCommand(raw)) return;
@@ -3260,6 +3283,8 @@ static void handleLine(char* line, uint32_t nowMs) {
     // A diagnostic dump needs longer than the normal 5 ms logging budget.
     // Keep each row in one checked write without printf's heap allocation.
     TFT_eSprite& frame = hal::display::canvas();
+    if(NavHandler::instance().top()==&apps::camera_menu::app)
+      Serial.printf("[morning-frame] camera-composite=%u\n",apps::camera_menu::copyPreviewForDevelopment(frame));
     static constexpr char hex[] = "0123456789abcdef";
     char row[1152]; // prefix + at most 280 RGB565 pixels + newline
     if (frame.width() <= 0 || frame.width() > 280) return;

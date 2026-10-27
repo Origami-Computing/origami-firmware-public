@@ -1,6 +1,10 @@
 #include "services/net_poll.h"
 #include "services/account_info.h"
+#include "services/agent_coordination.h"
 #include "net_poll_lifecycle.h"
+#include "registration_retry.h"
+#include <time.h>
+#include <stdlib.h>
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -14,6 +18,7 @@
 #include "services/automation.h"
 #include "services/device_fs.h"
 #include "core/device_id.h"
+#include "core/board_time.h"
 #include "services/eyes_asset.h"
 #include "core/menu_config.h"
 #include "core/secrets.h"
@@ -33,8 +38,50 @@ namespace {
 // idle device barely costs anything. All real waiting is this vTaskDelay; the
 // blocking HTTP happens inside the jobs themselves.
 constexpr uint32_t kTickMs = 1000;
+static RegistrationRetry s_registrationRetry;
+static bool s_onboardingRegistration = false;
+static bool s_confirmOnboarding = false;
+
+// Retry-After supports delta seconds and the standard IMF-fixdate HTTP date.
+// Saturate below the wrap-safe millisecond horizon rather than overflowing.
+uint32_t retryAfterMs(const String& value) {
+  if (!value.length()) return 0;
+  char* end = nullptr;
+  unsigned long long seconds = strtoull(value.c_str(), &end, 10);
+  if (end == value.c_str() || *end) {
+    struct tm date = {};
+    char* tail = strptime(value.c_str(), "%a, %d %b %Y %H:%M:%S GMT", &date);
+    if (!tail || *tail) return 0;
+    const time_t now = time(nullptr);
+    if (now < 1700000000) return 86400000; // no trustworthy clock: defer conservatively
+    // Gregorian civil date to UTC days; independent of the device's TZ.
+    int year = date.tm_year + 1900;
+    const unsigned month = date.tm_mon + 1;
+    year -= month <= 2;
+    const int era = year / 400;
+    const unsigned yoe = year - era * 400;
+    const unsigned doy = (153 * (month > 2 ? month - 3 : month + 9) + 2) / 5 + date.tm_mday - 1;
+    const int64_t days = era * 146097LL + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+    const int64_t target = days * 86400 + date.tm_hour * 3600 + date.tm_min * 60 + date.tm_sec;
+    seconds = target > now ? static_cast<unsigned long long>(target - now) : 0;
+  }
+  return seconds > 2147483 ? 2147483000u : static_cast<uint32_t>(seconds * 1000);
+}
 
 static portMUX_TYPE s_healthMux = portMUX_INITIALIZER_UNLOCKED;
+static bool s_onboardingPriority = false;
+static uint32_t s_onboardingPriorityAt = 0;
+bool onboardingRequestPending() {
+  portENTER_CRITICAL(&s_healthMux);
+  const bool pending = s_onboardingRegistration;
+  portEXIT_CRITICAL(&s_healthMux);
+  return pending;
+}
+void publishRegistrationPriority(bool active) {
+  portENTER_CRITICAL(&s_healthMux);
+  s_onboardingPriority = active || s_onboardingRegistration;
+  portEXIT_CRITICAL(&s_healthMux);
+}
 static char s_healthJson[core::telemetry_queue::kItemJsonCap] = {};
 static uint32_t s_healthSequence = 0;
 static bool s_healthPending = false;
@@ -61,12 +108,25 @@ bool due(uint32_t now, uint32_t* lastMs, uint32_t intervalMs) {
 // the same row. Returns true once a token is held (already or newly).
 bool ensureRegistered() {
   const auto request = core::secrets::backendRequest();
-  if (request.token[0]) return true;        // already registered
-  static uint32_t lastAttempt = 0;
-  if (!due(millis(), &lastAttempt, 15000u)) return false;
+  portENTER_CRITICAL(&s_healthMux);
+  const bool onboarding = s_onboardingRegistration;
+  s_onboardingRegistration = false;
+  portEXIT_CRITICAL(&s_healthMux);
+  if (onboarding) { s_confirmOnboarding = true; s_registrationRetry.onboarding(millis()); }
+  if (request.token[0] && !s_confirmOnboarding) { s_registrationRetry.success(); return true; }
+  // Certificate dates cannot be verified until SNTP has set a trusted clock.
+  // Waiting here does not consume a transient-network retry. Local HTTP is unchanged.
+  if (!strncmp(request.backend.url, "https://", 8) && !core::time::isSynced()) return false;
+  if (!s_registrationRetry.ready(millis())) return false;
   const char* apiKey = request.backend.apiKey;
-  if (!apiKey || !apiKey[0]) return false;                 // no user key yet → can't register
+  if (!apiKey || !apiKey[0]) { s_registrationRetry.success(); return false; }                 // no user key yet → can't register
 
+  // A fresh scan must publish last_seen even with an existing bearer token.
+  // Avoid competing with the idle Agent handshake during this short exchange.
+  services::agent_coordination::TransportPause registrationPause;
+  if (s_confirmOnboarding) {
+    if (services::agent_coordination::isSessionActive() || !registrationPause.acquire(500)) return false;
+  }
   WiFiClientSecure secClient;
   WiFiClient       plainClient;
   String           url = String(request.backend.url) + String(DEVICE_REGISTER_PATH);
@@ -81,7 +141,15 @@ bool ensureRegistered() {
   HTTPClient http;
   http.setConnectTimeout(5000);
   http.setTimeout(5000);
-  if (!http.begin(wc, url)) return false;
+  const uint32_t started = millis();
+  Serial.printf("[registration] start ms=%lu revision=%lu priority=%d heap=%u\n",
+    (unsigned long)started, (unsigned long)request.revision,
+    s_registrationRetry.priority(started), (unsigned)ESP.getFreeHeap());
+  if (!http.begin(wc, url)) {
+    s_registrationRetry.failed(millis(), 400); return false;
+  }
+  const char* headers[] = {"Retry-After"};
+  http.collectHeaders(headers, 1);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-Api-Key", apiKey);
   http.addHeader("X-Device-Id", core::device::id());
@@ -94,7 +162,14 @@ bool ensureRegistered() {
 
   const int code = http.POST(payload);
   if (code != 200 && code != 201) {
+    const uint32_t serverDelay = retryAfterMs(http.header("Retry-After"));
+    const uint32_t delay = s_registrationRetry.failed(millis(), code, serverDelay);
+    char tlsError[96] = {};
+    const int tlsCode = https ? secClient.lastError(tlsError, sizeof(tlsError)) : 0;
     http.end();
+    Serial.printf("[registration] failed HTTP=%d tls=%d elapsed_ms=%lu retry_ms=%lu priority=%d\n",
+      code, tlsCode, (unsigned long)(millis()-started), (unsigned long)delay,
+      s_registrationRetry.priority(millis()));
     LOGW("net_poll", "Registration failed HTTP %d", code);
     return false;
   }
@@ -102,10 +177,13 @@ bool ensureRegistered() {
   http.end();
 
   JsonDocument doc;
-  if (deserializeJson(doc, resp)) return false;
+  if (deserializeJson(doc, resp)) { s_registrationRetry.failed(millis(), 400); return false; }
   const char* token = doc["token"] | "";
-  if (!token[0]) return false;
-  if (!core::secrets::setDeviceTokenFor(request, token)) return false;
+  if (!token[0]) { s_registrationRetry.failed(millis(), 400); return false; }
+  if (!core::secrets::setDeviceTokenFor(request, token)) { s_registrationRetry.failed(millis(), 400); return false; }
+  s_confirmOnboarding = false;
+  s_registrationRetry.success();
+  Serial.printf("[registration] success elapsed_ms=%lu\n", (unsigned long)(millis()-started));
   LOGI("net_poll", "Registered device %s", core::device::id());
   return true;
 }
@@ -235,6 +313,21 @@ void drainTelemetry() {
 
 } // namespace
 
+void requestOnboardingRegistration() {
+  portENTER_CRITICAL(&s_healthMux);
+  s_onboardingRegistration = true;
+  s_onboardingPriorityAt = millis();
+  s_onboardingPriority = true;
+  portEXIT_CRITICAL(&s_healthMux);
+}
+
+bool onboardingRegistrationPriority() {
+  portENTER_CRITICAL(&s_healthMux);
+  const bool active = s_onboardingPriority && uint32_t(millis()-s_onboardingPriorityAt)<45000u;
+  portEXIT_CRITICAL(&s_healthMux);
+  return active;
+}
+
 void lifecycle::run(void*) {
   awaitPublication();
   uint32_t lastAutomationPoll = 0;
@@ -264,6 +357,9 @@ void lifecycle::run(void*) {
           continue; // No transport acquired; normal stop check and watchdog feed next tick.
         }
         auto yieldToWaitingRequest = [&]() {
+          // A scan arriving during an optional request must not wait through
+          // the remaining batch of account/automation/telemetry/file polls.
+          if (onboardingRequestPending()) return true;
           if (!periodic.yieldIfContended()) return false;
           phase("periodic_yield");
           ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(kTickMs));
@@ -274,7 +370,14 @@ void lifecycle::run(void*) {
         // present and fall back to X-Api-Key until then.
         phase("registration");
         const bool registered = ensureRegistered();
+        publishRegistrationPriority(s_registrationRetry.priority(millis()));
         core::watchdog::feed();
+        if (!registered && s_registrationRetry.priority(millis())) {
+          periodic.release();
+          phase("registration_retry_wait");
+          ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(kTickMs));
+          continue;
+        }
 
         if (stopRequested()) break;
         if (yieldToWaitingRequest()) continue;
@@ -360,6 +463,30 @@ void printStatus(Print& out) {
   out.printf("[net-status] phase=%s age_ms=%lu running=%u stop=%u\n",current,
              (unsigned long)(millis()-since),running(),stopRequested());
 }
+
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+void printRegistrationRetryCheck(Print& out) {
+  RegistrationRetry retry;
+  const uint32_t now = millis();
+  retry.onboarding(now);
+  bool pass = retry.ready(now);
+  const uint32_t first = retry.failed(now, -1);
+  pass &= first == 1000 && !retry.ready(now+999) && retry.ready(now+1000);
+  const uint32_t second = retry.failed(now+1000, -1);
+  pass &= second == 2000 && !retry.ready(now+2999) && retry.ready(now+3000);
+  const uint32_t normal = retry.failed(now+3000, -1);
+  pass &= normal == 15000 && !retry.priority(now+3000);
+  retry.success(); retry.onboarding(now);
+  pass &= retry.failed(now, 401) == 15000 && !retry.priority(now);
+  retry.success(); retry.onboarding(now);
+  pass &= retry.failed(now, 429, 60000) == 60000 && !retry.priority(now);
+  retry.onboarding(now+1);
+  pass &= !retry.ready(now+59999) && retry.ready(now+60000);
+  pass &= retryAfterMs("60") == 60000 && retryAfterMs("bad") == 0;
+  out.printf("[registration-policy-test] pass=%u retry_ms=%lu,%lu,%lu auth_fast=0 rate_limit_ms=60000 simulated=1\n",
+    pass, (unsigned long)first, (unsigned long)second, (unsigned long)normal);
+}
+#endif
 
 void setHealthSnapshot(const char* json) {
   portENTER_CRITICAL(&s_healthMux);
