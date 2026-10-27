@@ -37,6 +37,8 @@ void onInput(hal::input::InputEvent ev);
 void onDraw(TFT_eSprite& canvas);
 /** Returns true when a category consumes the chord, false at the menu root. */
 bool onChord();
+// UI-task snapshot of the real root menu data, without changing selection/history.
+void drawOnboardingPreview(TFT_eSprite& canvas);
 
 }  // namespace menu
 }  // namespace apps

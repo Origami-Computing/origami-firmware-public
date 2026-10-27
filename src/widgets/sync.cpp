@@ -9,10 +9,12 @@
  */
 
 #include "widgets/sync.h"
+#include "widgets/path_validation.h"
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include "services/bounded_http.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include "services/tls_trust.h"
@@ -36,6 +38,8 @@ namespace sync {
 namespace {
 
 constexpr char kManifestPath[] = "/api/device-widgets";
+constexpr size_t kMaxManifestBytes = 16u * 1024u;
+constexpr size_t kMaxWidgets = 32;
 constexpr size_t kMaxScriptBytes = 32u * 1024u;  // matches lua_app load cap
 constexpr size_t kMaxDataBytes   = 8u * 1024u;   // matches lua_app data cap
 
@@ -94,14 +98,16 @@ static uint32_t fetchManifestHash() {
     WiFiClient& transport = strncmp(config.url, "https://", 8) == 0
                                 ? static_cast<WiFiClient&>(secure) : plain;
     HTTPClient http;
+    services::bounded_http::configure(http);
     http.setConnectTimeout(4000);
     http.begin(transport, String(config.url) + kManifestPath);
     http.addHeader("X-Api-Key", config.apiKey);
     const int code = http.GET();
     if (code != 200) { http.end(); return 0; }
-    const String payload = http.getString();
+    String payload;
+    const bool bodyOk = services::bounded_http::read(http, kMaxManifestBytes, payload);
     http.end();
-    if (payload.isEmpty()) return 0;
+    if (!bodyOk || payload.isEmpty()) return 0;
     return djb2(payload.c_str(), payload.length());
 }
 
@@ -116,9 +122,11 @@ static void yieldBetweenRequests() { vTaskDelay(pdMS_TO_TICKS(50)); }
 // sync pays for one TLS handshake, not one per request.
 static bool fetchAndWriteWidget(const core::secrets::BackendConfig& config, WiFiClient& transport,
                                 const char* id, const char* slug) {
+    if (!validPathSegment(id, 64) || !validPathSegment(slug, 31)) return false;
     const String base(config.url);
     HTTPClient get;
-    get.setReuse(true);
+    services::bounded_http::configure(get);
+    get.setReuse(false);
     get.setConnectTimeout(4000);
     get.begin(transport, base + kManifestPath + "/" + id + "/main.lua");
     get.addHeader("X-Api-Key", config.apiKey);
@@ -128,11 +136,12 @@ static bool fetchAndWriteWidget(const core::secrets::BackendConfig& config, WiFi
         Serial.printf("[widget-sync] %s: HTTP %d, skipped\n", slug, c);
         return false;
     }
-    const String lua = get.getString();
+    String lua;
+    const bool scriptOk = services::bounded_http::read(get, kMaxScriptBytes, lua);
     get.end();
     yieldBetweenRequests();
     if (pollPausePending()) return false;
-    if (lua.length() == 0 || lua.length() > kMaxScriptBytes) {
+    if (!scriptOk || lua.length() == 0 || lua.length() > kMaxScriptBytes) {
         Serial.printf("[widget-sync] %s: bad size %u, skipped\n", slug, (unsigned)lua.length());
         return false;
     }
@@ -153,13 +162,15 @@ static bool fetchAndWriteWidget(const core::secrets::BackendConfig& config, WiFi
 
     // Optional data snapshot, exposed to the script as kami.data.
     HTTPClient dataGet;
-    dataGet.setReuse(true);
+    services::bounded_http::configure(dataGet);
+    dataGet.setReuse(false);
     dataGet.setConnectTimeout(4000);
     dataGet.begin(transport, base + kManifestPath + "/" + id + "/data.json");
     dataGet.addHeader("X-Api-Key", config.apiKey);
     if (dataGet.GET() == 200) {
-        const String json = dataGet.getString();
-        if (json.length() > 0 && json.length() <= kMaxDataBytes) {
+        String json;
+        const bool dataOk = services::bounded_http::read(dataGet, kMaxDataBytes, json);
+        if (dataOk && json.length() > 0 && json.length() <= kMaxDataBytes) {
             char dpath[80];
             snprintf(dpath, sizeof(dpath), "/widgets/%s/data.json", slug);
             if (hal::sd::writeFile(dpath, (const uint8_t*)json.c_str(), json.length())) {
@@ -256,7 +267,8 @@ int syncFromBackend(char* errOut, size_t errLen) {
     WiFiClient& transport = strncmp(config.url, "https://", 8) == 0
                                 ? static_cast<WiFiClient&>(secure) : plain;
     HTTPClient http;
-    http.setReuse(true);
+    services::bounded_http::configure(http);
+    http.setReuse(false);
     http.setConnectTimeout(4000);
     String base = String(config.url);
     http.begin(transport, base + kManifestPath);
@@ -267,7 +279,8 @@ int syncFromBackend(char* errOut, size_t errLen) {
         if (errOut) snprintf(errOut, errLen, "manifest HTTP %d", code);
         return -1;
     }
-    const String payload = http.getString();
+    String payload;
+    const bool bodyOk = services::bounded_http::read(http, kMaxManifestBytes, payload);
     http.end();
     if (pollPausePending()) {
         setErr(errOut, errLen, "paused");
@@ -275,7 +288,7 @@ int syncFromBackend(char* errOut, size_t errLen) {
     }
 
     JsonDocument doc;
-    if (deserializeJson(doc, payload) || !doc.is<JsonArray>()) {
+    if (!bodyOk || deserializeJson(doc, payload) || !doc.is<JsonArray>() || doc.size() > kMaxWidgets) {
         setErr(errOut, errLen, "bad manifest JSON");
         return -1;
     }

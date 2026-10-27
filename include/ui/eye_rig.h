@@ -1,14 +1,8 @@
 #pragma once
-#include "ui/eye_rig_math.h"
+#include "ui/eye_rig_raster.h"
 #include "ui/kami_expression.h"
 class TFT_eSPI;
 namespace ui { namespace eye_rig {
-// Relative to the original web eye-center distance; eye size is unchanged.
-constexpr float kDefaultSpacing = 1.f;
-constexpr float kHomeSpacing = .9f;
-inline float centerSeparation(float nominalEyeWidth,float spacing=kDefaultSpacing) {
-  return nominalEyeWidth*1.2f*spacing;
-}
 // The supplied rectangle is a local backing surface. All pixels are restored,
 // which makes this safe on white pages and the solid red area of the body.
 void draw(TFT_eSPI& target,int x,int y,int w,int h,const Pose& pose,

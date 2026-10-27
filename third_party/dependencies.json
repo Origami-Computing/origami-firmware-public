@@ -2,7 +2,7 @@
   {
     "name": "Adafruit BusIO",
     "version": "1.17.4",
-    "declared_license": "review retained notice",
+    "declared_license": "MIT",
     "notices": [
       "third_party/licenses/Adafruit BusIO/LICENSE"
     ]
@@ -10,7 +10,7 @@
   {
     "name": "Adafruit TLV320 I2S",
     "version": "1.0.0",
-    "declared_license": "review retained notice",
+    "declared_license": "MIT",
     "notices": [
       "third_party/licenses/Adafruit TLV320 I2S/LICENSE.txt"
     ]
@@ -18,7 +18,7 @@
   {
     "name": "ArduinoJson",
     "version": "7.4.3",
-    "declared_license": "review retained notice",
+    "declared_license": "MIT",
     "notices": [
       "third_party/licenses/ArduinoJson/LICENSE.txt"
     ]
@@ -34,7 +34,7 @@
   {
     "name": "JPEGDecoder",
     "version": "2.0.0",
-    "declared_license": "review retained notice",
+    "declared_license": "MIT (public-domain alternative also offered)",
     "notices": [
       "third_party/licenses/JPEGDecoder/license.txt"
     ]
@@ -42,7 +42,7 @@
   {
     "name": "NimBLE-Arduino",
     "version": "2.5.1",
-    "declared_license": "review retained notice",
+    "declared_license": "Apache-2.0",
     "notices": [
       "third_party/licenses/NimBLE-Arduino/LICENSE",
       "third_party/licenses/NimBLE-Arduino/NOTICE"
@@ -51,7 +51,7 @@
   {
     "name": "QRCode",
     "version": "0.0.1",
-    "declared_license": "review retained notice",
+    "declared_license": "MIT",
     "notices": [
       "third_party/licenses/QRCode/LICENSE.txt"
     ]
@@ -75,7 +75,7 @@
   {
     "name": "esp32-camera",
     "version": "2.0.4",
-    "declared_license": "review retained notice",
+    "declared_license": "Apache-2.0",
     "notices": [
       "third_party/licenses/esp32-camera/LICENSE"
     ]

@@ -5,6 +5,10 @@ const char* name(State state);
 // Dedicated NVS partition; never erases on corruption or initialization failure.
 State state();
 // Setup task before board bringup. Only returns for normal or deliberate unlock.
+// Locked includes waiting for USB removal and waiting for reinsertion.
+// USB must be stable for 150 ms. A power-on reset with USB also authorizes
+// exit when removal was not saved. Other resets require saved removal;
+// buttons never authorize exit.
 // True means the shipping gate authorized this boot; skip ordinary C-only gate.
 bool bootGate();
 // UI task AFTER terminal app teardown. False means no lock committed and caller

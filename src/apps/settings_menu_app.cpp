@@ -160,7 +160,7 @@ static const char* kLabels[kRows] = {
     "Server: Dev",
     "Sleep",
     "Sensors",
-    "Updates: Production",
+    "Updates: Public",
     "Update Firmware!",
     "Reboot Device!",
     "About",
@@ -181,7 +181,7 @@ static bool s_sleepEditing = false;
 static int s_sleepField = 0;
 static bool s_sleepBlink = true;
 static uint32_t s_sleepBlinkMs = 0;
-static char s_otaChannelLabel[128] = "Updates: Production";
+static char s_otaChannelLabel[128] = "Updates: Public";
 
 static void updateSleepLabel() {
   snprintf(s_sleepLabel, sizeof(s_sleepLabel), "Sleep: %s",
@@ -384,7 +384,7 @@ static ui::ListItem settingsMainItemFn(int idx, void*) {
       static char draft[40];
       if(idx==ROW_SERVER) snprintf(draft,sizeof(draft),"Server: %s",s_valueDraft?"Dev":"Prod");
       else if(idx==ROW_RECIPE_ALERTS) snprintf(draft,sizeof(draft),"Recipe alerts %s",s_valueDraft?"on":"off");
-      else if(idx==ROW_OTA_CHANNEL) snprintf(draft,sizeof(draft),"Updates: %s",s_valueDraft?"Staging":"Production");
+      else if(idx==ROW_OTA_CHANNEL) snprintf(draft,sizeof(draft),"Updates: %s",services::ota_client::releaseChannelName(static_cast<services::ota_client::ReleaseChannel>(s_valueDraft)));
       item.label=draft; item.editing=true; item.blinkOn=s_valueBlink;
     }
     return item;
@@ -510,7 +510,7 @@ static void finishValueEdit() {
     services::agent_transport::selectBackendMode(s_valueDraft);
     updateServerLabel();
   } else if(s_sel==ROW_OTA_CHANNEL) {
-    const bool ok = services::ota_client::setReleaseChannel(s_valueDraft?services::ota_client::ReleaseChannel::Staging:services::ota_client::ReleaseChannel::Production);
+    const bool ok = services::ota_client::setReleaseChannel(static_cast<services::ota_client::ReleaseChannel>(s_valueDraft));
     updateOtaChannelLabel();
     if (!ok) snprintf(s_otaChannelLabel, sizeof(s_otaChannelLabel), "Updates: %s", services::ota_client::lastError());
   }
@@ -518,7 +518,7 @@ static void finishValueEdit() {
 }
 static void beginValueEdit() {
   if (core::release_policy::productionOnly && s_sub != SUB_SLEEP_MENU &&
-      (s_sel == ROW_SERVER || s_sel == ROW_OTA_CHANNEL)) {
+      s_sel == ROW_SERVER) {
     // These are informational rows on production images, not selectable modes.
     s_needRedraw = true;
     return;
@@ -526,7 +526,7 @@ static void beginValueEdit() {
   s_valueDraft=s_sub==SUB_SLEEP_MENU?core::sleep_timer::enabled():
       s_sel==ROW_RECIPE_ALERTS?services::automation::recipeAlertsEnabled():
       s_sel==ROW_SERVER?core::secrets::isDevMode():
-      services::ota_client::releaseChannel()==services::ota_client::ReleaseChannel::Staging;
+      static_cast<int>(services::ota_client::releaseChannel());
   s_valueEditing=true; s_valueBlink=true; s_valueBlinkMs=millis(); s_needRedraw=true;
   sfx::play(sfx::kSfxAlarmOpen);
 }
@@ -573,7 +573,9 @@ void onInput(hal::input::InputEvent ev) {
   }
   if(s_valueEditing) {
     if(ev.type==ET::Scroll && ev.delta) {
-      if(abs(ev.delta)%2) s_valueDraft=!s_valueDraft;
+      if (s_sub != SUB_SLEEP_MENU && s_sel == ROW_OTA_CHANNEL)
+        s_valueDraft = (s_valueDraft + ev.delta % 3 + 3) % 3;
+      else if(abs(ev.delta)%2) s_valueDraft=!s_valueDraft;
       sfx::play(sfx::kSfxAlarmNavigate); s_needRedraw=true;
     } else if(ui::nav::isEnterTap(ev) || ui::nav::isBackTap(ev)) finishValueEdit();
     return;
@@ -1005,7 +1007,7 @@ static void buildSettingsScene(ui::scene::Scene& scene, int16_t width, int16_t h
     case SUB_ABOUT: {
       const auto account=services::account_info::snapshot();
       char rows[6][128];
-      snprintf(rows[0],sizeof(rows[0]),"Firmware: %s",OTA_FIRMWARE_VERSION);
+      snprintf(rows[0],sizeof(rows[0]),"kamiOS %s",OTA_FIRMWARE_VERSION);
       snprintf(rows[1],sizeof(rows[1]),"Account: %s",account.name);
       snprintf(rows[2],sizeof(rows[2]),"Build: %s",services::ota_client::buildKindName());
       snprintf(rows[3],sizeof(rows[3]),"Board: %s",OTA_HARDWARE_ID);

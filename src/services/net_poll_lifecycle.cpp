@@ -69,6 +69,13 @@ bool tryStart(bool requestedOnly) {
 
 bool start() { return tryStart(false); }
 bool startRequested() { return tryStart(true); }
+bool cancelHandshakeForCurrentTask() {
+  portENTER_CRITICAL(&mux);
+  const bool cancel = phase == Phase::Running && handle == xTaskGetCurrentTaskHandle()
+                      && stopIntent.load();
+  portEXIT_CRITICAL(&mux);
+  return cancel;
+}
 void requestStart() {
   portENTER_CRITICAL(&mux);
   restartPending = true;

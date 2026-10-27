@@ -1,7 +1,8 @@
 #pragma once
 #include <stdint.h>
+#include "config/backend_host.h"
 namespace assets { namespace onboarding_website {
-constexpr char kUrl[]="https://kami.so/device/manage";
+constexpr char kUrl[]=KAMI_ONBOARDING_WEB_URL;
 constexpr unsigned kSize=29;
 static const uint32_t kRows[]={
   0x1fdfdd7fu,

@@ -1,10 +1,10 @@
 <p align="center">
   <img src="docs/assets/origami-computing.svg" alt="Origami Computing" width="88" height="98">
 </p>
-<h1 align="center">Origami Firmware</h1>
+<h1 align="center">kamiOS 1.0</h1>
 <p align="center"><strong>Origami Computing</strong></p>
 
-Firmware for Origami’s ESP32-S3 handheld: a display, camera, audio, motion sensing, and Lua widgets in one device.
+kamiOS is the operating firmware for Origami’s ESP32-S3 handheld: a display, camera, audio, motion sensing, and Lua widgets in one device.
 
 **Private review draft — not approved for public distribution.** This repository starts with one independent snapshot. Publication awaits the source, asset, dependency, and firmware review described in [release review](docs/release-review.md).
 
@@ -32,7 +32,7 @@ This produces a **custom production-policy build**, not an official signed OTA r
 
 ## Firmware
 
-The initial review candidate is the application-only firmware for release `v0.1.213`. It is held as a private draft release, subject to successful staging. Use its SHA-256 manifest to identify the reviewed bytes. No public release is available yet.
+The upcoming release is **kamiOS 1.0** (`v1.0.0`). Qualification builds remain private candidates until the release review passes. Earlier `v0.1.213` drafts are historical and must not be published as kamiOS 1.0. Use its SHA-256 manifest to identify the reviewed bytes. No public release is available yet.
 
 `firmware.bin` is an application image, not a full-device installer. Do not write it at address zero. [Installation notes](docs/installation.md) explain the current review boundary. Credentials and OTA access must be provisioned separately; they are never distributed with this repository. The minimal owner-confirmed SD artwork is included under `sd_flash/`.
 
@@ -40,6 +40,7 @@ The initial review candidate is the application-only firmware for release `v0.1.
 
 - [Architecture and ownership](docs/architecture.md)
 - [Build and verification](docs/building.md)
+- [Private-to-public promotion runbook](docs/public-promotion.md)
 - [Contribution guide](CONTRIBUTING.md)
 - [Security reporting](SECURITY.md)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)

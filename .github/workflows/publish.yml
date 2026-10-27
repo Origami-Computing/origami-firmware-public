@@ -1,0 +1,117 @@
+name: Publish approved public firmware
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Stable version exactly matching platformio.ini (vX.Y.Z)'
+        required: true
+        type: string
+      candidate_tag:
+        description: 'Private candidate already qualified on hardware (vX.Y.Z-public-review.N)'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: public-firmware-publication
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VERSION: ${{ inputs.tag }}
+      CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+      OTA_S3_BUCKET: ${{ vars.OTA_S3_BUCKET }}
+      OTA_BASE_URL: ${{ vars.OTA_BASE_URL }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Require reviewed source and exact stable version
+        run: |
+          python3 tools/check_release_approval.py
+          python3 tools/check_tracked_secrets.py
+          python3 - <<'PY'
+          import os,re,pathlib
+          version=os.environ['VERSION']
+          if not re.fullmatch(r'v\d+\.\d+\.\d+',version): raise SystemExit('Invalid stable tag')
+          configured=re.search(r'OTA_FIRMWARE_VERSION=.*?(v\d+\.\d+\.\d+)',pathlib.Path('platformio.ini').read_text()).group(1)
+          if version != configured: raise SystemExit('Tag must match the reviewed build version')
+          PY
+      - name: Security regressions
+        run: |
+          python3 tools/check_architecture_dependencies.py
+          python3 tools/test_security_boundaries.py
+          python3 tools/test_bounded_http.py
+          python3 tools/test_tls_anchor_policy.py
+          python3 tools/test_tls_finished.py
+          python3 tools/test_shipping.py
+          python3 tools/test_shipping_power.py
+          python3 tools/test_registration_priority.py
+          python3 tools/test_clock_sync_start.py
+          python3 tools/test_typewriter.py c++
+          python3 tools/test_lua_security.py
+          python3 tools/test_ota_download_policy.py
+          python3 tools/test_ota_versions.py
+          python3 -m unittest discover -s tests/ota -v
+      - name: Download and verify the qualified candidate without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PYCODE'
+          import os,re
+          if not re.fullmatch(re.escape(os.environ['VERSION'])+r'-public-review\.\d+', os.environ['CANDIDATE_TAG']):
+              raise SystemExit('Candidate tag must match the stable release version')
+          PYCODE
+          mkdir dist
+          gh release download "$CANDIDATE_TAG" --dir dist --pattern firmware.bin --pattern latest.json --pattern REVIEW.json --pattern REVIEW.txt --pattern LICENSE --pattern THIRD_PARTY_NOTICES.md --pattern source-review.tar.gz --pattern NOTICES-REVIEW.txt --pattern SHA256SUMS.txt
+          python3 tools/verify_release_candidate.py --directory dist --version "$VERSION"
+          python3 - <<'PYCODE'
+          import os,json,pathlib
+          metadata=json.loads(pathlib.Path('dist/REVIEW.json').read_text())
+          pathlib.Path('RELEASE.txt').write_text('kamiOS 1.0 ('+os.environ['VERSION']+')\nQualified source: '+metadata['source_commit']+'\nFirmware SHA-256: '+metadata['firmware_sha256']+'\nApplication image only. Preserve NVS and partition layout.\n')
+          PYCODE
+      - name: Create draft containing public binary and source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json,os,subprocess
+          version=os.environ['VERSION']; sha=os.environ['GITHUB_SHA']
+          result=subprocess.run(['gh','release','view',version,'--json','isDraft,targetCommitish'],capture_output=True,text=True)
+          if result.returncode == 0:
+              release=json.loads(result.stdout)
+              if not release['isDraft'] or release['targetCommitish'] != sha:
+                  raise SystemExit('Refusing to overwrite a published release or another source revision')
+          else:
+              subprocess.run(['gh','release','create',version,'--target',sha,'--draft','--title','kamiOS 1.0 ('+version+')','--notes-file','RELEASE.txt'],check=True)
+          PY
+          gh release upload "$VERSION" dist/* --clobber
+      - name: Use public-channel publisher role
+        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c
+        with:
+          role-to-assume: ${{ vars.OTA_PUBLIC_ROLE_ARN }}
+          aws-region: ${{ vars.OTA_AWS_REGION }}
+          allowed-account-ids: '074642416953'
+      - name: Sign, publish and verify public OTA bytes
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+          OTA_ACCESS_KEY: ${{ secrets.OTA_PRODUCTION_ACCESS_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os,subprocess,tempfile
+          from pathlib import Path
+          with tempfile.TemporaryDirectory() as d:
+              key=Path(d)/'signing.pem'
+              key.write_text(os.environ.pop('OTA_SIGNING_KEY'));key.chmod(0o600)
+              subprocess.run(['python3','tools/ota/publish.py','--firmware','dist/firmware.bin','--channel','public','--version',os.environ['VERSION'],'--signing-key',str(key)],check=True)
+          PY
+      - name: Make the verified release visible
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$VERSION" --draft=false --latest

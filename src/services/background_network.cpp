@@ -227,7 +227,7 @@ AudioSuspension suspendForKamiVoice(uint32_t) {
   return {true,AudioSuspension::Poller::StopPending};
 }
 bool kamiVoiceNetworkReady() {
-  if(!voicePriority.load()) return true;
+  if(!voicePriority.load()) return !services::net_poll::onboardingRegistrationPriority();
   widgets::sync::requestPollingPause();
   auto* queue=uploads::readyQueue();
   return !firmware_update::noticeInFlight() && !uploadAcquiring.load() && (!queue || !queue->workerRunning()) &&

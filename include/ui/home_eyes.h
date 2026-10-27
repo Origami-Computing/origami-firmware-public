@@ -70,6 +70,9 @@ void setEyeOffset(float x, float y);
 void setHomeMotion(float squeeze, bool contact);
 // Centered conversation actor uses the same cached geometry and natural blink.
 bool drawConversationEyes(TFT_eSPI& tft, float x, float y, uint32_t now, bool onlyChanged = false);
+// Pure UI paint using the wake face/hand, starting open before the happy wave.
+// Does not start a wake action or mutate home expression/blink state.
+void drawOutroWave(TFT_eSPI& target,uint32_t age);
 bool drawTravelEyes(TFT_eSPI& tft, float avatar, float offsetX=0, float offsetY=0);
 bool drawThinkingEyes(TFT_eSPI& tft, float settle, uint32_t now, bool onlyChanged);
 bool setEmotion(const char* name, bool immediate = false);

@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <cstdio>
+#include <atomic>
 #include <sys/time.h>
 #include <time.h>
 
@@ -16,9 +17,8 @@ namespace time {
 // reliable "synced this session" test that defeats stale RTC carry-over.
 static constexpr time_t kSyncedEpochThreshold = (time_t)1700000000;
 
-static bool s_sntp_started = false;
+static std::atomic<bool> s_sntp_started{false};
 static bool s_tz_configured = false;
-static uint32_t s_last_attempt_ms = 0;
 
 void init() {
   // Wipe any time the RTC carried across a soft reboot back to "unset" so a stale
@@ -30,25 +30,17 @@ void init() {
   settimeofday(&tv, nullptr);
   s_sntp_started   = false;
   s_tz_configured  = false;
-  s_last_attempt_ms = 0;
 }
 
 bool isSynced() { return ::time(nullptr) > kSyncedEpochThreshold; }
 
 void service(uint32_t millis_now) {
-  if (millis_now - s_last_attempt_ms < 10000) {
-    return;
-  }
-  s_last_attempt_ms = millis_now;
-  if (!hal::wifi::connected()) {
-    return;
-  }
-  if (!s_sntp_started) {
-    // POSIX TZ with DST rules for US Pacific (PST/PDT).
-    configTzTime("PST8PDT,M3.2.0,M11.1.0", "pool.ntp.org", "time.nist.gov");
-    s_sntp_started   = true;
-    s_tz_configured = true;
-  }
+  (void)millis_now;
+  // Start SNTP on the first connected service tick, not an arbitrary 10s
+  // polling boundary. Only one caller may start it; SNTP owns its own retries.
+  if (!hal::wifi::connected() || s_sntp_started.exchange(true)) return;
+  configTzTime("PST8PDT,M3.2.0,M11.1.0", "pool.ntp.org", "time.nist.gov");
+  s_tz_configured = true;
 }
 
 bool timezoneConfigured() { return s_tz_configured; }

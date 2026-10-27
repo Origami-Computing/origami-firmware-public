@@ -31,6 +31,12 @@ namespace net_poll {
 bool start();
 /** Coalesce restoration intent; does not start work or cancel an active stop. */
 void requestStart();
+/** UI-task, nonblocking: arm one bounded registration burst after onboarding
+ * Wi-Fi joins, including reconfirmation with an existing bearer token. Worker
+ * consumes intent; existing auth/rate-limit cooldowns survive. */
+void requestOnboardingRegistration();
+/** Bounded scheduling hint: defer idle Agent reconnects during confirmation. */
+bool onboardingRegistrationPriority();
 /** Service tick: consume pending intent and admit startup as one decision.
  * False means no request, busy lifecycle or allocation failure; retry on later
  * ticks. Stop cancels older requests; later requests survive in-flight startup. */
@@ -45,6 +51,10 @@ void requestStop();
 bool running();
 // Read-only worker position and elapsed time; does not feed or relax the watchdog.
 void printStatus(Print& out);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+// Isolated policy check on device; simulated outcomes, no transport/NVS mutation.
+void printRegistrationRetryCheck(Print& out);
+#endif
 
 /** Publish the latest UI-core health snapshot. Replaces unsent older health. */
 void setHealthSnapshot(const char* json);
@@ -54,6 +64,8 @@ void setHealthSnapshot(const char* json);
  *  timeout. Voice/music request this stop on a best-effort basis; their audio
  *  suspension result reports whether exit completed or remains pending. */
 bool stopRequested();
+/** TLS boundary: cancel only this worker's handshake after a stop request. */
+bool cancelHandshakeForCurrentTask();
 
 }  // namespace net_poll
 }  // namespace services

@@ -11,3 +11,4 @@ include/config/secrets.h
 __pycache__/
 *.py[cod]
 .DS_Store
+/.cache/

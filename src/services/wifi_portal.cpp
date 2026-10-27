@@ -1,3 +1,4 @@
+#include "core/release_policy.h"
 #include "services/wifi_portal.h"
 #include <Arduino.h>
 #include <WiFi.h>
@@ -95,12 +96,17 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
       fetch('/scan').then(r => r.json()).then(data => {
         document.getElementById('scanBtn').textContent = 'Scan for Networks';
         if (data.networks && data.networks.length > 0) {
-          let html = '';
+          const container = document.getElementById('networks');
+          container.replaceChildren();
           data.networks.forEach(n => {
-            html += '<div class="network" onclick="document.getElementById(\'ssid\').value=\'' + 
-                    n.ssid.replace(/'/g, "\\'") + '\'">' + n.ssid + ' (' + n.rssi + 'dBm)</div>';
+            const row = document.createElement('div');
+            row.className = 'network';
+            row.textContent = n.ssid + ' (' + n.rssi + 'dBm)';
+            row.addEventListener('click', () => {
+              document.getElementById('ssid').value = n.ssid;
+            });
+            container.appendChild(row);
           });
-          document.getElementById('networks').innerHTML = html;
         } else {
           document.getElementById('networks').innerHTML = 'No networks found';
         }
@@ -143,13 +149,22 @@ static const char INDEX_HTML[] PROGMEM = R"rawliteral(
           document.getElementById('saved').innerHTML = '<div style="color:#aaa;">No saved networks</div>';
           return;
         }
-        let html = '';
+        const container = document.getElementById('saved');
+        container.replaceChildren();
         nets.forEach((n, i) => {
-          const safe = n.ssid.replace(/'/g, "\\'");
-          html += '<div class="saved"><span class="ssid">' + n.ssid + '</span>'
-                + '<button class="forget" onclick="forget(' + i + ", '" + safe + '\')">Forget</button></div>';
+          const row = document.createElement('div');
+          row.className = 'saved';
+          const label = document.createElement('span');
+          label.className = 'ssid';
+          label.textContent = n.ssid;
+          const button = document.createElement('button');
+          button.className = 'forget';
+          button.textContent = 'Forget';
+          button.addEventListener('click', () => forget(i, n.ssid));
+          row.appendChild(label);
+          row.appendChild(button);
+          container.appendChild(row);
         });
-        document.getElementById('saved').innerHTML = html;
       }).catch(e => {
         document.getElementById('saved').innerHTML = '<div style="color:#ff6b6b;">Failed to load</div>';
       });
@@ -416,6 +431,8 @@ void stopHttp() {
 } // namespace
 
 bool open() {
+  // Production provisioning uses QR/Bluetooth; never start the legacy AP.
+  if (core::release_policy::productionOnly) return false;
   if (s_open) return s_ready;
   s_open = true;
   // Block any deferred STA restore that some other app scheduled; otherwise

@@ -22,10 +22,10 @@ No blanket claim of secret absence or third-party legal clearance is made. The s
 
 Every new candidate must be tied to an exact source digest and firmware hash. A successful manual build does not constitute publication or binary/hardware approval; releases remain drafts. Do not change visibility until the applicable remaining items have been resolved and publication is explicitly authorized.
 
-## Creating a release candidate
+## Creating and promoting a release candidate
 
-Open **Actions → Build firmware draft release → Run workflow**, select **main**, and enter an unused review tag such as `v0.1.213-public-review.2`. The workflow checks source, builds the custom production-policy firmware, and creates a **draft** GitHub Release with the application binary, checksums, source companion and notices. It never publishes a release or changes repository visibility. Use a new tag for each candidate; existing releases are not overwritten.
+Follow the [private-to-public promotion runbook](public-promotion.md) for source sync, review, qualification, legacy-device migration and launch. The candidate workflow now builds a signed production-policy image and prepares its manifest without changing an OTA channel. Use an unused tag such as `v1.0.0-public-review.1` matching `platformio.ini`.
 
-The version prefix must describe the firmware version configured in `platformio.ini`; increment the review suffix for another build of that version. These candidates are custom builds, not signed official OTA updates. The original production image is retained separately in the first review draft.
+The publication workflow verifies and promotes the exact qualified candidate bytes. It requires the stable version and candidate tag, plus approval of the exact tracked tree. Draft creation does not set publication approval. A signed candidate is not hardware qualification or permission to change visibility.
 
-Before any public launch, complete the outstanding review above and run `python3 tools/check_release_approval.py` against the approved tree. Draft creation deliberately does not set or bypass publication approval. GitHub administrators can manually publish drafts, so the documented review remains required.
+The draft workflow is restricted to a private repository. A reviewed post-launch qualification path is required for subsequent releases after this repository becomes public. See the runbook's future-promotions section.

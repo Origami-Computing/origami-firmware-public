@@ -51,10 +51,12 @@
  */
 
 #include "apps/camera_menu_app.h"
+#include "apps/tutorial_app.h"
 #include "ui/safe_area_draw.h"
 #include "services/camera_snapshot.h"
 #include "services/camera_trial.h"
 #include "ui/camera_preview.h"
+#include "ui/onboarding_approved_view.h"
 
 #include <Arduino.h>
 #include "app.h"
@@ -117,6 +119,8 @@ static char        s_lastCaptureLabel[28] = {0};  // "#N  DD/MM  HH:MM:SS"
 static uint32_t    s_captureInfoMs    = 0;        // millis() when last capture finished
 static services::camera::Session s_camera;
 static uint32_t    s_lastFrameMs  = 0;
+static bool s_tutorialRequested=false,s_tutorialCapture=false;
+static services::photos::Target s_tutorialPhoto;
 static bool        s_continuousVga = false;
 static bool        s_reviewActive = false;
 static uint32_t    s_reviewStartMs = 0;
@@ -287,7 +291,7 @@ static void camPresentPhotographer() {
  const uint32_t now=millis();
  const unsigned age=std::min(999u,(unsigned)(now-s_cameraStageAt));
  const int pulseAge=s_cameraPulseAt && now-s_cameraPulseAt<140u ? int(now-s_cameraPulseAt) : -1;
- const auto presented=s_cameraPreview.present(s_cameraStage*1000+age,pulseAge);
+ const auto presented=s_cameraPreview.present(s_cameraStage*1000+age,pulseAge,s_tutorialCapture);
  if(presented.syncMissed)++s_teMisses;
  s_teWaitUs=presented.syncWaitUs;
  s_cameraAnimationAt=now;
@@ -431,6 +435,9 @@ static bool camStopWifiForCamera(bool deepPowerDown) {
 }
 
 static bool camPrepareViewfinderConsumer() {
+  if(s_tutorialCapture&&!s_cameraPreview.hasSurfaces()){
+    snprintf(camStatusMsg,sizeof(camStatusMsg),"Camera preview memory unavailable");return false;
+  }
   if (!camPrepareDecoder()) return false;
   hal::display::enterOptimizedRender();
   return true;
@@ -943,6 +950,7 @@ static void camDrawError() {
 
 static void camEnter() {
   camState = CAM_INIT;
+  s_tutorialCapture=s_tutorialRequested;s_tutorialRequested=false;s_tutorialPhoto={};
   Serial.println("[cam] Entering Camera");
   // DO NOT endSession() here. Camera doesn't render eyes, so freeing the ~222 KB of PSRAM eye
   // sprites only saves memory we don't need to save (PSRAM is 8 MB; camera framebuffers come from
@@ -1146,7 +1154,34 @@ static void camButtonA() {
   }
 }
 
+static void captureTutorialPhoto(){
+ if(!services::photos::available()){snprintf(camStatusMsg,sizeof(camStatusMsg),"SD unavailable");showError();return;}
+ const auto photo=services::photos::prepare();
+ if(!photo.valid()){snprintf(camStatusMsg,sizeof(camStatusMsg),"Couldn't prepare photo");showError();return;}
+ camShowShutterFrame();
+ bool saved=false;
+ if(s_continuousVga&&s_settings.capture==CR_VGA){
+  services::camera::Snapshot snapshot;
+  if(snapshot.captureVga(s_camera,esp_timer_get_time())==services::camera::Snapshot::Result::Ready){
+   s_cameraStage=2;s_cameraStageAt=millis();s_cameraPulseAt=millis();camDrawVgaJpeg(snapshot.data(),snapshot.size());
+   camDrawReviewStatus("Saving...");saved=services::photos::write(photo,snapshot.data(),snapshot.size());
+  }
+ }else{
+  camReleaseDecoder();
+  if(s_camera.prepareStill(s_settings.capture,s_settings.tuning())==services::camera::Session::StillResult::Ready)
+   {camDrawReviewStatus("Saving...");saved=s_camera.captureToFile(photo.path);}
+ }
+ if(!saved){hal::sd::removeFile(photo.path);snprintf(camStatusMsg,sizeof(camStatusMsg),"Photo capture failed");showError();return;}
+ camDrawReviewStatus("Saved");
+ s_tutorialPhoto=photo;
+ Serial.printf("[tutorial-photo] captured sequence=%lu queued=0\n",(unsigned long)photo.sequence);
+ // App teardown stops the camera and schedules network restoration BEFORE
+ // tutorial resume displays the still. No upload is admitted before Send.
+ NavHandler::instance().pop();
+}
+
 static void camButtonB() {
+  if(s_tutorialCapture&&camState==CAM_VIEWFINDER){captureTutorialPhoto();return;}
   switch (camState) {
     case CAM_VIEWFINDER: {
       if (s_continuousVga && s_settings.capture == CR_VGA && s_camera.running()) {
@@ -1278,6 +1313,8 @@ static void enterErrorScreen() {
   camDrawError();
 }
 
+static bool cameraChord(){return apps::tutorial::returnFromNavigation();}
+
 static void viewfinderTick(uint32_t) {
   camTick();
 }
@@ -1288,7 +1325,7 @@ const ::scene::Screen kScreenCameraViewfinder = {
     nullptr,
     viewfinderTick,
     onInput,
-    nullptr,
+    cameraChord,
     nullptr,
     "viewfinder",
     buildViewfinderScene,
@@ -1301,7 +1338,7 @@ const ::scene::Screen kScreenCameraSettings = {
     nullptr,
     viewfinderTick,
     onInput,
-    nullptr,
+    cameraChord,
     onDraw,
     "settings",
     buildSettingsScene,
@@ -1314,7 +1351,7 @@ const ::scene::Screen kScreenCameraManual = {
     nullptr,
     viewfinderTick,
     onInput,
-    nullptr,
+    cameraChord,
     onDraw,
     "manual",
     buildManualScene,
@@ -1326,7 +1363,7 @@ const ::scene::Screen kScreenCameraReadme = {
     nullptr,
     nullptr,
     onInput,
-    nullptr,
+    cameraChord,
     onDraw,
     "readme",
     buildReadmeScene,
@@ -1338,7 +1375,7 @@ const ::scene::Screen kScreenCameraError = {
     nullptr,
     nullptr,
     onInput,
-    nullptr,
+    cameraChord,
     nullptr,
     "error",
     buildErrorScene,
@@ -1388,6 +1425,12 @@ static const ::scene::Screen* const kScreens[] = {
     &kScreenCameraReadme,
     &kScreenCameraError,
 };
+void beginTutorialCapture(){s_tutorialRequested=true;NavHandler::instance().push(&app);}
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+bool copyPreviewForDevelopment(TFT_eSprite& target){return NavHandler::instance().top()==&app&&s_cameraPreview.copyCompositeForDevelopment(target);}
+#endif
+services::photos::Target takeTutorialPhoto(){auto photo=s_tutorialPhoto;s_tutorialPhoto={};return photo;}
+
 App app = SCENE_APP_CATALOG_LIFECYCLE_HOOKS("Camera", "camera", &kScreenCameraViewfinder, camEnter, resumeCameraWorkflow, camExit,
                             "src/apps/camera_menu_app.cpp", kScreens, nullptr, nullptr);
 

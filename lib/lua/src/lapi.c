@@ -1089,6 +1089,7 @@ LUA_API int lua_load (lua_State *L, lua_Reader reader, void *data,
   ZIO z;
   int status;
   lua_lock(L);
+  luaC_checkGC(L);
   if (!chunkname) chunkname = "?";
   luaZ_init(L, &z, reader, data);
   status = luaD_protectedparser(L, &z, chunkname, mode);
@@ -1171,7 +1172,16 @@ LUA_API int lua_gc (lua_State *L, int what, ...) {
         luaC_step(L);
       }
       else {  /* add 'data' to total debt */
-        debt = cast(l_mem, data) * 1024 + g->GCdebt;
+        /* Saturate both the KB conversion and addition (also on 32-bit). */
+        l_mem increment;
+        if (data > MAX_LMEM / 1024) increment = MAX_LMEM;
+        else if (data < -MAX_LMEM / 1024) increment = -MAX_LMEM;
+        else increment = cast(l_mem, data) * 1024;
+        if (increment > 0 && g->GCdebt > MAX_LMEM - increment)
+          debt = MAX_LMEM;
+        else if (increment < 0 && g->GCdebt < -MAX_LMEM - increment)
+          debt = -MAX_LMEM;
+        else debt = g->GCdebt + increment;
         luaE_setdebt(g, debt);
         luaC_checkGC(L);
       }
@@ -1343,7 +1353,7 @@ void lua_warning (lua_State *L, const char *msg, int tocont) {
 LUA_API void *lua_newuserdatauv (lua_State *L, size_t size, int nuvalue) {
   Udata *u;
   lua_lock(L);
-  api_check(L, 0 <= nuvalue && nuvalue < USHRT_MAX, "invalid value");
+  api_check(L, 0 <= nuvalue && nuvalue < SHRT_MAX, "invalid value");
   u = luaS_newudata(L, size, nuvalue);
   setuvalue(L, s2v(L->top.p), u);
   api_incr_top(L);

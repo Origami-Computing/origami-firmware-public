@@ -4,6 +4,9 @@
 #include <stdint.h>
 
 namespace sfx {
+// UI-task diagnostics for successfully written blips, reset on each TX open.
+struct TypewriterStats {uint32_t played=0,totalGapMs=0,maxGapMs=0,noteCounts[5]{};};
+TypewriterStats typewriterStats();
 
 /**
  * Pokémon / Animal Crossing-style per-character text blip.
@@ -46,8 +49,9 @@ bool typewriterOpen(uint32_t sampleRate = 16000);
 /** Synthesise and push one character blip (8 ms, 128 frames @ 16 kHz).
  *  Space, newline, tab and non-printable characters produce no sound.
  *  `charIndex` selects pitch from the five-note pentatonic set.
+ *  Returns true only when the blip was successfully written to I2S.
  *  No-op if typewriterOpen() has not succeeded. */
-void typewriterPlayChar(char c, size_t charIndex);
+bool typewriterPlayChar(char c, size_t charIndex);
 
 /** End the I2S TX session only if it still belongs to the typewriter.
  *  Safe to call when not open (no-op). */
@@ -58,7 +62,9 @@ bool typewriterIsOpen();
 
 /** Open the session if needed, then play one character blip.
  *  Silently tears down and returns if the mic is actively recording (I2S conflict).
+ *  Returns true only for an admitted, successfully written blip; callers can
+ *  advance a note sequence without whitespace/frame skips changing its melody.
  *  Safe to call unconditionally from the typing animation tick — no agent state required. */
-void typewriterServiceChar(char c, size_t charIndex);
+bool typewriterServiceChar(char c, size_t charIndex);
 
 }  // namespace sfx

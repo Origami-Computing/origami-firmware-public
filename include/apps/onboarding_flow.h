@@ -5,7 +5,7 @@ enum class Input { A, B, C, Rotate };
 enum class WifiResult { None, Back, Skipped, Failed, Joined };
 struct Flow {
  unsigned page=0, origin=11;
- static constexpr unsigned kFinished=29;
+ static constexpr unsigned kFinished=35;
  bool practiced=false, wifiOnly=false;
  void reset(){page=0;origin=11;practiced=false;wifiOnly=false;}
  void beginWifiSetup(){reset();wifiOnly=true;page=8;}
@@ -17,17 +17,21 @@ struct Flow {
   else if((page==3&&i==Input::A)||(page==4&&i==Input::B)||(page==5&&i==Input::C)||(page==6&&i==Input::Rotate))++page;
   else switch(page){
    case 7: if(i==Input::A)page=6;else if(i==Input::B)page=8;break;
-   case 8: if(i==Input::A)page=7;else if(i==Input::B)page=9;break;
-   case 9: if(i==Input::A)page=8;else if(i==Input::B)page=12;break;
+   case 8: if(i==Input::A)page=7;else if(i==Input::B)page=wifiOnly?9:32;break;
+   case 32:if(i==Input::A)page=8;else if(i==Input::B)page=9;break;
+   case 9: if(i==Input::A)page=wifiOnly?8:32;else if(i==Input::B)page=12;break;
    case 28:if(i==Input::A)page=9;else if(i==Input::B)page=10;break;
    case 10:if(i==Input::A)page=9;else if(i==Input::B)page=11;break;
    case 11:if(i==Input::A)page=10;else if(i==Input::B){origin=11;page=17;}break;
-   case 14:if(i==Input::B){origin=14;page=17;}break;
+   case 14:if(i==Input::B){page=29;}break;
+   case 29:if(i==Input::A)page=14;else if(i==Input::B)page=30;break;
+   case 31:if(i==Input::A)page=30;else if(i==Input::B){origin=31;page=17;}break;
    case 16:if(i==Input::A)page=12;else if(i==Input::B){origin=16;page=17;}break;
-   case 17:if(i==Input::A){page=origin;}else if(i==Input::B)page=18;break;
+   case 17:if(i==Input::A){page=origin;}else if(i==Input::B)page=33;break;
+   case 33:if(i==Input::A)page=17;else if(i==Input::B)page=18;break;
    case 18:if(i==Input::Rotate){page=19;practiced=false;}break;
    case 21:if(i==Input::B)page=22;break;
-   case 22:if(i==Input::B)page=23;break;
+   case 22:if(i==Input::B)page=34;break;
    case 24:if(i==Input::B)page=25;break;
    case 25:if(i==Input::A)page=24;break;
   }
@@ -36,9 +40,9 @@ struct Flow {
  }
  void wifiReturned(WifiResult r){
   switch(r){
-   case WifiResult::Skipped:page=10;break;
-   case WifiResult::Failed:page=16;break;
-   case WifiResult::Joined:page=17;origin=14;break;
+   case WifiResult::Skipped:page=17;origin=12;break;
+   case WifiResult::Failed:page=17;origin=12;break;
+   case WifiResult::Joined:page=wifiOnly?kFinished:29;origin=14;break;
    default:page=9;break;
   }
   if(wifiOnly && page==17)page=kFinished;
@@ -46,6 +50,7 @@ struct Flow {
  void menuReturned(){page=practiced?24:18;}
  bool beginTalk(){if(page!=25)return false;page=27;return true;}
  void agentReturned(){if(page==27)page=21;}
+ void outroFinished(){if(page==34)page=23;}
 };
 // A reveal tap only reveals text; it cannot also advance to another page.
 struct TextPlayback {

@@ -10,7 +10,10 @@ bool isActive();
 // Remains true while a real scanner/menu is above the tutorial on the stack.
 bool sessionActive();
 bool navigationLessonActive();
+bool navigationPracticed();
 void noteNavigation();
+// UI-task return from a menu/app practice chord, preserving tutorial ownership.
+bool returnFromNavigation();
 // Explicit user replay: open the first lesson without clearing saved settings.
 void replay();
 // Reuse just the Wi-Fi lessons, returning to the caller without saving progress.

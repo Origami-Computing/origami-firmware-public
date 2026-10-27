@@ -121,12 +121,8 @@
 
 /*
 @@ LUA_32BITS enables Lua with 32-bit integers and 32-bit floats.
-** Origami: enabled. The ESP32-S3 has a single-precision FPU (fast 32-bit
-** float) but no double FPU, and 32-bit integers shrink every TValue — smaller
-** VM, smaller heap footprint, faster math on this target. A command-line
-** -DLUA_32BITS does NOT work because this header redefines it; set it here.
 */
-#define LUA_32BITS	1
+#define LUA_32BITS	1 /* Origami: ESP32-S3 integer/float footprint. */
 
 
 /*
