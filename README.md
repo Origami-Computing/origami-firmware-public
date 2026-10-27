@@ -40,6 +40,7 @@ The upcoming release is **kamiOS 1.0** (`v1.0.0`). Qualification builds remain p
 
 - [Architecture and ownership](docs/architecture.md)
 - [Build and verification](docs/building.md)
+- [SDK license and security review](docs/sdk-review.md)
 - [Private-to-public promotion runbook](docs/public-promotion.md)
 - [Contribution guide](CONTRIBUTING.md)
 - [Security reporting](SECURITY.md)

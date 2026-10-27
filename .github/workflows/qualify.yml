@@ -1,0 +1,65 @@
+name: Deploy private Public-channel qualification candidate
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_tag:
+        description: 'Signed candidate already USB-tested; deploys to existing Public key holders'
+        required: true
+        type: string
+      version:
+        description: 'Matching stable firmware version, e.g. v1.0.0'
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: public-firmware-publication
+  cancel-in-progress: false
+jobs:
+  qualify:
+    if: github.ref == 'refs/heads/main' && github.event.repository.private
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ inputs.version }}
+      CANDIDATE_TAG: ${{ inputs.candidate_tag }}
+      OTA_S3_BUCKET: ${{ vars.OTA_S3_BUCKET }}
+      OTA_BASE_URL: ${{ vars.OTA_BASE_URL }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Download exact private candidate and verify source and signatures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import os,re
+          version=os.environ['VERSION']
+          if not re.fullmatch(r'v\d+\.\d+\.\d+',version): raise SystemExit('Invalid version')
+          if not re.fullmatch(re.escape(version)+r'-public-review\.\d+',os.environ['CANDIDATE_TAG']): raise SystemExit('Invalid candidate')
+          PY
+          mkdir dist
+          gh release download "$CANDIDATE_TAG" --dir dist --pattern firmware.bin --pattern latest.json --pattern REVIEW.json --pattern REVIEW.txt --pattern LICENSE --pattern THIRD_PARTY_NOTICES.md --pattern source-review.tar.gz --pattern NOTICES-REVIEW.txt --pattern SHA256SUMS.txt
+          python3 tools/verify_release_candidate.py --directory dist --version "$VERSION"
+      - name: Assume existing Public-only publisher role
+        uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c
+        with:
+          role-to-assume: ${{ vars.OTA_PUBLIC_ROLE_ARN }}
+          aws-region: ${{ vars.OTA_AWS_REGION }}
+          allowed-account-ids: '074642416953'
+      - name: Deploy and verify Public candidate without publishing GitHub release
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+          OTA_ACCESS_KEY: ${{ secrets.OTA_PRODUCTION_ACCESS_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os,subprocess,tempfile
+          from pathlib import Path
+          with tempfile.TemporaryDirectory() as directory:
+              key=Path(directory)/'key.pem'
+              key.write_text(os.environ.pop('OTA_SIGNING_KEY'));key.chmod(0o600)
+              subprocess.run(['python3','tools/ota/publish.py','--firmware','dist/firmware.bin','--channel','public','--version',os.environ['VERSION'],'--signing-key',str(key)],check=True)
+          PY
