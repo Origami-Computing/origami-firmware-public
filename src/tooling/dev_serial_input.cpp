@@ -334,6 +334,7 @@ static void printHelp() {
   Serial.println("  ota auth set TOKEN persist OTA access key (64 hex)");
   Serial.println("  ota auth clear     remove persisted OTA token");
   Serial.println("  ota status         show OTA build, hardware, channel, and hold");
+  Serial.println("  ota channel NAME   select public/private/staging using normal access checks");
   Serial.println("  queue status       show upload order, attempts, turn, and cooldown");
   Serial.println("  queue enqueue image|audio /upload_queue/test-NAME  enqueue retained test media");
   Serial.println("  queue clear        clear live upload queue + persisted manifest");
@@ -2570,6 +2571,22 @@ static bool handleOtaAuthCommand(const char* rawLine) {
   if (!startsWithWord(line, "ota")) return false;
 
   line = trimInPlace(line + 3);
+  if (startsWithWord(line, "channel")) {
+    const char* name = trimInPlace(line + 7);
+    using namespace services::ota_client;
+    ReleaseChannel requested;
+    if (!strcmp(name, "public")) requested = ReleaseChannel::Public;
+    else if (!strcmp(name, "private")) requested = ReleaseChannel::Private;
+    else if (!strcmp(name, "staging")) requested = ReleaseChannel::Staging;
+    else { Serial.println("OTA CHANNEL ERR use public|private|staging"); return true; }
+    if (s_otaProbeState || services::firmware_update::noticeBusy()) {
+      Serial.println("OTA CHANNEL ERR update-busy"); return true;
+    }
+    const bool ok = setReleaseChannel(requested);
+    Serial.printf("OTA CHANNEL %s selected=%s reason=%s\n", ok ? "OK" : "ERR",
+                  releaseChannelName(releaseChannel()), ok ? "" : lastError());
+    return true;
+  }
   if (!strcmp(line, "verify-download")) {
     if (s_otaProbeState) { Serial.println("OTA PROBE BUSY"); return true; }
     s_otaProbeBoot = esp_ota_get_boot_partition();
