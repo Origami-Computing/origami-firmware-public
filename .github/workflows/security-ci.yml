@@ -23,7 +23,13 @@ jobs:
           python3 tools/test_bounded_http.py
           python3 tools/test_tls_anchor_policy.py
           python3 tools/test_tls_finished.py
+          python3 tools/test_shipping.py
+          python3 tools/test_shipping_power.py
+          python3 tools/test_registration_priority.py
+          python3 tools/test_clock_sync_start.py
+          python3 tools/test_typewriter.py c++
           python3 tools/test_ota_download_policy.py
+          python3 tools/test_ota_versions.py
           python3 tools/test_lua_security.py
           python3 -m unittest discover -s tests/ota -v
       - name: Build production firmware

@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'New review tag, e.g. v0.1.213-public-review.2'
+        description: 'New private candidate tag, e.g. v1.0.0-public-review.1'
         required: true
         type: string
 permissions:
@@ -13,7 +13,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   draft:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' && github.event.repository.private
     environment: release-review
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -28,34 +28,40 @@ jobs:
       - name: Check source and review tag
         run: |
           python3 - <<'PY'
-          import os, re
-          if not re.fullmatch(r'v\d+\.\d+\.\d+-public-review\.\d+', os.environ['REVIEW_TAG']):
+          import os, re, pathlib
+          match = re.fullmatch(r'(v\d+\.\d+\.\d+)-public-review\.\d+', os.environ['REVIEW_TAG'])
+          version = re.search(r'OTA_FIRMWARE_VERSION=.*?(v\d+\.\d+\.\d+)', pathlib.Path('platformio.ini').read_text()).group(1)
+          if not match or match[1] != version:
               raise SystemExit('Use a versioned public-review tag')
           PY
           python3 tools/check_release_approval.py --digest > /tmp/source-digest.txt
           python3 tools/check_tracked_secrets.py
           python3 tools/check_architecture_dependencies.py
           python3 tools/test_architecture_dependencies.py
-      - name: Build custom production-policy candidate
+      - name: Build kamiOS production-policy candidate
         run: |
           python3 -m venv "$RUNNER_TEMP/pio-venv"
           "$RUNNER_TEMP/pio-venv/bin/pip" install platformio==6.2.0
-          "$RUNNER_TEMP/pio-venv/bin/pio" run -e esp32-s3-menu-n16r8-production
+          export SOURCE_DATE_EPOCH="$(git show -s --format=%ct)"
+          "$RUNNER_TEMP/pio-venv/bin/pio" run -e esp32-s3-menu-n16r8-release-review
       - name: Collect application only
         run: |
           mkdir dist
-          cp .pio/build/esp32-s3-menu-n16r8-production/firmware.bin dist/firmware.bin
+          cp .pio/build/esp32-s3-menu-n16r8-release-review/firmware.bin dist/firmware.bin
           python3 - <<'PY'
-          import hashlib, os, pathlib
+          import hashlib, os, pathlib, json
           p = pathlib.Path('dist/firmware.bin')
           pathlib.Path('dist/SHA256SUMS.txt').write_text(hashlib.sha256(p.read_bytes()).hexdigest() + '  firmware.bin\n')
-          pathlib.Path('dist/REVIEW.txt').write_text('Custom production-policy build from ' + os.environ['GITHUB_SHA'] + '\nTracked source digest: ' + pathlib.Path('/tmp/source-digest.txt').read_text().strip() + '\nNot signed official OTA firmware. Binary, notices and hardware review required before publication.\n')
+          digest = pathlib.Path('/tmp/source-digest.txt').read_text().strip()
+          version = os.environ['REVIEW_TAG'].split('-public-review.')[0]
+          pathlib.Path('dist/REVIEW.json').write_text(json.dumps(dict(schema=1, version=version, source_commit=os.environ['GITHUB_SHA'], source_digest=digest, firmware_sha256=hashlib.sha256(p.read_bytes()).hexdigest()), indent=2)+'\n')
+          pathlib.Path('dist/REVIEW.txt').write_text('kamiOS 1.0 private qualification candidate from ' + os.environ['GITHUB_SHA'] + '\nTracked source digest: ' + digest + '\nSigned production-policy image; not approved for public distribution. No OTA channel is changed by this draft build.\n')
           PY
           cp LICENSE THIRD_PARTY_NOTICES.md dist/
       - name: Package source and full retained notices for review
         run: |
           python3 tools/package_source_review.py \
-            --environment esp32-s3-menu-n16r8-production \
+            --environment esp32-s3-menu-n16r8-release-review \
             --framework "$HOME/.platformio/packages/framework-arduinoespressif32" \
             --output dist/source-review.tar.gz
           python3 - <<'PYCODE'
@@ -68,12 +74,28 @@ jobs:
           paths = sorted(p for p in pathlib.Path('dist').iterdir() if p.is_file() and p.name != 'SHA256SUMS.txt')
           pathlib.Path('dist/SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in paths))
           PYCODE
+      - name: Sign candidate manifest without deploying
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os, subprocess, tempfile, shutil
+          from pathlib import Path
+          with tempfile.TemporaryDirectory() as d:
+              key=Path(d)/'signing.pem'
+              key.write_text(os.environ.pop('OTA_SIGNING_KEY')); key.chmod(0o600)
+              subprocess.run(['python3','tools/ota/publish.py','--firmware','dist/firmware.bin','--channel','public','--version',os.environ['REVIEW_TAG'].split('-public-review.')[0],'--signing-key',str(key),'--output',str(Path(d)/'manifest'),'--prepare-only'],check=True)
+              shutil.copyfile(Path(d)/'manifest/latest.json','dist/latest.json')
+          import hashlib
+          paths=sorted(p for p in Path('dist').iterdir() if p.name!='SHA256SUMS.txt')
+          Path('dist/SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in paths))
+          PY
       - name: Create draft release only
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$REVIEW_TAG" \
             --target "$GITHUB_SHA" --draft --latest=false \
-            --title "Firmware review $REVIEW_TAG" \
+            --title "kamiOS 1.0 — qualification $REVIEW_TAG" \
             --notes-file dist/REVIEW.txt \
-            dist/firmware.bin dist/SHA256SUMS.txt dist/REVIEW.txt dist/LICENSE dist/THIRD_PARTY_NOTICES.md dist/source-review.tar.gz dist/NOTICES-REVIEW.txt
+            dist/*

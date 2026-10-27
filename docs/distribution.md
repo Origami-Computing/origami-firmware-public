@@ -16,9 +16,9 @@ The ordinary default is a custom production-policy build. To reproduce the compi
 pio run -e esp32-s3-menu-n16r8-release-review
 ```
 
-This adds the official-build marker used by the production source. It does not sign or publish an OTA manifest, create access credentials or deploy anything. The build is a local reproduction candidate and must not be represented as the original official bytes. Existing platform/framework/library pins remain in effect. The original firmware source files are unchanged.
+This adds the official-build marker used by the production source. It does not sign or publish an OTA manifest, create access credentials or deploy anything. The build is a local reproduction candidate and must not be represented as the original official bytes. Existing platform/framework/library pins remain in effect. The public candidate includes reviewed security repairs and source updates; it is not the original private production image.
 
-The release review contains a source companion archive with the tracked application tree, resolved direct-library sources and LGPL framework source. Standalone examples are omitted, including upstream WiFiClient demonstration keys; compiled library modules and license notices are retained. No Git metadata, historical commits, credential stores, device dumps or build objects are included. The archive is a review aid until the remaining SDK closure is resolved.
+The release review contains a source companion archive with the tracked application tree, resolved direct-library sources and LGPL framework source. Standalone examples are omitted, including upstream WiFiClient demonstration keys; compiled library modules and license notices are retained. The companion also includes the exact ESP32-S3 SDK headers/precompiled objects needed for relinking and the editable GNU FreeFont source archive. No Git metadata, historical commits, credential stores, device dumps or private application build outputs are included. The archive is a review aid until the remaining SDK closure is resolved.
 
 ## Vendor SDK evidence and review limits
 

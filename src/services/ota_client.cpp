@@ -181,13 +181,16 @@ bool isReleaseNewer(ReleaseChannel channel, const char* candidateTag) {
         !parseVersion(OTA_FIRMWARE_VERSION, &current)) return false;
     if (channel != ReleaseChannel::Staging && candidate.stagingRun >= 0) return false;
 
-    if (candidate.major != current.major) return candidate.major > current.major;
-    if (candidate.minor != current.minor) return candidate.minor > current.minor;
-    if (candidate.patch != current.patch) return candidate.patch > current.patch;
-    // A same-version build from another channel is a distinct release.
+    // Channel choice is explicit and role-checked by the production owner.
+    // Independent channels need not share version numbers (public 1.0 may
+    // coexist with private 0.x). Never treat that choice as a same-channel
+    // automatic rollback. Signature, board/layout and confirmation still apply.
     const char* selected = channel == ReleaseChannel::Staging ? "staging" :
                            channel == ReleaseChannel::Private ? "private" : "public";
     if (strcmp(OTA_BUILD_CHANNEL, selected) != 0) return true;
+    if (candidate.major != current.major) return candidate.major > current.major;
+    if (candidate.minor != current.minor) return candidate.minor > current.minor;
+    if (candidate.patch != current.patch) return candidate.patch > current.patch;
     // A developer may need to replace a custom build with the official build
     // carrying the same human-readable version.
     if (!isOfficialBuild()) return true;

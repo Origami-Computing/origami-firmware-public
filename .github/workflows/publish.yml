@@ -6,6 +6,10 @@ on:
         description: 'Stable version exactly matching platformio.ini (vX.Y.Z)'
         required: true
         type: string
+      candidate_tag:
+        description: 'Private candidate already qualified on hardware (vX.Y.Z-public-review.N)'
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -21,6 +25,7 @@ jobs:
       id-token: write
     env:
       VERSION: ${{ inputs.tag }}
+      CANDIDATE_TAG: ${{ inputs.candidate_tag }}
       OTA_S3_BUCKET: ${{ vars.OTA_S3_BUCKET }}
       OTA_BASE_URL: ${{ vars.OTA_BASE_URL }}
     steps:
@@ -45,30 +50,48 @@ jobs:
           python3 tools/test_bounded_http.py
           python3 tools/test_tls_anchor_policy.py
           python3 tools/test_tls_finished.py
+          python3 tools/test_shipping.py
+          python3 tools/test_shipping_power.py
+          python3 tools/test_registration_priority.py
+          python3 tools/test_clock_sync_start.py
+          python3 tools/test_typewriter.py c++
           python3 tools/test_lua_security.py
           python3 tools/test_ota_download_policy.py
+          python3 tools/test_ota_versions.py
           python3 -m unittest discover -s tests/ota -v
-      - name: Build reviewed official production-policy firmware
+      - name: Download and verify the qualified candidate without rebuilding
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python3 -m venv "$RUNNER_TEMP/pio"
-          "$RUNNER_TEMP/pio/bin/pip" install platformio==6.2.0
-          "$RUNNER_TEMP/pio/bin/pio" run -e esp32-s3-menu-n16r8-release-review
+          python3 - <<'PYCODE'
+          import os,re
+          if not re.fullmatch(re.escape(os.environ['VERSION'])+r'-public-review\.\d+', os.environ['CANDIDATE_TAG']):
+              raise SystemExit('Candidate tag must match the stable release version')
+          PYCODE
           mkdir dist
-          cp .pio/build/esp32-s3-menu-n16r8-release-review/firmware.bin dist/firmware.bin
-          cp LICENSE THIRD_PARTY_NOTICES.md dist/
-          python3 tools/package_source_review.py --environment esp32-s3-menu-n16r8-release-review --framework "$HOME/.platformio/packages/framework-arduinoespressif32" --output dist/source-review.tar.gz
-          python3 - <<'PY'
-          from pathlib import Path
-          import hashlib,os
-          Path('dist/RELEASE.txt').write_text('Public production firmware '+os.environ['VERSION']+'\nSource commit: '+os.environ['GITHUB_SHA']+'\nApplication only: preserve existing NVS and partition layout.\n')
-          paths=sorted(Path('dist').iterdir())
-          Path('dist/SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in paths))
-          PY
+          gh release download "$CANDIDATE_TAG" --dir dist --pattern firmware.bin --pattern latest.json --pattern REVIEW.json --pattern REVIEW.txt --pattern LICENSE --pattern THIRD_PARTY_NOTICES.md --pattern source-review.tar.gz --pattern NOTICES-REVIEW.txt --pattern SHA256SUMS.txt
+          python3 tools/verify_release_candidate.py --directory dist --version "$VERSION"
+          python3 - <<'PYCODE'
+          import os,json,pathlib
+          metadata=json.loads(pathlib.Path('dist/REVIEW.json').read_text())
+          pathlib.Path('RELEASE.txt').write_text('kamiOS 1.0 ('+os.environ['VERSION']+')\nQualified source: '+metadata['source_commit']+'\nFirmware SHA-256: '+metadata['firmware_sha256']+'\nApplication image only. Preserve NVS and partition layout.\n')
+          PYCODE
       - name: Create draft containing public binary and source
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$VERSION" --target "$GITHUB_SHA" --draft --title "kamiOS 1.0 ($VERSION)" --notes-file dist/RELEASE.txt dist/*
+          python3 - <<'PY'
+          import json,os,subprocess
+          version=os.environ['VERSION']; sha=os.environ['GITHUB_SHA']
+          result=subprocess.run(['gh','release','view',version,'--json','isDraft,targetCommitish'],capture_output=True,text=True)
+          if result.returncode == 0:
+              release=json.loads(result.stdout)
+              if not release['isDraft'] or release['targetCommitish'] != sha:
+                  raise SystemExit('Refusing to overwrite a published release or another source revision')
+          else:
+              subprocess.run(['gh','release','create',version,'--target',sha,'--draft','--title','kamiOS 1.0 ('+version+')','--notes-file','RELEASE.txt'],check=True)
+          PY
+          gh release upload "$VERSION" dist/* --clobber
       - name: Use public-channel publisher role
         uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c
         with:
