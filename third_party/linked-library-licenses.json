@@ -1,0 +1,836 @@
+{
+  "scope": "ESP32-S3 n16r8 production link-map archive inventory (includes linker inputs whose sections may be discarded)",
+  "idf_commit": "38eeba213aa695aabfd6d89aa9f5078dbe5a94c3",
+  "libraries": [
+    {
+      "archive": "libDNSServer.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libESP32_OV5640_AF.a",
+      "component": "Camera AF",
+      "license_classification": "MIT",
+      "primary_notice": "lib/ESP32_OV5640_AF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libFS.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libFrameworkArduino.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libHTTPClient.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libJPEGDEC.a",
+      "component": "JPEGDEC",
+      "license_classification": "Apache-2.0",
+      "primary_notice": "third_party/licenses/JPEGDEC/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libJPEGDecoder.a",
+      "component": "JPEGDecoder",
+      "license_classification": "MIT/public-domain alternative",
+      "primary_notice": "third_party/licenses/JPEGDecoder/license.txt",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libLittleFS.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libNimBLE-Arduino.a",
+      "component": "NimBLE",
+      "license_classification": "Apache-2.0; nested BSD notices",
+      "primary_notice": "third_party/licenses/NimBLE-Arduino/NOTICE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libPreferences.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libQRCode.a",
+      "component": "QRCode",
+      "license_classification": "MIT",
+      "primary_notice": "third_party/licenses/QRCode/LICENSE.txt",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libSD.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libSPI.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libSPIFFS.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libTB_TFT_eSPI.a",
+      "component": "TFT",
+      "license_classification": "MIT/BSD and separately licensed optional GNU FreeFont assets",
+      "primary_notice": "lib/TB_TFT_eSPI/license.txt",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libWebServer.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libWebSockets.a",
+      "component": "WebSockets",
+      "license_classification": "LGPL-2.1-or-later",
+      "primary_notice": "third_party/licenses/WebSockets/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libWiFi.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libWiFiClientSecure.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libWire.a",
+      "component": "Arduino",
+      "license_classification": "LGPL-2.1-or-later with per-file permissive exceptions",
+      "primary_notice": "third_party/licenses/Arduino-ESP32/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libapp_update.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libbootloader_support.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libbt.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libbtbb.a",
+      "component": "Bluetooth controller",
+      "license_classification": "Apache-2.0; source not supplied for vendor controller implementation",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/esp32c3-bt-lib/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libbtdm_app.a",
+      "component": "Bluetooth controller",
+      "license_classification": "Apache-2.0; source not supplied for vendor controller implementation",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/esp32c3-bt-lib/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libc.a",
+      "component": "Newlib",
+      "license_classification": "Permissive per-file licenses (MIT/BSD and retained variants)",
+      "primary_notice": "third_party/licenses/toolchain/newlib/COPYING.NEWLIB",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libcoexist.a",
+      "component": "Wi-Fi binary libraries",
+      "license_classification": "Apache-2.0; source not supplied for vendor radio implementation",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/esp32-wifi-lib/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libcore.a",
+      "component": "Wi-Fi binary libraries",
+      "license_classification": "Apache-2.0; source not supplied for vendor radio implementation",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/esp32-wifi-lib/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libcxx.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libdriver.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libefuse.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp32-camera.a",
+      "component": "Camera",
+      "license_classification": "Apache-2.0 / ISC quirc",
+      "primary_notice": "third_party/licenses/esp32-camera/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_common.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_diagnostics.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_eth.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_event.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_hw_support.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_ipc.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_littlefs.a",
+      "component": "LittleFS",
+      "license_classification": "MIT port and BSD-3-Clause filesystem",
+      "primary_notice": "third_party/licenses/LittleFS-port/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_netif.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_phy.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_pm.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_ringbuf.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_rom.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_system.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_timer.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libesp_wifi.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libespcoredump.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libfatfs.a",
+      "component": "FatFS",
+      "license_classification": "ChaN permissive notice",
+      "primary_notice": "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libfreertos.a",
+      "component": "FreeRTOS",
+      "license_classification": "MIT",
+      "primary_notice": "third_party/licenses/ESP-IDF/components/freertos/LICENSE.md",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libgcc.a",
+      "component": "GCC runtime",
+      "license_classification": "GPL-3.0 with GCC Runtime Library Exception 3.1",
+      "primary_notice": "third_party/licenses/toolchain/gcc/COPYING.RUNTIME",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libhal.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libheap.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libjson.a",
+      "component": "cJSON",
+      "license_classification": "MIT",
+      "primary_notice": "third_party/licenses/SDK-submodules/DaveGamble/cJSON/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "liblog.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "liblua.a",
+      "component": "Lua",
+      "license_classification": "MIT",
+      "primary_notice": "lib/lua/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "liblwip.a",
+      "component": "lwIP",
+      "license_classification": "BSD-3-Clause and retained per-file notices",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/esp-lwip/COPYING",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libm.a",
+      "component": "Newlib",
+      "license_classification": "Permissive per-file licenses (MIT/BSD and retained variants)",
+      "primary_notice": "third_party/licenses/toolchain/newlib/COPYING.NEWLIB",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libmbedcrypto.a",
+      "component": "MbedTLS",
+      "license_classification": "Apache-2.0 (selected dual-license option)",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/mbedtls/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libmbedtls_2.a",
+      "component": "MbedTLS",
+      "license_classification": "Apache-2.0 (selected dual-license option)",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/mbedtls/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libmbedx509.a",
+      "component": "MbedTLS",
+      "license_classification": "Apache-2.0 (selected dual-license option)",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/mbedtls/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libmesh.a",
+      "component": "Wi-Fi binary libraries",
+      "license_classification": "Apache-2.0; source not supplied for vendor radio implementation",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/esp32-wifi-lib/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libnet80211.a",
+      "component": "Wi-Fi binary libraries",
+      "license_classification": "Apache-2.0; source not supplied for vendor radio implementation",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/esp32-wifi-lib/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libnewlib.a",
+      "component": "Newlib",
+      "license_classification": "Permissive per-file licenses (MIT/BSD and retained variants)",
+      "primary_notice": "third_party/licenses/toolchain/newlib/COPYING.NEWLIB",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libnvs_flash.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libphy.a",
+      "component": "PHY binary library",
+      "license_classification": "Apache-2.0; source not supplied for vendor PHY implementation",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/esp-phy-lib/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libpp.a",
+      "component": "Wi-Fi binary libraries",
+      "license_classification": "Apache-2.0; source not supplied for vendor radio implementation",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/esp32-wifi-lib/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libprotobuf-c.a",
+      "component": "protobuf-c",
+      "license_classification": "BSD-2-Clause",
+      "primary_notice": "third_party/licenses/SDK-submodules/protobuf-c/protobuf-c/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libprotocomm.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libpthread.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libqrcodegen.a",
+      "component": "QR generation",
+      "license_classification": "MIT",
+      "primary_notice": "third_party/licenses/SDK-HEADER-NOTICES.txt",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libquirc.a",
+      "component": "Camera",
+      "license_classification": "Apache-2.0 / ISC quirc",
+      "primary_notice": "third_party/licenses/esp32-camera/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libsmartconfig.a",
+      "component": "Wi-Fi binary libraries",
+      "license_classification": "Apache-2.0; source not supplied for vendor radio implementation",
+      "primary_notice": "third_party/licenses/SDK-submodules/espressif/esp32-wifi-lib/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libsoc.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libspi_flash.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libspiffs.a",
+      "component": "SPIFFS",
+      "license_classification": "MIT",
+      "primary_notice": "third_party/licenses/SDK-submodules/pellepl/spiffs/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libstdc++.a",
+      "component": "GCC runtime",
+      "license_classification": "GPL-3.0 with GCC Runtime Library Exception 3.1",
+      "primary_notice": "third_party/licenses/toolchain/gcc/COPYING.RUNTIME",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libtcpip_adapter.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libvfs.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libwifi_provisioning.a",
+      "component": "ESP-IDF platform",
+      "license_classification": "Apache-2.0; source/header exceptions retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/LICENSE",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libwpa_supplicant.a",
+      "component": "WPA",
+      "license_classification": "BSD alternative selected; per-file crypto notices retained",
+      "primary_notice": "third_party/licenses/ESP-IDF/components/wpa_supplicant/COPYING",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libxt_hal.a",
+      "component": "Xtensa HAL",
+      "license_classification": "MIT-style Cadence notice / Apache-2.0 wrappers",
+      "primary_notice": "third_party/licenses/Xtensa-HAL/NOTICE.txt",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    },
+    {
+      "archive": "libxtensa.a",
+      "component": "Xtensa HAL",
+      "license_classification": "MIT-style Cadence notice / Apache-2.0 wrappers",
+      "primary_notice": "third_party/licenses/Xtensa-HAL/NOTICE.txt",
+      "additional_notices": [
+        "third_party/licenses/SDK-HEADER-NOTICES.txt",
+        "third_party/licenses/ESP-IDF-SOURCE-NOTICES.txt"
+      ]
+    }
+  ]
+}

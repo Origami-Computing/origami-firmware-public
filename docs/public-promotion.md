@@ -84,7 +84,7 @@ Use the matching reviewed source checkout. A source-digest mismatch, invalid sig
 
 Identify the board, USB port, installed baseline, hardware revision and partition layout. Verify that another operator/chat is not using the board. Save a private recovery backup and protect it as credential-bearing data. Do not erase NVS, SD content, factory data or eFuses as a shortcut.
 
-A private GitHub draft is not automatically an OTA endpoint. Deploying a qualification candidate to a live channel is a separate controlled action: it may reach other authorized devices. Establish the test audience and rollback plan first. Do not mark source/binary review approved merely to bypass the publication workflow for testing.
+A private GitHub draft is not automatically an OTA endpoint. After USB qualification, **Deploy private Public-channel qualification candidate** can deploy the exact signed candidate while the repository is private. This workflow verifies its source digest and signature, does not publish the GitHub release, and does not bypass final publication approval. Deploying a qualification candidate to a live channel is a separate controlled action: it may reach other authorized devices. Establish the test audience and rollback plan first. Do not mark source/binary review approved merely to bypass the publication workflow for testing.
 
 Record each result against the exact candidate hash:
 

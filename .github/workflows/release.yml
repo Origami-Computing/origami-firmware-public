@@ -44,6 +44,7 @@ jobs:
           "$RUNNER_TEMP/pio-venv/bin/pip" install platformio==6.2.0
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct)"
           "$RUNNER_TEMP/pio-venv/bin/pio" run -e esp32-s3-menu-n16r8-release-review
+          python3 tools/check_sdk_review.py --map .pio/build/esp32-s3-menu-n16r8-release-review/firmware.map
       - name: Collect application only
         run: |
           mkdir dist
@@ -70,7 +71,7 @@ jobs:
           notices = [root/'LICENSE', root/'THIRD_PARTY_NOTICES.md']
           notices += sorted(p for p in (root/'third_party/licenses').rglob('*') if p.is_file())
           notices += sorted(p for p in (root/'lib').rglob('*') if p.is_file() and (p.name.lower().startswith(('license', 'copying', 'notice')) or p.name == 'COPYRIGHT'))
-          pathlib.Path('dist/NOTICES-REVIEW.txt').write_text('PRELIMINARY: SDK closure remains required.\n\n' + '\n\n'.join(str(p) + '\n' + p.read_text() for p in notices))
+          pathlib.Path('dist/NOTICES-REVIEW.txt').write_text('Component notices for the reviewed ESP32-S3 candidate; see docs/sdk-review.md for scope.\n\n' + '\n\n'.join(str(p) + '\n' + p.read_text() for p in notices))
           paths = sorted(p for p in pathlib.Path('dist').iterdir() if p.is_file() and p.name != 'SHA256SUMS.txt')
           pathlib.Path('dist/SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest() + '  ' + p.name + '\n' for p in paths))
           PYCODE
@@ -86,6 +87,16 @@ jobs:
               key.write_text(os.environ.pop('OTA_SIGNING_KEY')); key.chmod(0o600)
               subprocess.run(['python3','tools/ota/publish.py','--firmware','dist/firmware.bin','--channel','public','--version',os.environ['REVIEW_TAG'].split('-public-review.')[0],'--signing-key',str(key),'--output',str(Path(d)/'manifest'),'--prepare-only'],check=True)
               shutil.copyfile(Path(d)/'manifest/latest.json','dist/latest.json')
+              # Old clients require a Production manifest. Prepare an internal
+              # signed bridge for the same public bytes; do not deploy it here.
+              import importlib.util, json
+              spec=importlib.util.spec_from_file_location('publisher','tools/ota/publish.py')
+              publisher=importlib.util.module_from_spec(spec);spec.loader.exec_module(publisher)
+              payload=publisher.verify_manifest(json.loads(Path('dist/latest.json').read_text()))
+              payload['channel']='production'
+              payload['path']=payload['path'].replace('/releases/public/','/releases/production/',1)
+              Path('bridge').mkdir()
+              Path('bridge/legacy-bridge.json').write_text(json.dumps(publisher.sign_manifest(payload,key),separators=(',',':'))+'\n')
           import hashlib
           paths=sorted(p for p in Path('dist').iterdir() if p.name!='SHA256SUMS.txt')
           Path('dist/SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in paths))
@@ -99,3 +110,9 @@ jobs:
             --title "kamiOS 1.0 — qualification $REVIEW_TAG" \
             --notes-file dist/REVIEW.txt \
             dist/*
+      - name: Retain signed legacy bridge for private migration
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: legacy-bridge-${{ inputs.tag }}
+          path: bridge/legacy-bridge.json
+          retention-days: 30

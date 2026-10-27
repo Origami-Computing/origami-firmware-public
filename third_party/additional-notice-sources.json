@@ -1,0 +1,17 @@
+[
+  {
+    "notice": "third_party/licenses/LittleFS-port/LICENSE",
+    "url": "https://raw.githubusercontent.com/joltwallet/esp_littlefs/v1.14.1/LICENSE",
+    "sha256": "b6bbf3bd17c2b5532bc25a7acf1760faac0b995d6e0ad8bec29435166727d4c5"
+  },
+  {
+    "notice": "third_party/licenses/LittleFS-core/LICENSE.md",
+    "url": "https://raw.githubusercontent.com/littlefs-project/littlefs/f53a0cc961a8acac85f868b431d2f3e58e447ba3/LICENSE.md",
+    "sha256": "0cb4ff1daf5fdc1359c6a6ee3116092f08fc100c9d58b1b77ab17bfd801f856d"
+  },
+  {
+    "notice": "third_party/licenses/Asio/LICENSE_1_0.txt",
+    "url": "https://raw.githubusercontent.com/chriskohlhoff/asio/f31694c9f1746ba189a4bcae2e34db15135ddb22/asio/LICENSE_1_0.txt",
+    "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
+  }
+]

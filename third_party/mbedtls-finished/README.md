@@ -24,3 +24,13 @@ injects hash/PRF failures for SHA-256, SHA-384 and legacy TLS. It checks both
 Finished entry points abort without advancing the handshake. Host checks do
 not replace hardware TLS/OTA qualification. This focused backport does not
 claim to upgrade the entire SDK or resolve every dependency advisory.
+
+## Extended master secret failure handling
+
+The same translation unit now rejects a failed transcript hash before deriving
+the Extended Master Secret (CVE-2026-50581). The SDK's void callback ABI is retained:
+SHA-256, SHA-384 and legacy TLS transcript callbacks report failure with zero
+output length; `ssl_compute_master` requires a nonzero bounded length. Hash
+contexts are freed on failure. The production-unit sanitizer test injects hash
+failures and verifies that the PRF is not called and the master buffer is untouched.
+No SSL3 protocol support is added.

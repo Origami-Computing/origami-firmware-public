@@ -1605,7 +1605,14 @@ static int ssl_compute_master(mbedtls_ssl_handshake_params *handshake,
     if (handshake->extended_ms == MBEDTLS_SSL_EXTENDED_MS_ENABLED) {
         lbl  = "extended master secret";
         salt = session_hash;
+        /* Preserve the SDK callback ABI; zero length is the failure sentinel.
+         * Never derive an EMS from a failed or oversized transcript hash. */
+        salt_len = 0;
         handshake->calc_verify(ssl, session_hash, &salt_len);
+        if (salt_len == 0 || salt_len > sizeof(session_hash)) {
+            mbedtls_platform_zeroize(session_hash, sizeof(session_hash));
+            return MBEDTLS_ERR_SSL_INTERNAL_ERROR;
+        }
 
         MBEDTLS_SSL_DEBUG_BUF(3, "session hash for extended master secret",
                               session_hash, salt_len);
@@ -1834,8 +1841,14 @@ void ssl_calc_verify_tls(const mbedtls_ssl_context *ssl,
     mbedtls_md5_clone(&md5, &ssl->handshake->fin_md5);
     mbedtls_sha1_clone(&sha1, &ssl->handshake->fin_sha1);
 
-    mbedtls_md5_finish_ret(&md5,  hash);
-    mbedtls_sha1_finish_ret(&sha1, hash + 16);
+    *hlen = 0;
+    if (mbedtls_md5_finish_ret(&md5, hash) != 0 ||
+        mbedtls_sha1_finish_ret(&sha1, hash + 16) != 0) {
+        mbedtls_md5_free(&md5);
+        mbedtls_sha1_free(&sha1);
+        mbedtls_platform_zeroize(hash, 36);
+        return;
+    }
 
     *hlen = 36;
 
@@ -1856,6 +1869,7 @@ void ssl_calc_verify_tls_sha256(const mbedtls_ssl_context *ssl,
                                 size_t *hlen)
 {
 #if defined(MBEDTLS_USE_PSA_CRYPTO)
+    *hlen = 0;
     size_t hash_size;
     psa_status_t status;
     psa_hash_operation_t sha256_psa = psa_hash_operation_init();
@@ -1870,6 +1884,7 @@ void ssl_calc_verify_tls_sha256(const mbedtls_ssl_context *ssl,
     status = psa_hash_finish(&sha256_psa, hash, 32, &hash_size);
     if (status != PSA_SUCCESS) {
         MBEDTLS_SSL_DEBUG_MSG(2, ("PSA hash finish failed"));
+        psa_hash_abort(&sha256_psa);
         return;
     }
 
@@ -1884,7 +1899,12 @@ void ssl_calc_verify_tls_sha256(const mbedtls_ssl_context *ssl,
     MBEDTLS_SSL_DEBUG_MSG(2, ("=> calc verify sha256"));
 
     mbedtls_sha256_clone(&sha256, &ssl->handshake->fin_sha256);
-    mbedtls_sha256_finish_ret(&sha256, hash);
+    *hlen = 0;
+    if (mbedtls_sha256_finish_ret(&sha256, hash) != 0) {
+        mbedtls_sha256_free(&sha256);
+        mbedtls_platform_zeroize(hash, 32);
+        return;
+    }
 
     *hlen = 32;
 
@@ -1903,6 +1923,7 @@ void ssl_calc_verify_tls_sha384(const mbedtls_ssl_context *ssl,
                                 size_t *hlen)
 {
 #if defined(MBEDTLS_USE_PSA_CRYPTO)
+    *hlen = 0;
     size_t hash_size;
     psa_status_t status;
     psa_hash_operation_t sha384_psa = psa_hash_operation_init();
@@ -1917,6 +1938,7 @@ void ssl_calc_verify_tls_sha384(const mbedtls_ssl_context *ssl,
     status = psa_hash_finish(&sha384_psa, hash, 48, &hash_size);
     if (status != PSA_SUCCESS) {
         MBEDTLS_SSL_DEBUG_MSG(2, ("PSA hash finish failed"));
+        psa_hash_abort(&sha384_psa);
         return;
     }
 
@@ -1931,7 +1953,12 @@ void ssl_calc_verify_tls_sha384(const mbedtls_ssl_context *ssl,
     MBEDTLS_SSL_DEBUG_MSG(2, ("=> calc verify sha384"));
 
     mbedtls_sha512_clone(&sha512, &ssl->handshake->fin_sha512);
-    mbedtls_sha512_finish_ret(&sha512, hash);
+    *hlen = 0;
+    if (mbedtls_sha512_finish_ret(&sha512, hash) != 0) {
+        mbedtls_sha512_free(&sha512);
+        mbedtls_platform_zeroize(hash, 48);
+        return;
+    }
 
     *hlen = 48;
 

@@ -32,4 +32,4 @@ with tempfile.TemporaryDirectory() as directory:
                     *[str(build/'library'/f'lib{name}.a') for name in
                       ('mbedtls', 'mbedx509', 'mbedcrypto')], '-o', str(executable)], check=True)
     subprocess.run([str(executable)], check=True)
-print('PASS: TLS Finished hash/PRF errors propagate; read/write abort without advancing')
+print('PASS: TLS Finished hash/PRF errors propagate; read/write abort without advancing; EMS rejects transcript hash errors')

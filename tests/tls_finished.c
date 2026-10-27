@@ -64,6 +64,23 @@ int main(void) {
         assert(functions[i](&ssl, output, MBEDTLS_SSL_IS_SERVER) == 0);
         for (unsigned j=0; j<sizeof(output); ++j) assert(output[j] == 0x5a);
     }
+    /* EMS must fail before PRF on a transcript hash driver failure. */
+    void (*verify[])(const mbedtls_ssl_context *, unsigned char *, size_t *) = {
+        ssl_calc_verify_tls_sha256, ssl_calc_verify_tls_sha384, ssl_calc_verify_tls
+    };
+    unsigned char master[48];
+    ssl.handshake->extended_ms = MBEDTLS_SSL_EXTENDED_MS_ENABLED;
+    for (unsigned i = 0; i < sizeof(verify)/sizeof(verify[0]); ++i) {
+        ssl.handshake->calc_verify = verify[i];
+        hash_error = -0x1234; prf_calls = 0;
+        memset(master, 0xa5, sizeof(master));
+        assert(ssl_compute_master(ssl.handshake, master, &ssl) == MBEDTLS_ERR_SSL_INTERNAL_ERROR);
+        assert(prf_calls == 0);
+        for (unsigned j=0; j<sizeof(master); ++j) assert(master[j] == 0xa5);
+        hash_error = 0;
+        assert(ssl_compute_master(ssl.handshake, master, &ssl) == 0);
+        assert(prf_calls == 1);
+    }
     ssl.handshake->calc_finished = fail_finished;
     const int state = ssl.state;
     assert(mbedtls_ssl_parse_finished(&ssl) == -0x1234);

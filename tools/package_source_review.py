@@ -1,7 +1,7 @@
 """Package tracked source and resolved library sources for private release review.
 
-The SDK manifest does NOT replace precompiled SDK redistribution/source review.
-No Git metadata, device data or private production build objects are included.
+The linked SDK archive set is classified in third_party/linked-library-licenses.json.
+No Git metadata, device data or private production build outputs are included.
 """
 import argparse
 import hashlib
@@ -23,6 +23,7 @@ deps = root / '.pio/libdeps' / a.environment
 if not deps.is_dir() or not (framework/'package.json').is_file():
     raise SystemExit('Build the environment first and supply its framework package')
 entries = []
+allowed_sdk_archives={row['archive'] for row in json.loads((root/'third_party/linked-library-licenses.json').read_text())['libraries']}
 tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
 for name in filter(None, tracked):
     entries.append((root/name, 'application/'+name))
@@ -43,6 +44,8 @@ for f in sorted((framework/'tools/sdk/esp32s3').rglob('*')):
     if f.is_symlink():
         raise SystemExit('Refusing symlink in SDK: '+str(f))
     if f.is_file():
+        if f.suffix == '.a' and f.name not in allowed_sdk_archives:
+            continue
         entries.append((f, 'framework/'+str(f.relative_to(framework))))
 for f in sorted((framework/'tools').glob('platformio-build*.py')):
     entries.append((f, 'framework/tools/'+f.name))
@@ -67,8 +70,8 @@ with tarfile.open(a.output,'w:gz') as archive:
     manifest.append({'path':name,'sha256':hashlib.sha256(font_source).hexdigest()})
     sdk=[]
     for f in sorted((framework/'tools/sdk/esp32s3').rglob('*')):
-        if f.is_file() and not f.is_symlink():sdk.append({'path':str(f.relative_to(framework)),'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
+        if f.is_file() and not f.is_symlink() and (f.suffix != '.a' or f.name in allowed_sdk_archives):sdk.append({'path':str(f.relative_to(framework)),'sha256':hashlib.sha256(f.read_bytes()).hexdigest()})
     put('SOURCE-MANIFEST.json',(json.dumps(manifest,indent=2)+'\n').encode())
-    put('SDK-INVENTORY-REQUIRES-REVIEW.json',(json.dumps(sdk,indent=2)+'\n').encode())
-    put('REVIEW-STATUS.txt',b'Private source companion; not complete binary clearance.\nIncludes exact locally resolved application and library source.\nPrecompiled SDK source/license closure remains required.\nNo assertion of byte-identical reproduction of the original official release.\n')
+    put('SDK-INVENTORY.json',(json.dumps(sdk,indent=2)+'\n').encode())
+    put('REVIEW-STATUS.txt',b'Source/relink companion for the identified candidate.\nIncludes exact locally resolved application and library source.\nSDK binary libraries are limited to the reviewed link-map archive set. Vendor radio sources are not supplied; retained licenses permit binary redistribution.\nNo assertion of byte-identical reproduction of the original official release.\n')
 print('Packaged',len(manifest),'source files; SDK manifest entries:',len(sdk))

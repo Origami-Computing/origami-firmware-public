@@ -388,5 +388,11 @@
     "framework-arduinoespressif32@3.20017.241212+sha.dcc1105b has been installed!",
     "framework-arduinoespressif32 @ 3.20017.241212+sha.dcc1105b ",
     "toolchain-xtensa-esp32s3 @ 8.4.0+2021r2-patch5"
-  ]
+  ],
+  "production_scope_review": {
+    "date": "2026-10-27",
+    "inventory": "third_party/linked-library-licenses.json",
+    "report": "docs/sdk-review.md",
+    "scope": "selected n16r8 production objects; unused vendor binary archives omitted from companion"
+  }
 }
