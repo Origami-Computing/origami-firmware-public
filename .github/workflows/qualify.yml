@@ -20,7 +20,8 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event.repository.private
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      # GitHub requires write access to retrieve private draft releases.
+      contents: write
       id-token: write
     env:
       VERSION: ${{ inputs.version }}
