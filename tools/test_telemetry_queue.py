@@ -55,5 +55,5 @@ int main(){
  puts("PASS burst retention, durable reserve, loss counters, in-flight prefix and recovery");
 }
 ''')
-    subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(p),'-I'+str(ROOT/'include'),str(ROOT/'src/core/telemetry_queue.cpp'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
+    subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(p),'-I'+str(ROOT/'include'),'-I'+str(ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'),str(ROOT/'src/core/telemetry_queue.cpp'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
     subprocess.run([str(p/'test')],check=True)

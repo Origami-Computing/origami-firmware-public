@@ -9,11 +9,20 @@ comes from authentication, never the JSON body. The v1 body contains `v`, `boot`
 `duration_ms`. Unknown payload fields are discarded. No transcript, photo, audio,
 file path, URL, or arbitrary properties are accepted.
 
+The endpoint also accepts `{batch, events}`: a 16-character hexadecimal request
+nonce and one to four validated v1 events. All rows are inserted in one database
+statement. The receipt is `{ok:true,batch,count}` only after commit. Legacy
+single-event requests remain supported. Firmware bounds the complete request to
+800 bytes, groups usage events across interleaved logs in its current snapshot,
+and requires an exact bounded receipt before acknowledging them. An intervening
+log failure retains the unacknowledged FIFO suffix; already accepted usage events
+in that suffix safely replay with their original identities.
+
 The device stores the serialized payload in its existing telemetry FIFO/journal.
 A retry reuses its identity. The database primary key is
 `(device_id, boot_id, sequence)`; conflict-ignore inserts preserve the first
 record and original receipt time. HTTP success follows the database write. The
-firmware retains usage events on every non-2xx response, including 404 during a
+firmware retains usage events on every non-2xx or mismatched receipt, including 404 during a
 backend rollout. A broken schema or invalid record can block that FIFO; current
 health bypasses it through the existing latest-value mailbox.
 
@@ -23,6 +32,24 @@ SD, short writes, card failure and power loss can lose observations. Heartbeats
 include pending depth, durable drop count and journal failure count, all since
 boot. Journal failures are not equivalent to lost events: RAM may still deliver
 an event. Legacy log/crash records do not gain retry deduplication.
+
+## SD write policy
+
+Each durable event is still appended and flushed before enqueue returns; this
+change does not add a deferred-durability window. ACKs that remove only volatile
+records do not rewrite the journal. Usage-only ACKs checkpoint after 32 retired
+records or when the queue empties. Normally up to 31 acknowledged usage records can replay
+following a reset (a failed checkpoint can retain more within the bounded journal); database identity deduplication makes this safe. Legacy log or
+crash ACKs still checkpoint immediately because those records lack deduplication.
+The disk record count is bounded by the same replay capacity: compaction failure
+at that bound rejects a new event with a drop/failure counter instead of losing
+the unacknowledged tail on restart. A torn/malformed journal object is skipped
+with failure/drop counters; a failed append is repaired from the RAM snapshot
+before another valid record can be appended to its torn tail.
+
+SD append latency remains on the calling task. Logical byte/write reductions are
+not a measurement of physical flash wear or proof of no UI impact. No lossless
+claim is made for a failed card, overflow or a power cut during an append.
 
 ## Events and meanings
 
@@ -73,7 +100,7 @@ Responses include `definition=backend_execution_to_reply_v1`. Dashboard and Pi
 monitor consumers reject older definitions rather than silently mislabeling
 legacy incoming-message timing. Inspector shows the same backend boundary.
 
-## Deployment order (not executed)
+## Deployment order
 
 1. Review/apply `20261026010000_device_usage_events.sql` and
    `20261026011000_backend_reply_timing.sql` to the intended staging database.

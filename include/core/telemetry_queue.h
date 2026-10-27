@@ -52,7 +52,8 @@ bool hasPending();
 int snapshot(Item* out, int maxN);
 
 /** Remove the oldest `n` items (the ones just POSTed successfully) and rewrite
- *  the SD journal to match. */
+ *  the SD journal when required. Usage-only ACKs normally retain up to 31 already
+ *  accepted identities until the next checkpoint; these safely deduplicate on replay. */
 void ack(int n);
 
 // Cumulative since boot, including capacity and lock-contention loss.

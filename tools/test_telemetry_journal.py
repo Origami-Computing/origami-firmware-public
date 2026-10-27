@@ -24,6 +24,7 @@ struct SerialT{template<class...A>void printf(A...){}void println(const char*){}
 #define FILE_READ 3
 inline std::map<std::string,std::string> disk;
 inline bool shortWrite=false,failPromotion=false;
+inline int rewrites=0;
 struct File{
  std::string name;size_t pos=0;operator bool(){return !name.empty();}
  template<class...A>size_t printf(const char* fmt,A...a){char b[1024];int n=snprintf(b,sizeof b,fmt,a...);if(shortWrite)n/=2;disk[name].append(b,n);return n;}
@@ -34,7 +35,7 @@ struct SDT{
  bool remove(const char*p){disk.erase(p);return true;}
  bool rename(const char*a,const char*b){if(failPromotion&&std::string(a).find(".tmp")!=std::string::npos)return false;if(!disk.count(a))return false;disk[b]=disk[a];disk.erase(a);return true;}
  bool exists(const char*p){return disk.count(p);}void mkdir(const char*){}
- File open(const char*p,int mode){if(mode==FILE_READ&&!disk.count(p))return {};if(mode==FILE_WRITE)disk[p]="";return {p,0};}
+ File open(const char*p,int mode){if(mode==FILE_READ&&!disk.count(p))return {};if(mode==FILE_WRITE){disk[p]="";++rewrites;}return {p,0};}
 };inline SDT SD;
 ''')
  put('core/usage_events.h','#pragma once\nnamespace core{namespace usage{inline void init(){}}}')
@@ -49,19 +50,37 @@ struct SDT{
 #include <cassert>
 using namespace core::telemetry_queue;
 int main(){
- init();enqueue(KIND_USAGE,"{\"seq\":1}");enqueue(KIND_VERBOSE,"volatile");
+ init();enqueue(KIND_LOG,"{\"seq\":1}");enqueue(KIND_VERBOSE,"volatile");
  init();Item rows[8];assert(snapshot(rows,8)==1);assert(strstr(rows[0].json,"1"));
  enqueue(KIND_USAGE,"{\"seq\":2}");
  shortWrite=true;ack(1);shortWrite=false;
  assert(stats().journalFailures>0);
  init();assert(snapshot(rows,8)==2); // retained original, including safe duplicate
- failPromotion=true;ack(1); // crash between old->backup and tmp->journal
+ failPromotion=true;ack(2); // crash between old->backup and tmp->journal
  assert(disk.count("/telemetry_queue/journal.bak"));
  failPromotion=false;init();assert(snapshot(rows,8)==2);
  ack(2);init();assert(snapshot(rows,8)==0);
  enqueue(KIND_USAGE,"{\"seq\":3}");init();assert(snapshot(rows,8)==1);
+ ack(1);init();
+ for(int i=0;i<100;++i)enqueue(KIND_USAGE,"{\"seq\":1}");
+ int before=rewrites;
+ for(int i=0;i<25;++i)ack(4);
+ assert(rewrites-before==4); // 32,64,96 and empty, rather than 25 full rewrites.
+ init();assert(snapshot(rows,8)==0);
+ enqueue(KIND_USAGE,"{\"event\":\"retained\"}");enqueue(KIND_USAGE,"{\"event\":\"pending\"}");ack(1);
+ init();assert(snapshot(rows,8)==2); // safe replay of acknowledged usage + pending tail
+ ack(2);init();
+ for(int i=0;i<512;++i)enqueue(KIND_USAGE,"{\"event\":\"bounded\"}");
+ ack(4); // journal still has 512 durable records
+ failPromotion=true;auto drops=stats().droppedDurable;enqueue(KIND_USAGE,"{\"event\":\"must-not-overflow\"}");
+ assert(stats().droppedDurable==drops+1);failPromotion=false;
+ init();int count=0;Item all[512];count=snapshot(all,512);assert(count==512);
+ disk["/telemetry_queue/journal.jsonl"]="4\t{\"seq\":\n4\t{\"seq\":9}\n";
+ init();assert(snapshot(rows,8)==1);assert(strstr(rows[0].json,"9")); // torn line cannot poison FIFO
+ ack(1);init();shortWrite=true;enqueue(KIND_USAGE,"{\"seq\":10}");shortWrite=false;
+ enqueue(KIND_USAGE,"{\"seq\":11}");init();assert(snapshot(rows,8)==2);
  puts("PASS durable replay, volatile exclusion, short-write preservation, interrupted promotion recovery, committed ack and re-entry");
 }
 ''')
- subprocess.run(['c++','-std=c++17','-fsanitize=address,undefined','-I'+str(p),'-I'+str(root/'include'),str(root/'src/core/telemetry_queue.cpp'),str(p/'main.cpp'),'-o',str(p/'test')],check=True)
+ subprocess.run(['c++','-std=c++17','-fsanitize=address,undefined','-I'+str(p),'-I'+str(root/'include'),'-I'+str(root/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'),str(root/'src/core/telemetry_queue.cpp'),str(p/'main.cpp'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)

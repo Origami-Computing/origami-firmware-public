@@ -47,12 +47,14 @@ Stats stats(){return {queue.size(),0,0};}
 }}
 namespace background_network {struct PeriodicWork {static bool hasWaitingPeer(){return waiting;}};}
 bool stopRequested(){return stopped;}
-int postJson(const char*,const String&){++posts;return response;}
+bool receiptMatches=true, logFailure=false;
+unsigned esp_random(){return 12345;}
+int postJson(const char* path,const String& body,const String* receipt=nullptr){++posts;if(logFailure && std::string(path)=="logs") return 503;if(receipt){assert(body.size()<=800);assert(receipt->find("012345") == std::string::npos);if(!receiptMatches)return -1;}return response;}
 String buildLogsBody(const core::telemetry_queue::Item*,int){return "{}";}
 // LOGI models the real facade: every call becomes another outbound item.
 #define LOGI(...) core::telemetry_queue::add(core::telemetry_queue::KIND_VERBOSE)
 struct {template<class... T>void printf(const char*,T...){++localReports;}} Serial;
-''' + function('bool ok2xx(') + '\n' + function('bool retryable(') + '\n' + function('void drainTelemetry(') + r'''
+''' + function('bool ok2xx(') + '\n' + function('bool retryable(') + '\n' + function('int postUsageBatch(') + '\n' + function('void drainTelemetry(') + r'''
 int main(){
  using namespace core::telemetry_queue;
  // One external event must drain to idle, with no self-generated traffic.
@@ -72,6 +74,12 @@ int main(){
   drainTelemetry();assert(posts==0 && queue.size()==1 && allocations==0);
  }
  allocationFailure=stopped=waiting=false;response=200;
+ queue.clear();for(int i=0;i<8;++i)add(KIND_USAGE);posts=0;
+ receiptMatches=false;drainTelemetry();assert(queue.size()==8);
+ receiptMatches=true;posts=0;drainTelemetry();assert(queue.empty() && posts==2);
+ queue.clear();add(KIND_USAGE);add(KIND_LOG);add(KIND_USAGE);posts=0;logFailure=true;
+ drainTelemetry();assert(queue.size()==2 && posts==2); // second usage accepted but retained behind failed log
+ logFailure=false;posts=0;drainTelemetry();assert(queue.empty() && posts==2);
  queue.clear();for(int i=0;i<20;++i)add(i%4);
  for(int i=0;i<10;++i)drainTelemetry();
  assert(queue.empty() && allocations==0);

@@ -2,6 +2,7 @@
 #include "core/usage_events.h"
 
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <SD.h>
 #include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
@@ -28,6 +29,9 @@ constexpr char kTmp[]     = "/telemetry_queue/journal.tmp";
 // and this buffer is only touched by tasks (no ISR/DMA), so PSRAM is safe here.
 Item*             s_items = nullptr;
 int               s_count = 0;
+// Retained, already acknowledged journal records; usage identities deduplicate replay.
+int               s_retired = 0;
+bool              s_journalNeedsRepair = false;
 SemaphoreHandle_t s_mutex = nullptr;
 std::atomic<uint32_t> s_droppedVerbose{0}, s_droppedDurable{0}, s_journalFailures{0};
 
@@ -67,10 +71,14 @@ void rewriteJournalUnlocked() {
     if (ok) SD.remove(kBackup);
   }
   if (!ok) ++s_journalFailures;
+  else { s_retired = 0; s_journalNeedsRepair = false; }
   hal::bus::unlockSpi();
 }
 
 void appendJournalUnlocked(const Item& it) {
+  // Never append a valid record onto a torn tail. The RAM snapshot includes
+  // this new item, so a successful repair already persists it.
+  if (s_journalNeedsRepair) { rewriteJournalUnlocked(); return; }
   if (!hal::sd::mounted() || !hal::bus::lockSpi(pdMS_TO_TICKS(200))) { ++s_journalFailures; return; }
   bool ok=true;
   if (!SD.exists(kJournal) && SD.exists(kBackup)) ok=SD.rename(kBackup,kJournal);
@@ -80,8 +88,9 @@ void appendJournalUnlocked(const Item& it) {
     ok=file.printf("%u\t%s\n",(unsigned)it.kind,it.json)==2+strlen(it.json)+1;
     file.flush(); file.close();
   } else ok=false;
-  if (!ok) ++s_journalFailures;
+  if (!ok) { ++s_journalFailures; s_journalNeedsRepair=true; }
   hal::bus::unlockSpi();
+  if (!ok) rewriteJournalUnlocked();
 }
 
 // Push into the RAM ring, dropping the oldest if full. Caller holds s_mutex.
@@ -113,6 +122,7 @@ void init() {
   }
   if (!lock()) return;
   s_count = 0;
+  s_retired = 0;
 
   if (!hal::sd::mounted()) {
     unlock();
@@ -136,6 +146,11 @@ void init() {
         // Only logs (with their device timestamp) and crash reports are durable.
         if (kind == KIND_HEARTBEAT || kind == KIND_VERBOSE) continue;
         String  json = line.substring(tab + 1);
+        JsonDocument record;
+        if ((kind!=KIND_LOG && kind!=KIND_CRASH && kind!=KIND_USAGE)
+            || json.length()>=kItemJsonCap || deserializeJson(record,json.c_str()) || !record.is<JsonObject>()) {
+          ++s_journalFailures; ++s_droppedDurable; s_journalNeedsRepair=true; continue;
+        }
         Item& slot = s_items[s_count++];
         slot.kind = kind;
         strlcpy(slot.json, json.c_str(), sizeof(slot.json));
@@ -158,6 +173,12 @@ void enqueue(Kind kind, const char* json) {
   // Never evict the in-flight snapshot: ack(n) must still refer to its prefix.
   // Verbose traffic cannot evict crashes/heartbeats or churn the SD journal.
   if (s_count >= (kind == KIND_VERBOSE ? kMaxItems - 8 : kMaxItems)) { ++dropped; unlock(); return; }
+  // Bound the on-disk journal as well as RAM. A failed compaction must not
+  // grow it past replay capacity and silently lose its unacknowledged tail.
+  if (s_retired && s_count+s_retired >= kMaxItems) {
+    rewriteJournalUnlocked();
+    if (s_retired) { ++dropped; unlock(); return; }
+  }
   pushUnlocked((uint8_t)kind, json);
   if (kind != KIND_VERBOSE && kind != KIND_HEARTBEAT) appendJournalUnlocked(s_items[s_count - 1]);
   unlock();
@@ -183,9 +204,17 @@ void ack(int n) {
   if (n <= 0) return;
   if (!lock()) return;
   if (n > s_count) n = s_count;
+  bool legacy=false;
+  int durable=0;
+  for(int i=0;i<n;++i) {
+    if(s_items[i].kind==KIND_LOG || s_items[i].kind==KIND_CRASH) legacy=true;
+    if(s_items[i].kind!=KIND_VERBOSE && s_items[i].kind!=KIND_HEARTBEAT) ++durable;
+  }
   memmove(&s_items[0], &s_items[n], sizeof(Item) * (s_count - n));
-  s_count -= n;
-  rewriteJournalUnlocked();
+  s_count -= n; s_retired += durable;
+  // Legacy records lack deduplication, so preserve their immediate checkpoint.
+  // Usage-only ACKs normally retain <=31 safe duplicates; failed checkpoints retry.
+  if (legacy || s_retired>=32 || (s_count==0 && s_retired)) rewriteJournalUnlocked();
   unlock();
 }
 
