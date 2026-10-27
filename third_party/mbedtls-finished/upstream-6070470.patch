@@ -1,0 +1,384 @@
+From 68014b2b80491318eb7e08b1d690e7ebe27d249f Mon Sep 17 00:00:00 2001
+From: David Horstmann <david.horstmann@arm.com>
+Date: Mon, 10 Mar 2025 14:10:11 +0000
+Subject: [PATCH 1/6] Return and propagate errors in calc_finished()
+
+Allow calc_finished to return an error code and propagate that back to
+the original function. If an error is returned by a PSA function,
+propagate it upwards instead of continuing, so that we do not fail to
+properly check the finished message.
+
+Signed-off-by: David Horstmann <david.horstmann@arm.com>
+---
+ include/mbedtls/ssl_internal.h |  2 +-
+ library/ssl_tls.c              | 39 ++++++++++++++++++++++------------
+ 2 files changed, 27 insertions(+), 14 deletions(-)
+
+diff --git a/include/mbedtls/ssl_internal.h b/include/mbedtls/ssl_internal.h
+index e3873690f71..21f11ed9712 100644
+--- a/include/mbedtls/ssl_internal.h
++++ b/include/mbedtls/ssl_internal.h
+@@ -467,7 +467,7 @@ struct mbedtls_ssl_handshake_params {
+ 
+     void (*update_checksum)(mbedtls_ssl_context *, const unsigned char *, size_t);
+     void (*calc_verify)(const mbedtls_ssl_context *, unsigned char *, size_t *);
+-    void (*calc_finished)(mbedtls_ssl_context *, unsigned char *, int);
++    int (*calc_finished)(mbedtls_ssl_context *, unsigned char *, int);
+     mbedtls_ssl_tls_prf_cb *tls_prf;
+ 
+ #if defined(MBEDTLS_DHM_C)
+diff --git a/library/ssl_tls.c b/library/ssl_tls.c
+index 65d5b964d37..d183078a0ba 100644
+--- a/library/ssl_tls.c
++++ b/library/ssl_tls.c
+@@ -892,25 +892,25 @@ static void ssl_update_checksum_md5sha1(mbedtls_ssl_context *, const unsigned ch
+ 
+ #if defined(MBEDTLS_SSL_PROTO_SSL3)
+ static void ssl_calc_verify_ssl(const mbedtls_ssl_context *, unsigned char *, size_t *);
+-static void ssl_calc_finished_ssl(mbedtls_ssl_context *, unsigned char *, int);
++static int ssl_calc_finished_ssl(mbedtls_ssl_context *, unsigned char *, int);
+ #endif
+ 
+ #if defined(MBEDTLS_SSL_PROTO_TLS1) || defined(MBEDTLS_SSL_PROTO_TLS1_1)
+ static void ssl_calc_verify_tls(const mbedtls_ssl_context *, unsigned char *, size_t *);
+-static void ssl_calc_finished_tls(mbedtls_ssl_context *, unsigned char *, int);
++static int ssl_calc_finished_tls(mbedtls_ssl_context *, unsigned char *, int);
+ #endif
+ 
+ #if defined(MBEDTLS_SSL_PROTO_TLS1_2)
+ #if defined(MBEDTLS_SHA256_C)
+ static void ssl_update_checksum_sha256(mbedtls_ssl_context *, const unsigned char *, size_t);
+ static void ssl_calc_verify_tls_sha256(const mbedtls_ssl_context *, unsigned char *, size_t *);
+-static void ssl_calc_finished_tls_sha256(mbedtls_ssl_context *, unsigned char *, int);
++static int ssl_calc_finished_tls_sha256(mbedtls_ssl_context *, unsigned char *, int);
+ #endif
+ 
+ #if defined(MBEDTLS_SHA512_C) && !defined(MBEDTLS_SHA512_NO_SHA384)
+ static void ssl_update_checksum_sha384(mbedtls_ssl_context *, const unsigned char *, size_t);
+ static void ssl_calc_verify_tls_sha384(const mbedtls_ssl_context *, unsigned char *, size_t *);
+-static void ssl_calc_finished_tls_sha384(mbedtls_ssl_context *, unsigned char *, int);
++static int ssl_calc_finished_tls_sha384(mbedtls_ssl_context *, unsigned char *, int);
+ #endif
+ #endif /* MBEDTLS_SSL_PROTO_TLS1_2 */
+ 
+@@ -3136,7 +3136,7 @@ static void ssl_update_checksum_sha384(mbedtls_ssl_context *ssl,
+ #endif /* MBEDTLS_SSL_PROTO_TLS1_2 */
+ 
+ #if defined(MBEDTLS_SSL_PROTO_SSL3)
+-static void ssl_calc_finished_ssl(
++static int ssl_calc_finished_ssl(
+     mbedtls_ssl_context *ssl, unsigned char *buf, int from)
+ {
+     const char *sender;
+@@ -3218,11 +3218,13 @@ static void ssl_calc_finished_ssl(
+     mbedtls_platform_zeroize(sha1sum, sizeof(sha1sum));
+ 
+     MBEDTLS_SSL_DEBUG_MSG(2, ("<= calc  finished"));
++
++    return 0;
+ }
+ #endif /* MBEDTLS_SSL_PROTO_SSL3 */
+ 
+ #if defined(MBEDTLS_SSL_PROTO_TLS1) || defined(MBEDTLS_SSL_PROTO_TLS1_1)
+-static void ssl_calc_finished_tls(
++static int ssl_calc_finished_tls(
+     mbedtls_ssl_context *ssl, unsigned char *buf, int from)
+ {
+     int len = 12;
+@@ -3278,12 +3280,14 @@ static void ssl_calc_finished_tls(
+     mbedtls_platform_zeroize(padbuf, sizeof(padbuf));
+ 
+     MBEDTLS_SSL_DEBUG_MSG(2, ("<= calc  finished"));
++
++    return 0;
+ }
+ #endif /* MBEDTLS_SSL_PROTO_TLS1 || MBEDTLS_SSL_PROTO_TLS1_1 */
+ 
+ #if defined(MBEDTLS_SSL_PROTO_TLS1_2)
+ #if defined(MBEDTLS_SHA256_C)
+-static void ssl_calc_finished_tls_sha256(
++static int ssl_calc_finished_tls_sha256(
+     mbedtls_ssl_context *ssl, unsigned char *buf, int from)
+ {
+     int len = 12;
+@@ -3314,13 +3318,13 @@ static void ssl_calc_finished_tls_sha256(
+     status = psa_hash_clone(&ssl->handshake->fin_sha256_psa, &sha256_psa);
+     if (status != PSA_SUCCESS) {
+         MBEDTLS_SSL_DEBUG_MSG(2, ("PSA hash clone failed"));
+-        return;
++        return status;
+     }
+ 
+     status = psa_hash_finish(&sha256_psa, padbuf, sizeof(padbuf), &hash_size);
+     if (status != PSA_SUCCESS) {
+         MBEDTLS_SSL_DEBUG_MSG(2, ("PSA hash finish failed"));
+-        return;
++        return status;
+     }
+     MBEDTLS_SSL_DEBUG_BUF(3, "PSA calculated padbuf", padbuf, 32);
+ #else
+@@ -3354,12 +3358,14 @@ static void ssl_calc_finished_tls_sha256(
+     mbedtls_platform_zeroize(padbuf, sizeof(padbuf));
+ 
+     MBEDTLS_SSL_DEBUG_MSG(2, ("<= calc  finished"));
++
++    return 0;
+ }
+ #endif /* MBEDTLS_SHA256_C */
+ 
+ #if defined(MBEDTLS_SHA512_C) && !defined(MBEDTLS_SHA512_NO_SHA384)
+ 
+-static void ssl_calc_finished_tls_sha384(
++static int ssl_calc_finished_tls_sha384(
+     mbedtls_ssl_context *ssl, unsigned char *buf, int from)
+ {
+     int len = 12;
+@@ -3390,13 +3396,13 @@ static void ssl_calc_finished_tls_sha384(
+     status = psa_hash_clone(&ssl->handshake->fin_sha384_psa, &sha384_psa);
+     if (status != PSA_SUCCESS) {
+         MBEDTLS_SSL_DEBUG_MSG(2, ("PSA hash clone failed"));
+-        return;
++        return status;
+     }
+ 
+     status = psa_hash_finish(&sha384_psa, padbuf, sizeof(padbuf), &hash_size);
+     if (status != PSA_SUCCESS) {
+         MBEDTLS_SSL_DEBUG_MSG(2, ("PSA hash finish failed"));
+-        return;
++        return status;
+     }
+     MBEDTLS_SSL_DEBUG_BUF(3, "PSA calculated padbuf", padbuf, 48);
+ #else
+@@ -3441,6 +3447,8 @@ static void ssl_calc_finished_tls_sha384(
+     mbedtls_platform_zeroize(padbuf, sizeof(padbuf));
+ 
+     MBEDTLS_SSL_DEBUG_MSG(2, ("<= calc  finished"));
++
++    return 0;
+ }
+ #endif /* MBEDTLS_SHA512_C && !MBEDTLS_SHA512_NO_SHA384 */
+ #endif /* MBEDTLS_SSL_PROTO_TLS1_2 */
+@@ -3535,7 +3543,12 @@ int mbedtls_ssl_write_finished(mbedtls_ssl_context *ssl)
+ 
+     mbedtls_ssl_update_out_pointers(ssl, ssl->transform_negotiate);
+ 
+-    ssl->handshake->calc_finished(ssl, ssl->out_msg + 4, ssl->conf->endpoint);
++    ret = ssl->handshake->calc_finished(ssl, ssl->out_msg + 4,
++                                        ssl->conf->endpoint);
++    if (ret != 0) {
++        MBEDTLS_SSL_DEBUG_RET(1, "calc_finished", ret);
++        return ret;
++    }
+ 
+     /*
+      * RFC 5246 7.4.9 (Page 63) says 12 is the default length and ciphersuites
+
+From b81920dc8f33fb8cce75ec0ff889d7b90a7ba741 Mon Sep 17 00:00:00 2001
+From: David Horstmann <david.horstmann@arm.com>
+Date: Tue, 11 Mar 2025 15:52:48 +0000
+Subject: [PATCH 2/6] Add changelog entry for TLS 1.2 Finished fix
+
+Signed-off-by: David Horstmann <david.horstmann@arm.com>
+---
+ ChangeLog.d/tls12-check-finished-calc.txt | 6 ++++++
+ 1 file changed, 6 insertions(+)
+ create mode 100644 ChangeLog.d/tls12-check-finished-calc.txt
+
+diff --git a/ChangeLog.d/tls12-check-finished-calc.txt b/ChangeLog.d/tls12-check-finished-calc.txt
+new file mode 100644
+index 00000000000..cd52d32ffd8
+--- /dev/null
++++ b/ChangeLog.d/tls12-check-finished-calc.txt
+@@ -0,0 +1,6 @@
++Security
++   * Fix a vulnerability in the TLS 1.2 handshake. If memory allocation failed
++     or there was a cryptographic hardware failure when calculating the
++     Finished message, it could be calculated incorrectly. This would break
++     the security guarantees of the TLS handshake.
++     CVE-2025-27810
+
+From 78302e263c61cef7109e39316a4c10fa098573b8 Mon Sep 17 00:00:00 2001
+From: David Horstmann <david.horstmann@arm.com>
+Date: Tue, 11 Mar 2025 15:55:46 +0000
+Subject: [PATCH 3/6] Add MBEDTLS_CHECK_RETURN_CRITICAL annotation
+
+Ensure that the compiler will warn us if we do not check the
+return of calc_verify in future.
+
+Signed-off-by: David Horstmann <david.horstmann@arm.com>
+---
+ include/mbedtls/ssl_internal.h | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/include/mbedtls/ssl_internal.h b/include/mbedtls/ssl_internal.h
+index 21f11ed9712..17bb631b59b 100644
+--- a/include/mbedtls/ssl_internal.h
++++ b/include/mbedtls/ssl_internal.h
+@@ -467,6 +467,7 @@ struct mbedtls_ssl_handshake_params {
+ 
+     void (*update_checksum)(mbedtls_ssl_context *, const unsigned char *, size_t);
+     void (*calc_verify)(const mbedtls_ssl_context *, unsigned char *, size_t *);
++    MBEDTLS_CHECK_RETURN_CRITICAL
+     int (*calc_finished)(mbedtls_ssl_context *, unsigned char *, int);
+     mbedtls_ssl_tls_prf_cb *tls_prf;
+ 
+
+From 2b85729d23625e3183bdba74cf0e93864eeffba6 Mon Sep 17 00:00:00 2001
+From: David Horstmann <david.horstmann@arm.com>
+Date: Tue, 11 Mar 2025 18:13:02 +0000
+Subject: [PATCH 4/6] Add checking to missed case of calc_finished()
+
+Signed-off-by: David Horstmann <david.horstmann@arm.com>
+---
+ library/ssl_tls.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/library/ssl_tls.c b/library/ssl_tls.c
+index d183078a0ba..976c38f67e7 100644
+--- a/library/ssl_tls.c
++++ b/library/ssl_tls.c
+@@ -3677,7 +3677,11 @@ int mbedtls_ssl_parse_finished(mbedtls_ssl_context *ssl)
+ #endif
+     hash_len = 12;
+ 
+-    ssl->handshake->calc_finished(ssl, buf, ssl->conf->endpoint ^ 1);
++    ret = ssl->handshake->calc_finished(ssl, buf, ssl->conf->endpoint ^ 1);
++    if (ret != 0) {
++        MBEDTLS_SSL_DEBUG_RET(1, "calc_finished", ret);
++        goto exit;
++    }
+ 
+     if ((ret = mbedtls_ssl_read_record(ssl, 1)) != 0) {
+         MBEDTLS_SSL_DEBUG_RET(1, "mbedtls_ssl_read_record", ret);
+
+From 09072663a79792d69d61522133d5ef33c0787df0 Mon Sep 17 00:00:00 2001
+From: David Horstmann <david.horstmann@arm.com>
+Date: Wed, 12 Mar 2025 12:03:13 +0000
+Subject: [PATCH 5/6] Convert PSA errors to Mbed TLS MD errors
+
+Factor out a static function to perform error conversion and use it for
+the calc_verify() functions along with the place where it is currently
+used.
+
+Signed-off-by: David Horstmann <david.horstmann@arm.com>
+---
+ library/ssl_tls.c | 36 +++++++++++++++++++++---------------
+ 1 file changed, 21 insertions(+), 15 deletions(-)
+
+diff --git a/library/ssl_tls.c b/library/ssl_tls.c
+index 976c38f67e7..bc6dc2740fa 100644
+--- a/library/ssl_tls.c
++++ b/library/ssl_tls.c
+@@ -627,6 +627,21 @@ static int tls1_prf(const unsigned char *secret, size_t slen,
+ #if defined(MBEDTLS_SSL_PROTO_TLS1_2)
+ #if defined(MBEDTLS_USE_PSA_CRYPTO)
+ 
++static int mbedtls_ssl_md_error_from_psa(psa_status_t status)
++{
++    switch (status) {
++        case PSA_ERROR_NOT_SUPPORTED:
++            return MBEDTLS_ERR_MD_FEATURE_UNAVAILABLE;
++        case PSA_ERROR_BAD_STATE: /* Intentional fallthrough */
++        case PSA_ERROR_BUFFER_TOO_SMALL:
++            return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
++        case PSA_ERROR_INSUFFICIENT_MEMORY:
++            return MBEDTLS_ERR_MD_ALLOC_FAILED;
++        default:
++            return MBEDTLS_ERR_MD_HW_ACCEL_FAILED;
++    }
++}
++
+ static psa_status_t setup_psa_key_derivation(psa_key_derivation_operation_t *derivation,
+                                              psa_key_id_t key,
+                                              psa_algorithm_t alg,
+@@ -3318,13 +3333,13 @@ static int ssl_calc_finished_tls_sha256(
+     status = psa_hash_clone(&ssl->handshake->fin_sha256_psa, &sha256_psa);
+     if (status != PSA_SUCCESS) {
+         MBEDTLS_SSL_DEBUG_MSG(2, ("PSA hash clone failed"));
+-        return status;
++        return mbedtls_ssl_md_error_from_psa(status);
+     }
+ 
+     status = psa_hash_finish(&sha256_psa, padbuf, sizeof(padbuf), &hash_size);
+     if (status != PSA_SUCCESS) {
+         MBEDTLS_SSL_DEBUG_MSG(2, ("PSA hash finish failed"));
+-        return status;
++        return mbedtls_ssl_md_error_from_psa(status);
+     }
+     MBEDTLS_SSL_DEBUG_BUF(3, "PSA calculated padbuf", padbuf, 32);
+ #else
+@@ -3396,13 +3411,13 @@ static int ssl_calc_finished_tls_sha384(
+     status = psa_hash_clone(&ssl->handshake->fin_sha384_psa, &sha384_psa);
+     if (status != PSA_SUCCESS) {
+         MBEDTLS_SSL_DEBUG_MSG(2, ("PSA hash clone failed"));
+-        return status;
++        return mbedtls_ssl_md_error_from_psa(status);
+     }
+ 
+     status = psa_hash_finish(&sha384_psa, padbuf, sizeof(padbuf), &hash_size);
+     if (status != PSA_SUCCESS) {
+         MBEDTLS_SSL_DEBUG_MSG(2, ("PSA hash finish failed"));
+-        return status;
++        return mbedtls_ssl_md_error_from_psa(status);
+     }
+     MBEDTLS_SSL_DEBUG_BUF(3, "PSA calculated padbuf", padbuf, 48);
+ #else
+@@ -7643,17 +7658,8 @@ int mbedtls_ssl_get_key_exchange_md_tls1_2(mbedtls_ssl_context *ssl,
+     if (status != PSA_SUCCESS) {
+         mbedtls_ssl_send_alert_message(ssl, MBEDTLS_SSL_ALERT_LEVEL_FATAL,
+                                        MBEDTLS_SSL_ALERT_MSG_INTERNAL_ERROR);
+-        switch (status) {
+-            case PSA_ERROR_NOT_SUPPORTED:
+-                return MBEDTLS_ERR_MD_FEATURE_UNAVAILABLE;
+-            case PSA_ERROR_BAD_STATE: /* Intentional fallthrough */
+-            case PSA_ERROR_BUFFER_TOO_SMALL:
+-                return MBEDTLS_ERR_MD_BAD_INPUT_DATA;
+-            case PSA_ERROR_INSUFFICIENT_MEMORY:
+-                return MBEDTLS_ERR_MD_ALLOC_FAILED;
+-            default:
+-                return MBEDTLS_ERR_MD_HW_ACCEL_FAILED;
+-        }
++
++        return mbedtls_ssl_md_error_from_psa(status);
+     }
+     return 0;
+ }
+
+From 226daac16841d83d72f8c320ffe5a3b0b956fdbc Mon Sep 17 00:00:00 2001
+From: David Horstmann <david.horstmann@arm.com>
+Date: Wed, 12 Mar 2025 13:58:01 +0000
+Subject: [PATCH 6/6] Declare conversion function even without 1.2
+
+In 2.28 we may only enable TLS 1.0 or 1.1 in which case this function is
+still needed.
+
+Signed-off-by: David Horstmann <david.horstmann@arm.com>
+---
+ library/ssl_tls.c | 6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/library/ssl_tls.c b/library/ssl_tls.c
+index bc6dc2740fa..73f9c7f4710 100644
+--- a/library/ssl_tls.c
++++ b/library/ssl_tls.c
+@@ -624,9 +624,7 @@ static int tls1_prf(const unsigned char *secret, size_t slen,
+ }
+ #endif /* MBEDTLS_SSL_PROTO_TLS1) || MBEDTLS_SSL_PROTO_TLS1_1 */
+ 
+-#if defined(MBEDTLS_SSL_PROTO_TLS1_2)
+ #if defined(MBEDTLS_USE_PSA_CRYPTO)
+-
+ static int mbedtls_ssl_md_error_from_psa(psa_status_t status)
+ {
+     switch (status) {
+@@ -641,6 +639,10 @@ static int mbedtls_ssl_md_error_from_psa(psa_status_t status)
+             return MBEDTLS_ERR_MD_HW_ACCEL_FAILED;
+     }
+ }
++#endif
++
++#if defined(MBEDTLS_SSL_PROTO_TLS1_2)
++#if defined(MBEDTLS_USE_PSA_CRYPTO)
+ 
+ static psa_status_t setup_psa_key_derivation(psa_key_derivation_operation_t *derivation,
+                                              psa_key_id_t key,

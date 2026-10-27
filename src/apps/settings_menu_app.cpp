@@ -1007,7 +1007,7 @@ static void buildSettingsScene(ui::scene::Scene& scene, int16_t width, int16_t h
     case SUB_ABOUT: {
       const auto account=services::account_info::snapshot();
       char rows[6][128];
-      snprintf(rows[0],sizeof(rows[0]),"Firmware: %s",OTA_FIRMWARE_VERSION);
+      snprintf(rows[0],sizeof(rows[0]),"kamiOS %s",OTA_FIRMWARE_VERSION);
       snprintf(rows[1],sizeof(rows[1]),"Account: %s",account.name);
       snprintf(rows[2],sizeof(rows[2]),"Build: %s",services::ota_client::buildKindName());
       snprintf(rows[3],sizeof(rows[3]),"Board: %s",OTA_HARDWARE_ID);
