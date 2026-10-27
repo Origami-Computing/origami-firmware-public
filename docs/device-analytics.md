@@ -63,7 +63,8 @@ claim is made for a failed card, overflow or a power cut during an append.
   Ready/display durations are device monotonic submission-to-milestone values.
 - `camera.saved`, `camera.failed`: normal VGA/high-resolution photo save outcome.
   Diagnostic/tutorial capture paths do not all have identical event coverage.
-- `video.saved`, `video.failed`: video capture finalization result.
+- `video.saved`, `video.failed`: reserved for the separate video-recording branch;
+  staging does not yet emit video finalization events.
 - `mp3.start/stop/pause/resume`, `audio.start/stop/pause/resume`: playback owner
   transitions, not acoustic evidence. Stop reflects owner cleanup, not exact EOF.
 - `audio.capture/finalized/failed`: WAV capture/finalization. Finalized is not a
