@@ -18,6 +18,8 @@ The dependency guard prevents core, services and sound code from importing app/n
 
 OTA has two distinct owners: `firmware_update::Session` reserves background and Agent resources, while `ota_client` owns retrieval, inactive-slot writes, validation and activation. Download authorization, firmware verification, and publishing identity remain separate. The public draft does not deploy or alter cloud infrastructure.
 
+Interrupted OTA transfers can reconnect twice within an attempt, requesting only the unwritten suffix of the signed immutable image URL. A resumed response must return HTTP 206 with the exact expected `Content-Range` and length. The worker retains the inactive-slot handle and whole-image hash across reconnections; it never activates a partial or mismatched image. The existing three-attempt limit, 15-second idle timeout, 10-minute attempt deadline and cancellation cleanup still apply. Resume state is in memory only; a reboot starts a new download.
+
 The N16R8 partition layout preserves NVS at `0x9000`, application slots at `0x10000` and `0x610000`, plus coredump and shipping storage. Only the matching partition layout is supported. Firmware embeds a public trust bundle and public verification material, not access keys.
 
 This is an ownership-level inspection, not a comprehensive runtime/security audit. Embedded artwork, fonts, cloud endpoints and backend protocol implementation remain subject to publication approval.
