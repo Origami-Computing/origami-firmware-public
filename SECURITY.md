@@ -2,12 +2,12 @@
 
 Security maintainer: [@vaibhavmaloo03](https://github.com/vaibhavmaloo03), designated by Origami. This account owns report triage and launch-time notification verification. Do not post vulnerability details on the maintainer’s public profile or in public issues.
 
-After public launch, use [Report a vulnerability](https://github.com/Origami-Computing/origami-firmware-public/security/advisories/new) to submit a private report to repository administrators. Do not put vulnerability details, credentials or device dumps in public issues.
+Use [Report a vulnerability](https://github.com/Origami-Computing/origami-firmware-public/security/advisories/new) to submit a private report to repository administrators. Do not put vulnerability details, credentials or device dumps in public issues.
 
-**Private staging status:** GitHub private vulnerability reporting is available for public repositories. Activation was attempted while this repository remained private and GitHub returned 404. The form above is a launch-time route, not a claim that reporting is enabled now. During private review, use your existing private maintainer channel.
+**Private reporting is enabled.** Reports submitted through the form are shared privately with repository administrators. The designated maintainer is subscribed to repository notifications.
 
 Include the firmware version, hardware revision, impact, expected/observed behavior and minimal reproduction steps. Remove Wi-Fi credentials, tokens, device identifiers and personal media. Do not flash or reset a device merely to produce a report.
 
-Before launch, enable private vulnerability reporting and have a maintainer subscribe to security notifications and verify delivery. No email address or response-time commitment is invented here. GitHub's [configuration guide](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository) describes the setup.
+GitHub secret scanning and push protection are enabled. Main requires the security and firmware build checks; force pushes and branch deletion are blocked. Workflows from all outside contributors require approval.
 
 Firmware credentials are provisioned separately into device storage. Public trust roots and signature-verification keys are intentional public inputs. Keep OTA download keys, signing private keys and backend tokens out of all distributed files.
