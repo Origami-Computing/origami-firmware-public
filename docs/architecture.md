@@ -23,3 +23,5 @@ Interrupted OTA transfers can reconnect twice within an attempt, requesting only
 The N16R8 partition layout preserves NVS at `0x9000`, application slots at `0x10000` and `0x610000`, plus coredump and shipping storage. Only the matching partition layout is supported. Firmware embeds a public trust bundle and public verification material, not access keys.
 
 This is an ownership-level inspection, not a comprehensive runtime/security audit. Embedded artwork, fonts, cloud endpoints and backend protocol implementation remain subject to publication approval.
+
+The OTA owner overrides Arduino's weak `verifyRollbackLater()` startup hook so `initArduino()` cannot accept a pending image before setup. Only `serviceBootHealth()` accepts it after 30 seconds with a responsive UI and healthy setup; an unhealthy setup requests rollback. The SDK integration regression compiles the actual Arduino startup block with this owner.

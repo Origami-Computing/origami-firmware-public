@@ -39,3 +39,4 @@ jobs:
           "$RUNNER_TEMP/pio/bin/pip" install platformio==6.2.0
           "$RUNNER_TEMP/pio/bin/pio" run -e esp32-s3-menu-n16r8-production
           python3 tools/check_sdk_review.py --map .pio/build/esp32-s3-menu-n16r8-production/firmware.map
+          python3 tools/test_ota_boot_health.py
