@@ -30,6 +30,7 @@ bool setAuthToken(const char* token);
 bool isOfficialBuild();
 const char* buildKindName();
 
+// The Arduino startup hook defers early acceptance to this owner.
 // Call from the healthy UI loop after setup. A newly booted OTA image is only
 // accepted after 30 seconds of responsive runtime; otherwise the bootloader's
 // configured rollback support retains the previous valid slot.

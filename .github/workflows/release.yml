@@ -45,6 +45,7 @@ jobs:
           export SOURCE_DATE_EPOCH="$(git show -s --format=%ct)"
           "$RUNNER_TEMP/pio-venv/bin/pio" run -e esp32-s3-menu-n16r8-release-review
           python3 tools/check_sdk_review.py --map .pio/build/esp32-s3-menu-n16r8-release-review/firmware.map
+          python3 tools/test_ota_boot_health.py
       - name: Collect application only
         run: |
           mkdir dist

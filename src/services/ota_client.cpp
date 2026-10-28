@@ -31,6 +31,10 @@
 #include <esp_ota_ops.h>
 #include <esp_partition.h>
 
+// Arduino otherwise accepts an OTA image before setup() and the UI health gate.
+// Leave the bootloader pending state intact for serviceBootHealth().
+extern "C" bool verifyRollbackLater() { return true; }
+
 namespace services {
 namespace ota_client {
 
