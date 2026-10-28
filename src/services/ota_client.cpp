@@ -378,6 +378,32 @@ bool fetchLatestRelease(ReleaseChannel channel, ReleaseInfo* out) {
 // The worker exclusively owns its TLS connection, hash and OTA handle. The UI
 // only reads atomics; terminal state is published after all resources are closed.
 enum class AttemptResult { Success, Retry, Failed };
+// Reopen only the signed immutable image URL. A resumed response must describe
+// exactly the unwritten suffix; the original full-image hash remains authoritative.
+static AttemptResult resumeDownload(HTTPClient& http, WiFiClientSecure& client, int written) {
+    http.end();
+    configureHttp(http, client);
+    if (!http.begin(client, s_release.url)) { setError("resume connect failed"); return AttemptResult::Retry; }
+    const char* headers[] = {"Content-Range"};
+    http.collectHeaders(headers, 1);
+    http.addHeader("Authorization", String("Bearer ") + s_downloadKey);
+    char range[48];
+    snprintf(range, sizeof(range), "bytes=%d-", written);
+    http.addHeader("Range", range);
+    const int code = http.GET();
+    if (code != HTTP_CODE_PARTIAL_CONTENT) {
+        setError("resume HTTP rejected");
+        return code < 0 || code == 429 || code >= 500 ? AttemptResult::Retry : AttemptResult::Failed;
+    }
+    char expected[96];
+    snprintf(expected, sizeof(expected), "bytes %d-%d/%d", written, s_release.size - 1, s_release.size);
+    if (http.getSize() != s_release.size - written || http.header("Content-Range") != expected) {
+        setError("resume range mismatch"); return AttemptResult::Failed;
+    }
+    if (!http.getStreamPtr()) { setError("resume disconnected"); return AttemptResult::Retry; }
+    return AttemptResult::Success;
+}
+
 static AttemptResult downloadAttempt() {
     constexpr size_t kBufferSize = 8192;
     std::unique_ptr<uint8_t, decltype(&heap_caps_free)> buffer(
@@ -410,6 +436,7 @@ static AttemptResult downloadAttempt() {
     uint32_t lastData = millis();
     const uint32_t start = lastData;
     int written = 0;
+    unsigned resumes = 0;
     s_written.store(0);
     AttemptResult result = AttemptResult::Retry;
     while (!s_cancel.load() && hashOk && written < s_release.size) {
@@ -417,6 +444,17 @@ static AttemptResult downloadAttempt() {
         int available = stream->available();
         if (available <= 0) {
             if (!stream->connected() || (uint32_t)(millis() - lastData) > 15000u) {
+                if (written > 0 && resumes < 2 && !s_cancel.load()) {
+                    ++resumes;
+                    result = resumeDownload(http, client, written);
+                    if (result != AttemptResult::Success) break;
+                    stream = http.getStreamPtr();
+                    if (!stream) { setError("resume disconnected"); result = AttemptResult::Retry; break; }
+                    Serial.printf("[ota] resume offset=%d attempt=%u\n", written, resumes);
+                    lastData = millis();
+                    result = AttemptResult::Retry;
+                    continue;
+                }
                 setError("download interrupted"); break;
             }
             vTaskDelay(pdMS_TO_TICKS(5));
@@ -425,7 +463,10 @@ static AttemptResult downloadAttempt() {
         const int wanted = min(available, min((int)kBufferSize, s_release.size - written));
         const int count = stream->read(buffer.get(), wanted);
         if (count <= 0) {
-            if ((uint32_t)(millis() - lastData) > 15000u) { setError("download stalled"); break; }
+            if ((uint32_t)(millis() - lastData) > 15000u) {
+                // Force the next poll through the disconnected/resume path.
+                client.stop();
+            }
             vTaskDelay(1); continue;
         }
         lastData = millis();
