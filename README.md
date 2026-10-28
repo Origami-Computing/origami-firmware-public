@@ -32,7 +32,7 @@ This produces a **custom production-policy build**, not an official signed OTA r
 
 ## Firmware
 
-The upcoming release is **kamiOS 1.0** (`v1.0.0`). Qualification builds remain private candidates until the release review passes. Earlier `v0.1.213` drafts are historical and must not be published as kamiOS 1.0. Use its SHA-256 manifest to identify the reviewed bytes. No public release is available yet.
+The upcoming release is **kamiOS 1.0** (`v1.0.1`). This patch version includes reliable interrupted-download recovery and upgrades the earlier `v1.0.0` qualification image. Qualification builds remain private candidates until the release review passes. Earlier `v0.1.213` drafts are historical and must not be published as kamiOS 1.0. Use its SHA-256 manifest to identify the reviewed bytes. No public release is available yet.
 
 `firmware.bin` is an application image, not a full-device installer. Do not write it at address zero. [Installation notes](docs/installation.md) explain the current review boundary. Credentials and OTA access must be provisioned separately; they are never distributed with this repository. The minimal owner-confirmed SD artwork is included under `sd_flash/`.
 
