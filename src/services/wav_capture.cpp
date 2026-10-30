@@ -1,4 +1,5 @@
 #include "services/wav_capture.h"
+#include "core/usage_events.h"
 #include "core/recording_files.h"
 #include "hal/hal_audio.h"
 
@@ -35,6 +36,7 @@ WavCapture::StartResult WavCapture::begin(const char* directory, const char* pre
     processor_.reset(kSampleRate);
     waveform_.reset();
     samplesWritten_ = 0;
+    core::usage::emit("audio","audio.capture");
     return StartResult::Started;
 }
 
@@ -55,7 +57,9 @@ bool WavCapture::drain() {
 }
 
 bool WavCapture::finish(FinishMode mode) {
+    const bool wasOpen = writer_.isOpen();
     const bool ok = writer_.close();
+    if (wasOpen) core::usage::emit("audio",ok ? "audio.finalized" : "audio.failed");
     if (ownsMic_) {
         if (mode == FinishMode::RestorePlayback) hal::audio::restoreForUiPlayback();
         else hal::audio::deinitMic();

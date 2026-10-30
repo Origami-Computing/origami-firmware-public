@@ -1,5 +1,7 @@
 #include "services/agent_latency.h"
 #include "core/telemetry.h"
+#include "core/usage_events.h"
+#include <string.h>
 #include "hal/hal_display.h"
 #include <Arduino.h>
 #include <esp_random.h>
@@ -10,6 +12,12 @@ uint32_t boot=0, sequence=0, started=0, submitted=0;
 bool active=false, sent=false, ready=false, armed=false;
 int firstRow=0,lastRow=0;
 void event(const char* name,uint32_t now) {
+    if (!strcmp(name,"capture")) core::usage::emit("agent","chat.capture");
+    else if (!strcmp(name,"submit")) core::usage::emit("agent","chat.submit");
+    else if (!strcmp(name,"ready")) core::usage::emit("agent","chat.ready",uint32_t(now-submitted));
+    else if (!strcmp(name,"display")) core::usage::emit("agent","chat.display",uint32_t(now-submitted));
+    else if (!strcmp(name,"cancel")) core::usage::emit("agent","chat.cancel");
+    else if (!strcmp(name,"error")) core::usage::emit("agent","chat.error");
     // <=95 characters even at uint32 maxima: survives existing fleet log cap.
     // Monotonic deltas avoid device/server clock skew. Never include user text.
     LOGI("reply-latency","v=2 t=%08lx%08lx e=%s ms=%lu up=%lu",

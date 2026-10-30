@@ -7,6 +7,7 @@
 #include <stdlib.h>
 
 #include <Arduino.h>
+#include <esp_random.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
 #include <esp_heap_caps.h>
@@ -82,7 +83,7 @@ void publishRegistrationPriority(bool active) {
   s_onboardingPriority = active || s_onboardingRegistration;
   portEXIT_CRITICAL(&s_healthMux);
 }
-static char s_healthJson[core::telemetry_queue::kItemJsonCap] = {};
+static char s_healthJson[512] = {};
 static uint32_t s_healthSequence = 0;
 static bool s_healthPending = false;
 static const char* s_phase="not_started";
@@ -191,7 +192,7 @@ bool ensureRegistered() {
 // POST a JSON body to {backend}{path} with device auth. Prefers the per-device
 // bearer token; falls back to the shared X-Api-Key until the device registers.
 // Returns the HTTP status (or -1 on transport failure).
-int postJson(const char* path, const String& body) {
+int postJson(const char* path, const String& body, const String* expectedReceipt = nullptr) {
   const auto request = core::secrets::backendRequest();
   WiFiClientSecure secClient;
   WiFiClient       plainClient;
@@ -216,7 +217,12 @@ int postJson(const char* path, const String& body) {
   } else {
     http.addHeader("X-Api-Key", request.backend.apiKey);
   }
-  const int code = http.POST(const_cast<String&>(body));
+  int code = http.POST(const_cast<String&>(body));
+  if (code >= 200 && code < 300 && expectedReceipt) {
+    // Reject empty, truncated, oversized or unrelated success responses.
+    const int size = http.getSize();
+    if (size != (int)expectedReceipt->length() || http.getString() != *expectedReceipt) code = -1;
+  }
   if (code < 200 || code >= 300) Serial.printf("[net_poll] POST %s HTTP %d bytes=%u heap=%u\n", path, code, (unsigned)body.length(), (unsigned)ESP.getFreeHeap());
   http.end();
   if (code == 401) core::secrets::setDeviceTokenFor(request, "");
@@ -248,7 +254,7 @@ String buildLogsBody(const core::telemetry_queue::Item* items, int n) {
 // Health is a latest-value mailbox, independent of the diagnostic FIFO. A
 // successful in-flight send must not clear a newer sample published by the UI.
 void sendLatestHealth() {
-  char json[core::telemetry_queue::kItemJsonCap];
+  char json[512];
   uint32_t sequence;
   portENTER_CRITICAL(&s_healthMux);
   const bool pending = s_healthPending;
@@ -262,6 +268,21 @@ void sendLatestHealth() {
   portEXIT_CRITICAL(&s_healthMux);
 }
 
+// At most four events and <800 bytes, preserving prefix acknowledgement and the
+// small TLS write budget. Receipt nonce identifies this attempt, event identities
+// identify durable records across retries/reboots.
+int postUsageBatch(const core::telemetry_queue::Item* items, const int* indices, int count) {
+  char nonce[17];
+  snprintf(nonce, sizeof(nonce), "%08lx%08lx", (unsigned long)esp_random(), (unsigned long)esp_random());
+  String body = "{\"batch\":\""; body += nonce; body += "\",\"events\":[";
+  for (int i=0;i<count;++i) { if(i) body += ","; body += items[indices[i]].json; }
+  body += "]}";
+  char receipt[96];
+  snprintf(receipt,sizeof(receipt),"{\"ok\":true,\"batch\":\"%s\",\"count\":%d}",nonce,count);
+  const String expected(receipt);
+  return postJson("/api/device/events",body,&expected);
+}
+
 // Drain the telemetry queue: ship logs in batches, crashes/heartbeats singly.
 // Items are acked as a contiguous successful prefix (matches ack() semantics);
 // the first failure stops the pass so the rest retry next tick.
@@ -273,6 +294,7 @@ void drainTelemetry() {
   Item* batch = static_cast<Item*>(heap_caps_malloc(sizeof(Item) * TELEMETRY_BATCH_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (!batch) return;
   const int n = snapshot(batch, TELEMETRY_BATCH_MAX);
+  bool usageAccepted[TELEMETRY_BATCH_MAX] = {};
   int sent = 0;
   int i = 0;
   while (i < n && !stopRequested() && !background_network::PeriodicWork::hasWaitingPeer()) {
@@ -292,6 +314,25 @@ void drainTelemetry() {
       if (ok2xx(code)) { sent += (j - i); i = j; continue; }
       if (!retryable(code)) { sent += (j - i); i = j; continue; }  // drop poison batch
       break;
+    }
+    if (batch[i].kind == KIND_USAGE) {
+      if (usageAccepted[i]) { ++sent; ++i; continue; }
+      int indices[4], count=0; size_t bytes=42;
+      // Skip interleaved logs when forming a usage batch. Only the confirmed
+      // contiguous prefix is removed below; later accepted events safely replay
+      // if an intervening log fails. No queue reordering or second worker.
+      for(int j=i;j<n && count<4;++j) {
+        if(batch[j].kind!=KIND_USAGE || usageAccepted[j]) continue;
+        const size_t extra=strlen(batch[j].json)+1;
+        if(count && bytes+extra>800) break;
+        bytes+=extra; indices[count++]=j;
+      }
+      const int code = postUsageBatch(batch,indices,count);
+      if (ok2xx(code)) {
+        for(int j=0;j<count;++j) usageAccepted[indices[j]]=true;
+        ++sent; ++i; continue;
+      }
+      break; // includes 404 before backend rollout; preserve stable event identity
     }
     const char* path = (batch[i].kind == KIND_CRASH) ? TELEMETRY_CRASH_PATH
                                                       : TELEMETRY_HEARTBEAT_PATH;

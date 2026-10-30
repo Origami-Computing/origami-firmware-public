@@ -1,3 +1,4 @@
+#include "core/usage_events.h"
 #include "hal/audio_retirement.h"
 #include "services/wav_player.h"
 
@@ -190,6 +191,8 @@ bool WavPlayer::startTrack(const char* path) {
                   path, info_.hz, info_.channels,
                   (unsigned)(dataEnd_ - dataStart_), (unsigned)info_.durationMs);
     playing_ = true;
+    usageTrackActive_ = true;
+    core::usage::emit("recordings","audio.start");
     return true;
 }
 
@@ -201,6 +204,8 @@ bool WavPlayer::stopTrack() {
 }
 
 void WavPlayer::stopTrackUnlocked() {
+    if (usageTrackActive_) core::usage::emit("recordings","audio.stop");
+    usageTrackActive_ = false;
     playing_ = false;
     hal::audio::txEnd();
     if (fileOpen_) {
@@ -235,6 +240,8 @@ bool WavPlayer::restartTrack() {
         if (!pumpFileToRing_()) break;
     }
     playing_ = true;
+    usageTrackActive_ = true;
+    core::usage::emit("recordings","audio.start");
     return true;
 }
 
@@ -498,3 +505,11 @@ bool WavPlayer::stopTask() {
 
 }  // namespace audio
 }  // namespace services
+
+namespace services { namespace audio {
+void WavPlayer::pause() { if (playing_.exchange(false)) core::usage::emit("recordings","audio.pause"); }
+void WavPlayer::resume() {
+ if (worker_.running() && !worker_.cleanupPending() && fileOpen_ && !playing_.exchange(true))
+  core::usage::emit("recordings","audio.resume");
+}
+} }

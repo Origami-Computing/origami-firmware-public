@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class ChannelSelectionTests(unittest.TestCase):
     def test_failures_and_roles(self):
         source = (ROOT/'src/services/ota_client.cpp').read_text()
-        start = source.index('bool setReleaseChannel(')
+        start = source.index('static bool s_publicDefaultAttempted')
         end = source.index('\nconst char* releaseChannelName', start)
         code = r'''
 #include <cassert>
@@ -25,6 +25,8 @@ bool network=true,auth=true,writeOk=true,key=true;
 bool hasAuthToken(){return key;}
 int saved=0,writes=0;
 namespace core {namespace store {
+// Existing developer opt-in: the one-time migration has already completed.
+uint8_t getU8(const char*,const char* key,int){return !strcmp(key,"ota_pub_v1")?1:saved;}
 bool putU8(const char*,const char*,int v){++writes;if(writeOk)saved=v;return writeOk;}
 }}
 namespace firmware_update {

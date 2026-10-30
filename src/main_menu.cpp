@@ -182,7 +182,11 @@ static void uiTask(void*) {
             hb["battery_pct"]  = (int)pw.battery_percent;
             hb["battery_estimated"] = pw.battery_estimated;
             hb["rssi"]         = (int)WiFi.RSSI();
-            char json[core::telemetry_queue::kItemJsonCap];
+            const auto telemetryStats = core::telemetry_queue::stats();
+            hb["telemetry_queued"] = telemetryStats.queued;
+            hb["telemetry_dropped"] = telemetryStats.droppedDurable;
+            hb["telemetry_journal_failures"] = telemetryStats.journalFailures;
+            char json[512];
             serializeJson(hb, json, sizeof(json));
             services::net_poll::setHealthSnapshot(json);
             LOGD("health", "Heartbeat uptime=%lu heap=%u rssi=%d", (unsigned long)now, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (int)WiFi.RSSI());

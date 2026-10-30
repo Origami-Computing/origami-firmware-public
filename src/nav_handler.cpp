@@ -5,6 +5,8 @@
  */
 
 #include "nav_handler.h"
+#include "core/usage_events.h"
+#include <esp_timer.h>
 #include "ui/list_view.h"
 #include "hal/hal_encoder_trace.h"
 #include "services/vibration.h"
@@ -28,10 +30,28 @@ NavHandler& NavHandler::instance() {
     return s;
 }
 
+namespace {
+App* usageForeground = nullptr;
+int64_t usageSince = 0;
+void usageEnd(App* app, const char* event);
+void usageStart(App* app, const char* event) {
+ if (!app) return;
+ if (usageForeground) usageEnd(usageForeground,"app.cover");
+ usageForeground=app; usageSince=esp_timer_get_time()/1000;
+ core::usage::emit(app->id ? app->id : "unknown",event);
+}
+void usageEnd(App* app, const char* event) {
+ if (!app) return;
+ const int64_t elapsed=usageForeground==app ? esp_timer_get_time()/1000-usageSince : -1;
+ core::usage::emit(app->id ? app->id : "unknown",event,elapsed);
+ if (usageForeground==app) usageForeground=nullptr;
+}
+}
 static void enterApp(App* app, bool activating = false) {
     ui::focused_label::reset();
     if (!app || !app->initialScreen) return;
     app->currentScreen = app->initialScreen;
+    usageStart(app, activating ? "app.enter" : "app.resume");
     if (activating && app->onEnter) app->onEnter();
     if (!activating && app->onResume) app->onResume();
     if (app->currentScreen->onEnter) app->currentScreen->onEnter();
@@ -49,6 +69,7 @@ static void enterApp(App* app, bool activating = false) {
 static void exitApp(App* app) {
     if (!app) return;
     if (app->currentScreen && app->currentScreen->onExit) app->currentScreen->onExit();
+    usageEnd(app,"app.exit");
     if (app->onExit) app->onExit();
     app->currentScreen = nullptr;
 }
@@ -67,6 +88,7 @@ void NavHandler::push(App* app) {
     if (shuttingDown_) return;
     if (!app || depth_ >= kMaxDepth) return;
     services::vibration::navigationFeedback(services::vibration::Cue::Select);
+    usageEnd(top(),"app.cover");
     if (top() && top()->onCover) top()->onCover();
     sfx::play(sfx::kSfxOpen);
     stack_[depth_++] = app;
@@ -130,6 +152,7 @@ void NavHandler::prepareForSleep() {
     App* app = root();
     if (app && app->onPrepareSleep) app->onPrepareSleep();
     popToRoot();
+    usageEnd(top(),"app.sleep");
 }
 
 void NavHandler::reenterRoot() {
@@ -189,6 +212,7 @@ void NavHandler::presentSystemScreen(const scene::Screen* screen) {
     if (!screen || systemScreen_ == screen) return;
     if (systemScreen_) dismissSystemScreen();
 
+    usageEnd(top(),"app.cover");
     if (top() && top()->onCover) top()->onCover();
     savedAudioGroup_ = sfx::activeAudioGroup();
     sfx::setActiveAudioGroup(nullptr);
@@ -210,6 +234,7 @@ void NavHandler::dismissSystemScreen() {
     savedAudioGroup_ = nullptr;
 
     App* interrupted = top();
+    usageStart(interrupted,"app.resume");
     if (interrupted && interrupted->onResume) interrupted->onResume();
     if (interrupted && interrupted->currentScreen && interrupted->currentScreen->onEnter) {
         interrupted->currentScreen->onEnter();

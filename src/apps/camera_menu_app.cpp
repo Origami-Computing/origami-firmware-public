@@ -69,6 +69,7 @@
 #include "config/ui_theme.h"
 #include "services/camera_settings.h"
 #include "core/telemetry.h"
+#include "core/usage_events.h"
 #include "hal/hal_camera.h"
 #include "services/camera_session.h"
 #include "hal/hal_input.h"
@@ -539,6 +540,7 @@ static bool camCaptureContinuousVga() {
   if (!services::photos::available()) {
     camBeginReview("SD unavailable", 1800);
     Serial.println("[camera-vga] ERR sd_unavailable");
+    core::usage::emit("camera","camera.failed");
     return false;
   }
 
@@ -547,11 +549,13 @@ static bool camCaptureContinuousVga() {
   if (result == services::camera::Snapshot::Result::FrameUnavailable) {
     Serial.println("[camera-vga] ERR fresh_frame_unavailable; recovering");
     if (camRestorePreviewAfterCapture(400)) camBeginReview("Capture failed", 1800);
+    core::usage::emit("camera","camera.failed");
     return false;
   }
   if (result == services::camera::Snapshot::Result::OutOfMemory) {
     camBeginReview("Not enough memory", 1800);
     Serial.println("[camera-vga] ERR snapshot_allocation");
+    core::usage::emit("camera","camera.failed");
     return false;
   }
   const auto timing = snapshot.timing();
@@ -566,11 +570,13 @@ static bool camCaptureContinuousVga() {
   const bool pathOk = photo.valid();
   const uint64_t writeStartUs = esp_timer_get_time();
   const bool saved = services::photos::write(photo, snapshot.data(), bytes);
+  if (!saved) core::usage::emit("camera","camera.failed");
   const uint64_t writtenUs = esp_timer_get_time();
   snapshot.clear();
   bool queued = false;
   if (saved) {
     queued = services::photos::enqueue(photo);
+    core::usage::emit("camera","camera.saved");
     camRecordCapture(photo.sequence);
   }
   camBeginReview(saved ? (queued ? "Saved" : "Saved (not queued)") : "Save failed",
@@ -595,6 +601,7 @@ static bool camCaptureHighRes() {
   const auto photo = services::photos::prepare();
   if (!photo.valid()) {
     hal::display::clearContentArea(kUiBg);
+    core::usage::emit("camera","camera.failed");
     return false;
   }
 
@@ -610,16 +617,19 @@ static bool camCaptureHighRes() {
     else
       snprintf(camStatusMsg, sizeof(camStatusMsg), "Capture failed");
     (void)camRestorePreviewAfterCapture(400);
+    core::usage::emit("camera","camera.failed");
     return false;
   }
 
   const bool saved = s_camera.captureToFile(photo.path);
+  if (!saved) core::usage::emit("camera","camera.failed");
   if (saved) {
     const uint32_t reviewStartMs = millis();
     (void)camShowCapturedPreview(photo.path, "Saving...");
     if (!services::photos::enqueue(photo)) {
       Serial.printf("[cam] Saved %s but upload queue full — photo kept on SD without upload retry\n", photo.path);
     }
+    core::usage::emit("camera","camera.saved");
     camRecordCapture(photo.sequence);
     const uint32_t reviewElapsedMs = millis() - reviewStartMs;
     if (reviewElapsedMs < 900u) delay(900u - reviewElapsedMs);
