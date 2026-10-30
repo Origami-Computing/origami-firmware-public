@@ -40,3 +40,16 @@ jobs:
           "$RUNNER_TEMP/pio/bin/pio" run -e esp32-s3-menu-n16r8-production
           python3 tools/check_sdk_review.py --map .pio/build/esp32-s3-menu-n16r8-production/firmware.map
           python3 tools/test_ota_boot_health.py
+      - name: Analytics durability and Public default regressions
+        env:
+          ARDUINOJSON_SRC: .pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src
+        run: |
+          python3 tools/test_usage_events.py
+          python3 tools/test_usage_receipt.py
+          python3 tools/test_telemetry_queue.py
+          python3 tools/test_telemetry_journal.py
+          python3 tools/test_telemetry_drain.py
+          python3 tools/test_playback_start_admission.py
+          python3 tools/test_agent_latency.py
+          python3 tools/test_navigation_presentation.py
+          python3 tools/test_ota_public_default.py

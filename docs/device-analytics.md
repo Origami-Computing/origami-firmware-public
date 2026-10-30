@@ -128,3 +128,21 @@ production build, desktop/mobile browser checks with synthetic fixture data.
 Firmware: build `esp32-s3-menu-n16r8`, architecture dependency guard, telemetry
 queue/drain/journal/encoder tests, navigation, agent-latency, microphone and
 playback control tests. Production FAT/SD power-cut testing remains required.
+
+## Public v1.0.2 rollout
+
+Public firmware adds the event encoder, durable queue and bounded batch upload
+protocol. Older Public versions do not emit these structured events; zero rows
+are not evidence of zero device use. The backend must accept batches before
+firmware promotion.
+
+On the first boot using this policy, the saved OTA selection is migrated to
+Public once. Subsequent explicit, authorized developer choices of Private or
+Staging survive reboots. The migration does not erase credentials, change access
+roles or move account data between backends. Offline and older devices receive
+this default only after installing firmware containing the migration. Legacy
+clients without authenticated OTA still require their existing USB migration.
+
+Candidate releases remain unpublished GitHub drafts even though this source
+repository is now public. Build from protected main, qualify the exact bytes on
+hardware, then publish those same bytes through the existing promotion workflow.

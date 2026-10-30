@@ -117,8 +117,24 @@ bool setAuthToken(const char* token) {
     return true;
 }
 
+// Apply the Public default once per device. Later explicit developer choices
+// survive reboots. A partial NVS write leaves selection on Public and retries
+// after reboot; never repeatedly write from Settings rendering.
+static bool s_publicDefaultAttempted = false;
+static bool s_publicDefaultReady = false;
+static bool ensurePublicDefault() {
+    if (s_publicDefaultAttempted) return s_publicDefaultReady;
+    s_publicDefaultAttempted = true;
+    s_publicDefaultReady = core::store::getU8(kSettingsNamespace, "ota_pub_v1", 0) == 1;
+    if (!s_publicDefaultReady) {
+        s_publicDefaultReady = core::store::putU8(kSettingsNamespace, kChannelKey, 0)
+            && core::store::putU8(kSettingsNamespace, "ota_pub_v1", 1);
+    }
+    return s_publicDefaultReady;
+}
+
 ReleaseChannel releaseChannel() {
-    if (!hasAuthToken()) return ReleaseChannel::Public;
+    if (!ensurePublicDefault() || !hasAuthToken()) return ReleaseChannel::Public;
     const uint8_t saved = core::store::getU8(kSettingsNamespace, kChannelKey, 0);
     return saved == 1 ? ReleaseChannel::Staging :
            saved == 2 ? ReleaseChannel::Private : ReleaseChannel::Public;
@@ -129,6 +145,7 @@ bool setReleaseChannel(ReleaseChannel channel) {
     if (channel != ReleaseChannel::Public && channel != ReleaseChannel::Staging && channel != ReleaseChannel::Private) {
         setError("Invalid update channel"); return false;
     }
+    if (!ensurePublicDefault()) { setError("Public default save failed; restart to retry"); return false; }
     if (channel != ReleaseChannel::Public) {
         // Missing enrollment is actionable even if another network owner is busy.
         if (!hasAuthToken()) { setError("Set up OTA access key"); return false; }

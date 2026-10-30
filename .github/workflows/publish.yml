@@ -59,6 +59,7 @@ jobs:
           python3 tools/test_ota_download_policy.py
           python3 tools/test_ota_download_resume.py
           python3 tools/test_ota_versions.py
+          python3 tools/test_ota_public_default.py
           python3 -m unittest discover -s tests/ota -v
       - name: Download and verify the qualified candidate without rebuilding
         env:
