@@ -61,7 +61,7 @@ public:
     bool init();
     bool ready() const { return !worker_.cleanupPending() && inBuf_ != nullptr && ring_.buf != nullptr; }
 
-    // Open a file and begin playback: parse ID3, probe format, init I2S,
+    // Open a file and begin playback: skip validated ID3 metadata, probe audio, init I2S,
     // prebuffer ~20 frames.  Sets trackInfo() on success.
     // Returns false if the file cannot be opened or the format is unrecognised.
     // Does NOT touch canvas pipeline — caller does mp3SetSubState after return.
@@ -70,8 +70,8 @@ public:
     // False means the worker did not yield within 200 ms; track is unchanged.
     bool stopTrack();
 
-    // Byte-accurate seek: recalculates target offset from elapsed+seconds,
-    // syncs past garbage bytes, and refills the ring.
+    // Bitrate-based seek within the audio payload (excluding leading ID3 tags):
+    // recalculates the offset, syncs to MPEG frames, and refills the ring.
     void seekRelativeSeconds(int seconds);
 
     void setVolume(int vol0to100) { services::audio::media_volume::setVolume(vol0to100); }
@@ -113,6 +113,7 @@ private:
     fs::File           file_;
     std::atomic<bool> fileOpen_{false};
     uint32_t           fileSize_ = 0;
+    uint32_t           audioStart_ = 0; // Leading ID3 bytes excluded from playback/seek time.
     uint32_t           lastGoodFilePos_ = 0;
     char               currentPath_[192] = {};
 
@@ -131,7 +132,8 @@ private:
     // Called only from the decode task.
     int  decodeOneFrame_();
     void drainToI2S_();
-    void parseID3_();
+    // SPI lock held. Leaves the file at audioStart_; false for invalid tag bounds/I/O.
+    bool parseID3_();
     /** True when the SD file is exhausted and the codec buffer has no full frame left. */
     bool atEndOfCompressedStream_();
     bool recoverSdFile_();
