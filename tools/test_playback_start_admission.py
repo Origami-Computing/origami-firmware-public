@@ -42,13 +42,13 @@ struct Base{
  Worker worker_;Ring ring_;Codec codec_;Progress progress_;File file_;
  void* inBuf_=(void*)1;int16_t decodeBuf_[4]{};
  std::atomic<bool> playing_{false};bool fileOpen_=false,backgroundIoPaused_=true,usageTrackActive_=false;
- char currentPath_[128]{};unsigned fileSize_=0,lastGoodFilePos_=0,decodeNoProgressCount_=0,detectedRate_=0,estBitrate_=0;
+ char currentPath_[128]{};unsigned fileSize_=0,audioStart_=0,lastGoodFilePos_=0,decodeNoProgressCount_=0,detectedRate_=0,estBitrate_=0;
  unsigned dataStart_=0,dataEnd_=0,bytesPerFrame_=0;bool wantsNext_=false;
  struct Info{int hz=48000,channels=2;unsigned bitrateKbps=64,durationMs=1000;char title[64]{};} info_;
  struct ParsedHeader{int hz=48000,channels=2;unsigned durationMs=1000,dataStart=44,dataEnd=4096,bytesPerFrame=4;};
  bool startTask(){++starts;return worker_.runningFlag=spawnOk&&!worker_.pending;}
  void stopTrackUnlocked(){playing_=false;fileOpen_=false;}
- void parseID3_(){}int decodeOneFrame_(){return 0;}int scaledVolumeBasisPoints(){return 1000;}
+ bool parseID3_(){return true;}int decodeOneFrame_(){return 0;}int scaledVolumeBasisPoints(){return 1000;}
  bool ready(){return true;}bool parseHeader_(File&,ParsedHeader&){return true;}
  void clearSpectrum(){}bool pumpFileToRing_(){return false;}
 };

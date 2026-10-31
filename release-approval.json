@@ -1,7 +1,7 @@
 {
-  "approved": true,
-  "reviewed_tree_sha256": "48ff53442e6c43c763bbf80a48890ac9e2ea49790081fc211d50a6494bd44a1a",
-  "approved_by": "Vaibhav Maloo (publication authorized in Codex, 2026-10-30); Codex source and test review",
+  "approved": false,
+  "reviewed_tree_sha256": "",
+  "approved_by": "",
   "source_review_complete": true,
   "license_review_complete": true,
   "security_contact_ready": true,
