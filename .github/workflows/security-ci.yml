@@ -36,7 +36,6 @@ jobs:
           python3 tools/test_camera_session.py
           python3 tools/test_network_stack.py
           python3 tools/test_camera_video_teardown.py
-          python3 tools/test_sd_write_compat.py
           python3 tools/test_video_recording.py
           python3 tools/test_playback_start_admission.py
           python3 tools/test_lua_security.py
@@ -47,6 +46,7 @@ jobs:
           "$RUNNER_TEMP/pio/bin/pip" install platformio==6.2.0
           "$RUNNER_TEMP/pio/bin/pio" run -e esp32-s3-menu-n16r8-production
           python3 tools/check_sdk_review.py --map .pio/build/esp32-s3-menu-n16r8-production/firmware.map
+          python3 tools/test_sd_write_compat.py
           python3 tools/test_ota_boot_health.py
       - name: Analytics durability and Public default regressions
         env:
