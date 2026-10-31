@@ -47,6 +47,7 @@ constexpr int newestFirst(uint64_t aTime, const char* aName, uint64_t bTime, con
 struct PhotoFile {
   char path[272];  // FAT long filename plus /photos/ and terminator.
   uint64_t modified;
+  bool video = false;
 };
 
 enum class PhotoCatalogResult { Ok, NoSd, ReadError, NoMemory };
@@ -63,9 +64,10 @@ class PhotoCatalog {
   ~PhotoCatalog() { clear(); }
   PhotoCatalog(const PhotoCatalog&) = delete;
   PhotoCatalog& operator=(const PhotoCatalog&) = delete;
-  PhotoCatalogResult load();
+  PhotoCatalogResult load(bool includeVideos = false);
   // Caller must keep background SD writers paused, as for load().
-  bool removeAt(size_t index);
+  // fileRemoved is only for a service which already completed guarded deletion.
+  bool removeAt(size_t index, bool fileRemoved=false);
   void clear();
   size_t count() const { return count_; }
   const PhotoCatalogTimings& timings() const { return timings_; }

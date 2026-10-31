@@ -1,6 +1,7 @@
 #include "services/photo_library.h"
 #include "services/agent_coordination.h"
 #include "services/uploads.h"
+#include "services/media_delete.h"
 #include "services/background_network.h"
 #include "hal/hal_wifi.h"
 #include <string.h>
@@ -23,7 +24,7 @@ Library::BrowseResult Library::beginBrowsing(bool deferred) {
     return BrowseResult::Ready;
 }
 Library::LoadResult Library::load() {
-    return browsing() ? catalog_.load() : LoadResult::ReadError;
+    return browsing() ? catalog_.load(true) : LoadResult::ReadError;
 }
 bool Library::removeAt(size_t index,int* removedUploads) {
     if (removedUploads) *removedUploads=0;
@@ -31,6 +32,12 @@ bool Library::removeAt(size_t index,int* removedUploads) {
     char path[sizeof(File::path)];
     memcpy(path,catalog_[index].path,sizeof(path));
     path[sizeof(path)-1]=0;
+    if(catalog_[index].video){
+        media_delete::Result result;
+        if(!media_delete::deleteFile(path,&result))return false;
+        if(removedUploads)*removedUploads=result.queueRemoved;
+        return catalog_.removeAt(index,true);
+    }
     if (!catalog_.removeAt(index)) return false;
     int removed=0;
     while (uploads::queue().removeByFilePath(path)) ++removed;

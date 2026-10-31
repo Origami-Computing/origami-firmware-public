@@ -19,6 +19,12 @@ namespace apps { namespace videos {
 static services::video::Library s_library;
 static ui::CameraPreview s_preview;
 static int s_selected=0;
+static char s_requestedPath[272]{};
+static bool s_requestedEntry=false,s_singleClip=false;
+bool openFile(const char* path){
+    if(!path || strncmp(path,"/videos/",8) || strlen(path)>=sizeof(s_requestedPath))return false;
+    strcpy(s_requestedPath,path);s_requestedEntry=true;NavHandler::instance().push(&app);return true;
+}
 static bool s_frame=false,s_playing=false,s_ended=false,s_dirty=true,s_failed=false;
 static bool s_audioTail=false;
 static uint32_t s_number=0,s_startedMs=0,s_elapsedMs=0,s_skipped=0;
@@ -138,7 +144,7 @@ static void close() {
 static void open() {
     s_frame=s_playing=s_ended=s_failed=false;s_dirty=true;
     s_decodeMaxMs=s_presentMaxMs=0;
-    if (!s_library.open(true)) {
+    if (!s_library.open(true,s_singleClip?s_requestedPath:nullptr)) {
         s_message=s_library.error();s_failed=!s_library.opening();
         hal::display::markAllDirty();return;
     }
@@ -151,9 +157,9 @@ static void open() {
         close();s_message="Not enough video memory";s_failed=true;return;
     }
     if (s_selected>=s_library.count()) s_selected=s_library.count()-1;
-    selectClip();
+    selectClip(s_singleClip);
 }
-static void enter() {s_selected=0;open();}
+static void enter() {s_singleClip=s_requestedEntry;s_requestedEntry=false;s_selected=0;open();}
 static void drawScene(ui::scene::Scene& scene,int16_t w,int16_t h) {
     scene.clear();ui::scene::setCurrentScene(&scene);
     ui::scene::Builder b(scene,w,h);b.clearContent(kUiBg);
@@ -283,7 +289,7 @@ static void tick(uint32_t now) {
 static void input(hal::input::InputEvent event) {
     using E=hal::input::EventType;
     if (ui::nav::isBackTap(event)) {NavHandler::instance().pop();return;}
-    if (event.type==E::Scroll && s_library.count()) {
+    if (event.type==E::Scroll && !s_singleClip && s_library.count()) {
         const int next=std::max(0,std::min(s_library.count()-1,s_selected+int(event.delta)));
         if (next!=s_selected) {s_selected=next;selectClip();}
     } else if (ui::nav::isEnterTap(event) || event.type==E::ButtonB_Tap) {

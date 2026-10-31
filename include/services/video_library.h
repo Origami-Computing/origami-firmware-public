@@ -24,7 +24,9 @@ public:
     Library& operator=(const Library&)=delete;
     // With deferred=true, false plus opening() means retry on a later UI tick.
     // close cancels pending admission and restores background work.
-    bool open(bool deferred=false);
+    // Optional owned-by-caller path selects one clip without a capped directory scan.
+    // Borrowed only during this call; pass again while opening() is pending.
+    bool open(bool deferred=false, const char* filePath=nullptr);
     bool opening() const { return opening_; }
     void close();
     int count() const { return count_; }
@@ -53,7 +55,7 @@ public:
 private:
     static constexpr uint32_t kSlots=6, kFrameBytes=core::avi::kJpegFrameBytes;
     static constexpr size_t kReadScratchBytes=4096;
-    static constexpr int kFiles=96, kPath=64;
+    static constexpr int kFiles=96, kPath=272;
     static void run(void* self);
     void read();
     background_network::PeripheralReservation reservation_;

@@ -424,6 +424,7 @@ bool drawJpegFrame(const uint8_t* buf, size_t len, int screenW, int screenH) {
   return true;
 }
 
+static bool drawDecodedJpegScaled(int32_t dstX,int32_t dstY,int32_t maxW,int32_t maxH,ImageFit fit);
 bool drawJpegFileScaled(const char* path,
                         int32_t dstX, int32_t dstY,
                         int32_t maxW, int32_t maxH, ImageFit fit) {
@@ -435,6 +436,16 @@ bool drawJpegFileScaled(const char* path,
     return false;
   }
 
+  return drawDecodedJpegScaled(dstX,dstY,maxW,maxH,fit);
+}
+bool drawJpegBufferScaled(const uint8_t* data,size_t bytes,int32_t dstX,int32_t dstY,int32_t maxW,int32_t maxH) {
+  if(!data || !bytes || maxW<=0 || maxH<=0)return false;
+  hal::bus::lockSpi();
+  if(!JpegDec.decodeArray(const_cast<uint8_t*>(data),bytes)){hal::bus::unlockSpi();return false;}
+  return drawDecodedJpegScaled(dstX,dstY,maxW,maxH,ImageFit::Contain);
+}
+// Both file and memory decoders enter with the shared decoder/SPI lock held.
+static bool drawDecodedJpegScaled(int32_t dstX,int32_t dstY,int32_t maxW,int32_t maxH,ImageFit fit) {
   const int imgW  = (int)JpegDec.width;
   const int imgH  = (int)JpegDec.height;
   const int mcu_w = (int)JpegDec.MCUWidth;

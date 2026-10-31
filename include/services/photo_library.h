@@ -4,7 +4,8 @@
 
 namespace services { namespace photos {
 // UI-task gallery operations. The app owns selection, menus and sync-view timing.
-// The library owns catalog storage and browsing/network exclusion. No rendering.
+// Mixed JPEG/AVI entries are ordered newest-first by SD timestamp, with stable
+// camera-ID/name fallback when timestamps tie. The library owns catalog storage and browsing/network exclusion. No rendering.
 class Library {
 public:
     enum class BrowseResult { Ready, UploadsBusy, NetworkBusy, Pending };
@@ -25,8 +26,8 @@ public:
     size_t count() const { return catalog_.count(); }
     const File& operator[](size_t index) const { return catalog_[index]; }
     const hal::sd::PhotoCatalogTimings& timings() const { return catalog_.timings(); }
-    // SD removal must succeed before pending queue entries are removed.
-    // Never deletes a cloud copy. Failure leaves queued uploads unchanged.
+    // Photos retain catalog-first deletion. Videos use media_delete queue leases
+    // and manifest confirmation before removing the file. Neither deletes cloud copies.
     bool removeAt(size_t index, int* removedUploads);
     int beginSync(); // Returns initial pending count; preserves the catalog.
     SyncStatus syncStatus() const;

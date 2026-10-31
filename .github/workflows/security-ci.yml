@@ -33,6 +33,9 @@ jobs:
           python3 tools/test_ota_versions.py
           python3 tools/test_mp3_metadata.py
           python3 tools/test_camera_shutter.py
+          python3 tools/test_media_gallery.py
+          python3 tools/test_photo_library.py
+          python3 tools/test_video_library.py
           python3 tools/test_camera_session.py
           python3 tools/test_network_stack.py
           python3 tools/test_camera_video_teardown.py
