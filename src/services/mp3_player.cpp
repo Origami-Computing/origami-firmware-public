@@ -152,7 +152,13 @@ bool Mp3Player::startTrack(const char* path) {
     fileSize_ = file_.size();
     fileOpen_ = true;
 
-    parseID3_();
+    if (!parseID3_()) {
+        file_.close();
+        fileOpen_ = false;
+        hal::bus::unlockSpi();
+        Serial.println("[mp3] Invalid or unreadable ID3 metadata");
+        return false;
+    }
     lastGoodFilePos_ = file_.position();
     hal::bus::unlockSpi();
 
@@ -193,7 +199,7 @@ bool Mp3Player::startTrack(const char* path) {
     info_.bitrateKbps    = (uint32_t)probe.bitrate_kbps;
     estBitrate_          = (uint32_t)probe.bitrate_kbps * 1000u;
     info_.durationMs     = estBitrate_ > 0
-                               ? (uint32_t)((uint64_t)fileSize_ * 8000u / estBitrate_)
+                               ? (uint32_t)((uint64_t)(fileSize_ - audioStart_) * 8000u / estBitrate_)
                                : 0;
 
     Serial.printf("[mp3] START '%s' %dHz ch=%d %dkbps %uB est=%ums\n",
@@ -264,18 +270,20 @@ void Mp3Player::seekRelativeSeconds(int seconds) {
     int32_t  targetMs = (int32_t)curMs + seconds * 1000;
     if (targetMs < 0) targetMs = 0;
     if (info_.durationMs > 0 && (uint32_t)targetMs > info_.durationMs)
-        targetMs = (int32_t)info_.durationMs - 1000;
+        targetMs = info_.durationMs > 1000 ? (int32_t)info_.durationMs - 1000 : 0;
 
     uint32_t targetByte = 0;
     if (estBitrate_ > 0) {
         targetByte = (uint32_t)((uint64_t)targetMs * estBitrate_ / 8000u);
     } else if (info_.durationMs > 0) {
-        targetByte = (uint32_t)((uint64_t)targetMs * fileSize_ / info_.durationMs);
+        targetByte = (uint32_t)((uint64_t)targetMs * (fileSize_ - audioStart_) / info_.durationMs);
     } else {
         return;
     }
-    if (targetByte >= fileSize_)
-        targetByte = fileSize_ > 4096 ? fileSize_ - 4096 : 0;
+    const uint32_t audioBytes = fileSize_ - audioStart_;
+    if (targetByte >= audioBytes)
+        targetByte = audioBytes > 4096 ? audioBytes - 4096 : 0;
+    targetByte += audioStart_;
 
     hal::bus::lockSpi();
     file_.seek(targetByte);
@@ -453,29 +461,40 @@ void Mp3Player::drainToI2S_() {
 // ID3v2 tag parser — best-effort TIT2 / TPE1 extraction.
 // ---------------------------------------------------------------------------
 
-void Mp3Player::parseID3_() {
+bool Mp3Player::parseID3_() {
     info_.title[0]  = 0;
     info_.artist[0] = 0;
-
-    uint32_t savedPos = file_.position();
-    file_.seek(0);
+    audioStart_ = 0;
+    if (!file_.seek(0)) return false;
 
     uint8_t hdr[10];
     if (file_.read(hdr, 10) != 10 ||
         hdr[0] != 'I' || hdr[1] != 'D' || hdr[2] != '3') {
-        file_.seek(savedPos);
-        return;
+        return file_.seek(0);
     }
+    // ID3v2.2/2.3/2.4 share a synchsafe tag size. Never mask malformed
+    // lengths into a plausible offset or seek beyond the actual SD file.
+    const uint8_t version = hdr[3];
+    if (version < 2 || version > 4 || hdr[4] == 0xFF ||
+        ((hdr[6] | hdr[7] | hdr[8] | hdr[9]) & 0x80)) return false;
     uint32_t tagSize = ((uint32_t)(hdr[6] & 0x7F) << 21) |
                        ((uint32_t)(hdr[7] & 0x7F) << 14) |
                        ((uint32_t)(hdr[8] & 0x7F) << 7)  |
                         (uint32_t)(hdr[9] & 0x7F);
     uint32_t tagEnd = 10 + tagSize;
+    const uint32_t footerSize = version == 4 && (hdr[5] & 0x10) ? 10 : 0;
+    if (tagEnd > fileSize_ || footerSize > fileSize_ - tagEnd) return false;
+    audioStart_ = tagEnd + footerSize;
+    if (audioStart_ >= fileSize_) return false;
     uint32_t pos    = 10;
 
-    while (pos + 10 < tagEnd) {
+    // Text extraction is best-effort. Older, unsynchronised or extended tags
+    // still skip correctly, without interpreting their different frame layout.
+    // Bound UI-task work even for a file containing thousands of tiny frames.
+    for (unsigned frames = 0; version >= 3 && !(hdr[5] & 0xC0) &&
+         frames < 128 && tagEnd - pos >= 10; ++frames) {
         uint8_t fhdr[10];
-        file_.seek(pos);
+        if (!file_.seek(pos)) return false;
         if (file_.read(fhdr, 10) != 10) break;
         if (fhdr[0] == 0) break;
 
@@ -483,8 +502,13 @@ void Mp3Player::parseID3_() {
                                  (char)fhdr[2], (char)fhdr[3], 0 };
         uint32_t frameSize  = ((uint32_t)fhdr[4] << 24) | ((uint32_t)fhdr[5] << 16) |
                               ((uint32_t)fhdr[6] <<  8) |  (uint32_t)fhdr[7];
-
-        if (frameSize == 0 || frameSize > 4096) { pos += 10 + frameSize; continue; }
+        if (version == 4) {
+            if ((fhdr[4] | fhdr[5] | fhdr[6] | fhdr[7]) & 0x80) break;
+            frameSize = ((uint32_t)fhdr[4] << 21) | ((uint32_t)fhdr[5] << 14) |
+                        ((uint32_t)fhdr[6] << 7) | fhdr[7];
+        }
+        if (frameSize == 0 || frameSize > tagEnd - pos - 10) break;
+        if (frameSize > 4096 || fhdr[9] != 0) { pos += 10 + frameSize; continue; }
 
         bool isTIT2 = (strcmp(frameId, "TIT2") == 0);
         bool isTPE1 = (strcmp(frameId, "TPE1") == 0);
@@ -515,7 +539,9 @@ void Mp3Player::parseID3_() {
         }
         pos += 10 + frameSize;
     }
-    file_.seek(savedPos);
+    // Format detection must start at MPEG frames, not at album artwork/padding
+    // that can be larger than the fixed 16 KiB decoder input buffer.
+    return file_.seek(audioStart_);
 }
 
 // ---------------------------------------------------------------------------

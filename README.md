@@ -6,7 +6,7 @@
 
 kamiOS is the operating firmware for Origami’s ESP32-S3 handheld: a display, camera, audio, motion sensing, and Lua widgets in one device.
 
-**Private review draft — not approved for public distribution.** This repository starts with one independent snapshot. Publication awaits the source, asset, dependency, and firmware review described in [release review](docs/release-review.md).
+Official releases are published after source review, automated checks, and qualification of the signed candidate. See [release review](docs/release-review.md).
 
 ## Build your own app
 
@@ -32,7 +32,9 @@ This produces a **custom production-policy build**, not an official signed OTA r
 
 ## Firmware
 
-The upcoming release is **kamiOS 1.0** (`v1.0.1`). This patch version includes reliable interrupted-download recovery and upgrades the earlier `v1.0.0` qualification image. Qualification builds remain private candidates until the release review passes. Earlier `v0.1.213` drafts are historical and must not be published as kamiOS 1.0. Use its SHA-256 manifest to identify the reviewed bytes. No public release is available yet.
+This source targets **v1.0.3**, adding support for MP3 files with large ID3 metadata blocks. Validated tag offsets are excluded from duration and seek calculations; malformed tag lengths fail safely. The batched device analytics and one-time Public-default migration from v1.0.2 remain included. See [published releases](https://github.com/Origami-Computing/origami-firmware-public/releases) for available binaries.
+
+Run `python3 tools/test_mp3_metadata.py` and `python3 tools/test_playback_start_admission.py` for the metadata, decoder, seeking and failed-start regression checks.
 
 `firmware.bin` is an application image, not a full-device installer. Do not write it at address zero. [Installation notes](docs/installation.md) explain the current review boundary. Credentials and OTA access must be provisioned separately; they are never distributed with this repository. The minimal owner-confirmed SD artwork is included under `sd_flash/`.
 
