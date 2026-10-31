@@ -31,6 +31,8 @@ jobs:
           python3 tools/test_ota_download_policy.py
           python3 tools/test_ota_download_resume.py
           python3 tools/test_ota_versions.py
+          python3 tools/test_mp3_metadata.py
+          python3 tools/test_playback_start_admission.py
           python3 tools/test_lua_security.py
           python3 -m unittest discover -s tests/ota -v
       - name: Build production firmware
