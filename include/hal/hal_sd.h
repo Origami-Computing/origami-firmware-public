@@ -19,11 +19,34 @@ using FileChunkCallback = bool (*)(const uint8_t* data, size_t len, void* userDa
 
 // Opaque sequential reader for large SD-backed media. Each operation owns the
 // shared TFT/SD SPI mutex; callers never touch the Arduino SD driver directly.
+// Uses the mounted card's unbuffered VFS reads, with no hidden stdio read-ahead.
+// Single owner; do not copy a live handle. Paths are absolute within the SD root
+// and limited to 256 characters. close resets the entire reader.
 struct StreamReader {
   void* handle = nullptr;
   size_t size = 0;
   size_t position = 0;
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  // Owning-task diagnostics, read before close resets the reader. Durations
+  // separate SPI admission, elapsed driver calls and post-unlock scheduling.
+  // A caller-held recursive SPI batch excludes its outer wait from these values.
+  // No cross-task snapshots; elapsed microsecond totals wrap after ~71 minutes.
+  uint32_t readWaitUs = 0, readIoUs = 0, seekWaitUs = 0, seekIoUs = 0;
+  uint32_t readHandoffUs = 0, seekHandoffUs = 0;
+  uint32_t readMaxIoUs = 0, seekMaxIoUs = 0;
+#endif
 };
+
+// Single-owner seekable output. Each operation locks the shared SPI bus; never
+// share a writer across tasks. Uses a 4 KiB buffer. Paths are SD-root absolute
+// and at most 256 characters. closeWriter always releases a live handle and
+// reports prior stream, flush, sync or close errors. Empty close succeeds.
+// Success is not a guarantee against power loss during later rename.
+struct StreamWriter { void* handle = nullptr; };
+bool openWriter(const char* path, StreamWriter* writer);
+bool writeStream(StreamWriter* writer, const uint8_t* data, size_t len);
+bool seekWriter(StreamWriter* writer, uint32_t position);
+bool closeWriter(StreamWriter* writer);
 
 // Initialize SD card using the shared HSPI instance from hal::display.
 bool begin(uint32_t frequency = 10000000);
@@ -92,6 +115,8 @@ bool loadBmpRegion(const char* path, uint16_t* imageBuffer, int32_t maxWidth, in
 // out is a flat char array: out[i * maxNameLen] = full path of file i.
 // Skips subdirs and macOS ._* files. Sorts alphabetically. Returns file count.
 int listFiles(const char* dir, const char* ext, char* out, int maxFiles, int maxNameLen);
+// Read-only file metadata under the SPI guard; output is valid on success only.
+bool fileInfo(const char* path, size_t& bytes, uint32_t& modified);
 
 // Scan dir for subdirectories. out is a flat char array:
 // out[i * maxNameLen] = bare directory name (not full path) of dir i.

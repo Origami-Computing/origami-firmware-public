@@ -489,7 +489,10 @@ bool startBackgroundTasks() {
     Serial.println("[services] svc_task started on Core 0");
     // Unified periodic-HTTP task: owns the automations GET (moved off ui_task)
     // and, in later phases, telemetry/heartbeat/OTA polling.
-    services::net_poll::start();
+    // UI can already hold a Camera/radio reservation when deferred boot starts
+    // these tasks. Let the guarded service tick admit the worker; direct start
+    // would cancel that reservation's stop and occupy the capture stack.
+    services::net_poll::requestStart();
     widgets::sync::startPolling();
     return true;
 }

@@ -14,7 +14,11 @@ public:
     TransportPause(const TransportPause&) = delete;
     TransportPause& operator=(const TransportPause&) = delete;
     bool acquire(uint32_t timeoutMs);
+    // Nonblocking acquisition for a UI workflow. False retains this owner's
+    // request until a later poll or release; it does not grant radio ownership.
+    bool pollAcquire();
     void release();
+    // A retained request, including a poll that has not acknowledged yet.
     bool held() const { return held_; }
 private:
     bool held_ = false;

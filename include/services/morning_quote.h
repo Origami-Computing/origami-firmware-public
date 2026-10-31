@@ -25,7 +25,8 @@ void requestForEpoch(time_t epochSeconds, bool force = false);
 /** Prepare today's quote. Used by alarm start and explicit retry. */
 void requestToday(bool force = false);
 
-/** Collect agent text results and persist the cache on svc_task. */
+/** Collect agent text results and persist the cache on svc_task. New requests
+ * defer while another operation owns/requests an Agent transport pause. */
 void serviceBackground(uint32_t nowMs);
 
 bool getForToday(core::morning_quote_record::Record* out);
@@ -38,6 +39,8 @@ bool fetching();
 /** Hold quote work and wait for cache IO to finish before peripheral teardown.
  * Agent transport owns its socket and is paused separately by the coordinator. */
 bool suspendForPeripheralIo(uint32_t timeoutMs);
+// UI-task nonblocking request; false keeps the pause until retry or resume.
+bool pollPeripheralPause();
 void resumeAfterPeripheralIo();
 
 #ifdef ORIGAMI_DEV_SERIAL_INPUT

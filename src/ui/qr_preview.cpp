@@ -26,6 +26,7 @@ void compositeBlock(uint16_t* pixels,int w,int h,int x,int y,void*) {
 struct Canvas {
     TFT_eSprite& frame;
     uint16_t at(int x,int y) const { return frame.readPixel(x,y); }
+    uint16_t readPixel(int x,int y) const { return frame.readPixel(x,y); }
     void fillRect(int x,int y,int w,int h,uint16_t ink) { frame.fillRect(x,y,w,h,ink); }
 };
 }

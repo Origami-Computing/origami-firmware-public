@@ -5,17 +5,21 @@
 #include "hal/hal_wifi.h"
 #include <string.h>
 namespace services { namespace photos {
-Library::BrowseResult Library::beginBrowsing() {
+Library::BrowseResult Library::beginBrowsing(bool deferred) {
     active_=true;
-    if (reservation_.acquire(false,8000)!=background_network::PeripheralReservation::Result::Acquired)
+    browseReady_=false;
+    const auto admission=deferred ? reservation_.pollAcquire(false) : reservation_.acquire(false,8000);
+    if (admission==background_network::PeripheralReservation::Result::Pending) return BrowseResult::Pending;
+    if (admission!=background_network::PeripheralReservation::Result::Acquired)
         return BrowseResult::UploadsBusy;
-    agent_coordination::TransportPause agentPause;
-    if (!agentPause.acquire(8000)) {
+    if (!(deferred ? browseAgentPause_.pollAcquire() : browseAgentPause_.acquire(8000))) {
+        if (deferred) return BrowseResult::Pending;
         reservation_.release();
         return BrowseResult::NetworkBusy;
     }
     hal::wifi::stop();
-    agentPause.release();
+    browseAgentPause_.release();
+    browseReady_=true;
     return BrowseResult::Ready;
 }
 Library::LoadResult Library::load() {
@@ -34,6 +38,8 @@ bool Library::removeAt(size_t index,int* removedUploads) {
     return true;
 }
 int Library::beginSync() {
+    browseReady_=false;
+    browseAgentPause_.release();
     active_=true;
     (void)uploads::ensureInit();
     auto& queue=uploads::queue();
@@ -49,6 +55,8 @@ Library::SyncStatus Library::syncStatus() const {
     return {counts.pending,counts.failed,hal::wifi::connected()};
 }
 void Library::close() {
+    browseReady_=false;
+    browseAgentPause_.release();
     catalog_.clear();
     if (!active_) return;
     active_=false;

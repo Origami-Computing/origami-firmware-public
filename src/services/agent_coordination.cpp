@@ -40,14 +40,20 @@ void acknowledgeSuspended() {
 void setSessionActive(bool value) { active.store(value); }
 bool isSessionActive() { return active.load(); }
 
+bool TransportPause::pollAcquire() {
+    if (!held_) {
+        uint32_t state = pauseState.load();
+        do {
+            if ((state & kOwners) == kOwners) return false;
+        } while (!pauseState.compare_exchange_weak(state, state + 1));
+        held_ = true;
+    }
+    return !started.load() || (pauseState.load() & kAcknowledged) != 0;
+}
+
 bool TransportPause::acquire(uint32_t timeoutMs) {
-    if (held_) return true;
-    uint32_t state = pauseState.load();
-    do {
-        if ((state & kOwners) == kOwners) return false;
-    } while (!pauseState.compare_exchange_weak(state, state + 1));
-    held_ = true;
-    if (!started.load()) return true;
+    if (pollAcquire()) return true;
+    if (!held_) return false;
     const uint32_t startMs = millis();
     while (!(pauseState.load() & kAcknowledged) &&
            (uint32_t)(millis() - startMs) < timeoutMs) {

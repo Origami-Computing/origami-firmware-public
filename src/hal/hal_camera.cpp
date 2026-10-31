@@ -11,11 +11,14 @@
 #include "hal/hal_io.h"
 #include "hal/hal_sd.h"
 #include "core/telemetry.h"
+#include "camera_event_diagnostics.h"
 
 namespace hal {
 namespace camera {
 
 static bool s_initialized = false;
+static uint16_t s_detectedPid = 0;
+bool supportsAutofocus() { return s_detectedPid == 0x5640; }
 static camera_fb_t* s_lastFb = nullptr;
 static constexpr TickType_t kI2cLockTimeout = pdMS_TO_TICKS(600);
 
@@ -116,6 +119,9 @@ static bool initAttempt(int frameSize, int pixelFormat, const Tuning* tuning,
     fbloc      = CAMERA_FB_IN_PSRAM;
     freeContig = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM);
 
+#if defined(ORIGAMI_RGB_PREVIEW_TRIAL)
+    if (pfmt==PIXFORMAT_RGB565 && fsize==FRAMESIZE_QVGA && freeContig>=400u*1024u) fbcount=2;
+#endif
     if (pfmt == PIXFORMAT_JPEG) {
       if (fsize >= FRAMESIZE_UXGA) {
         // High-res: always single buffer. Quality stays at 12 — output JPEG file size scales with
@@ -196,6 +202,9 @@ static bool initAttempt(int frameSize, int pixelFormat, const Tuning* tuning,
     // Also cover partial driver initialization. Deinit is safe when the driver
     // already cleaned itself up; never retry over a remaining allocation.
     esp_camera_deinit();
+#if defined(ORIGAMI_CAMERA_EVENT_DIAGNOSTICS)
+    cameraEventFinish();
+#endif
     // SCCB borrows the already-installed Wire1 controller, so failure must not
     // tear down the shared IMU/codec bus.
     hal::io::setCameraPwdn(true);
@@ -219,12 +228,41 @@ static bool initAttempt(int frameSize, int pixelFormat, const Tuning* tuning,
    * configuration and later Wire1 autofocus operations share the same bus.
    */
   Tuning effective = tuning ? *tuning : Tuning{};
-  const bool tuningOk = applyTuningInternal(effective);
+  bool tuningOk = applyTuningInternal(effective);
   sensor_t* detectedSensor = esp_camera_sensor_get();
+  s_detectedPid = detectedSensor ? detectedSensor->id.PID : 0;
+#if defined(ORIGAMI_VIDEO_HD_CROP_TRIAL)
+  // The stock HD preset scales a 1920x1080 sensor window and retains its
+  // slower readout timing. This isolated trial uses centered, unbinned native
+  // 1280x720 pixels, retaining the existing PLL (no clock increase). The smaller
+  // field of view is deliberate. HTS*VTS targets 30 Hz at the driver's 60 MHz
+  // system clock with this board's external 24 MHz input; measure actual FPS.
+  if (fsize == FRAMESIZE_HD && pfmt == PIXFORMAT_JPEG && detectedSensor &&
+      detectedSensor->id.PID == 0x3660) {
+    const int result=detectedSensor->set_res_raw ? detectedSensor->set_res_raw(
+        detectedSensor,384,408,1695,1139,16,6,1604,1247,1280,720,false,false) : -1;
+    tuningOk=tuningOk && result==0;
+    Serial.printf("[camera-hd-crop] result=%d window=1280x720 hts=1604 vts=1247\n",result);
+  }
+#endif
   Serial.printf("[camera] Sensor ISP configured (PID=0x%04X) — natural defaults\n",
                 detectedSensor ? (unsigned)detectedSensor->id.PID : 0u);
 
   s_initialized = true;
+#if defined(ORIGAMI_CAMERA_EVENT_DIAGNOSTICS)
+  // Read only during initialization under the accessory I2C lock, before a
+  // caller can acquire frames. OV3660 datasheet v1.3 DVP/VFIFO controls let
+  // pulse-width observations be compared with actual sensor configuration.
+  if (detectedSensor && detectedSensor->id.PID == 0x3660 && detectedSensor->get_reg) {
+    const uint16_t registers[] = {0x4709, 0x470a, 0x470b, 0x4713, 0x471d,
+                                  0x4740, 0x4600, 0x4602, 0x4603, 0x460c};
+    for (uint16_t reg : registers) {
+      const int value = detectedSensor->get_reg(detectedSensor, reg, 0xff);
+      Serial.printf("[camera-dvp-probe] reg=0x%04X value=%d\n", unsigned(reg), value);
+    }
+  }
+  cameraEventBegin();
+#endif
   Serial.println("[camera] Initialized");
   hal::bus::unlockI2c();
   if (!tuningOk) {
@@ -264,6 +302,7 @@ bool init(int frameSize, int pixelFormat, const Tuning* tuning, int jpegQualityO
     }
     // Self-deleting network tasks reclaim their stacks on the idle task. Give
     // both cores a scheduling opportunity before allocating camera DMA memory.
+    s_detectedPid = 0;
     delay(20);
     logStartupMemory(attempt);
     StartupFailure failure;
@@ -298,6 +337,9 @@ void deinit() {
   returnFrame();
   if (s_initialized) {
     esp_camera_deinit();
+#if defined(ORIGAMI_CAMERA_EVENT_DIAGNOSTICS)
+    cameraEventFinish();
+#endif
     s_initialized = false;
   }
   
@@ -317,6 +359,10 @@ bool getFrame(CameraFrame* out) {
   if (!out || !s_initialized || s_lastFb) return false;
   s_lastFb = esp_camera_fb_get();
   if (!s_lastFb) return false;
+#if defined(ORIGAMI_CAMERA_EVENT_DIAGNOSTICS)
+  if (s_lastFb->format == PIXFORMAT_JPEG)
+    cameraEventObserve(s_lastFb->buf, s_lastFb->len);
+#endif
   out->buf = s_lastFb->buf;
   out->len = s_lastFb->len;
   out->width = s_lastFb->width;
@@ -458,7 +504,10 @@ static bool applyTuningInternal(const Tuning& t) {
   s->set_wb_mode(s, clamp_wb(t.wb_mode));
 
   s->set_exposure_ctrl(s, t.exposure_ctrl ? 1 : 0);
-  s->set_aec2(s, 1);
+  const bool nightMode=s->id.PID!=0x3660 || t.allowNightMode;
+  const int nightResult=s->set_aec2(s,nightMode ? 1 : 0);
+  if (!nightMode && nightResult!=0) return false;
+  Serial.printf("[camera] night_mode=%d result=%d\n",nightMode ? 1 : 0,nightResult);
   s->set_ae_level(s, clamp_pm2(t.ae_level));
   // No set_aec_value / set_agc_gain calls — leaving auto in charge gives realistic exposure.
 

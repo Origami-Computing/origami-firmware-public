@@ -51,6 +51,7 @@ static uint32_t s_openStartedMs = 0;
 static uint32_t s_openMs = 0;
 static uint32_t s_pauseMs = 0;
 static bool s_openPending = false;
+static bool s_browsePending = false, s_reloadAfterPause = false;
 
 void dumpStatus(Stream& output) {
     const bool viewing = s_state == PH_VIEWING && s_count > 0;
@@ -73,13 +74,16 @@ static uint32_t s_syncDoneMs  = 0;   // millis() when the queue first hit empty 
 static uint32_t s_syncPollMs  = 0;   // redraw rate-limit
 
 static bool pauseBrowsingIo() {
-    const auto result = s_library.beginBrowsing();
+    const auto result = s_library.beginBrowsing(true);
+    s_browsePending = result == services::photos::Library::BrowseResult::Pending;
+    if (s_browsePending) {s_error="Preparing preview...";return false;}
     if (result == services::photos::Library::BrowseResult::Ready) return true;
     s_error = result == services::photos::Library::BrowseResult::UploadsBusy ? "Uploads busy" : "Network busy";
     return false;
 }
 
 static void loadPhotos() {
+    s_reloadAfterPause = true;
     s_actionsOpen = false;
     s_deleteFailed = false;
     s_needPhotoRender = true;
@@ -312,6 +316,7 @@ static void activateGallery() {
 }
 
 static void exitApp() {
+    s_browsePending = false;
     s_actionsOpen = false;
     s_library.close();
     s_count = 0;
@@ -325,6 +330,7 @@ static void exitApp() {
 // so bring it back; the background upload worker does the actual transfers once
 // connected and unpaused.
 static void startSync() {
+    s_browsePending = false;
     s_syncTotal = s_library.beginSync();
     s_syncDoneMs = 0;
     s_syncPollMs = 0;
@@ -334,6 +340,7 @@ static void startSync() {
 
 // Reacquire the browsing I/O pause before shutting WiFi down again.
 static void endSync() {
+    s_reloadAfterPause = false;
     s_syncDoneMs = 0;
     s_state = pauseBrowsingIo() ? (s_count > 0 ? PH_VIEWING : PH_EMPTY) : PH_ERROR;
     s_needRender = true;
@@ -341,6 +348,11 @@ static void endSync() {
 }
 
 static void onTick(uint32_t now) {
+    if (s_browsePending) {
+        if (s_reloadAfterPause) loadPhotos();
+        else endSync();
+        return;
+    }
     if (s_state != PH_SYNCING) return;
     const int pending = s_library.syncStatus().pending;
 
@@ -378,6 +390,7 @@ static void onInput(hal::input::InputEvent ev) {
         NavHandler::instance().pop();
         return;
     }
+    if (s_browsePending) return;
     if (ui::nav::isEnterPress(ev) && (s_state == PH_ERROR || s_state == PH_EMPTY)) {
         loadPhotos();
         return;
@@ -435,9 +448,12 @@ const ::scene::Screen kScreenPhotos = {
 };
 
 static const ::scene::Screen* const kScreens[] = { &kScreenPhotos };
+static core::health::RuntimePolicy runtimePolicy() {
+    core::health::RuntimePolicy policy{};policy.reportActivity=s_browsePending;return policy;
+}
 App app = SCENE_APP_CATALOG_LIFECYCLE_HOOKS("Photos", "photos", &kScreenPhotos,
                             activateGallery, activateGallery, exitApp,
-                            "src/apps/photos_app.cpp", kScreens, nullptr, nullptr);
+                            "src/apps/photos_app.cpp", kScreens, nullptr, runtimePolicy);
 
 }  // namespace photos
 }  // namespace apps

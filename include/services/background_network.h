@@ -78,6 +78,11 @@ void resumeAfterMusicAudio();
  * closed throughout; Agent transport policy remains with the caller.
  */
 bool suspendForPeripheralIo(uint32_t timeoutMs = 5000);
+// UI-task paired request for preview workflows. Request returns immediately;
+// poll until ready, or resume to cancel. Each request needs one resume even
+// when canceled before readiness. No SD/radio use is admitted before ready.
+void requestPeripheralIo();
+bool peripheralIoReady();
 void resumeAfterPeripheralIo();
 
 
@@ -108,6 +113,10 @@ public:
     ServicePause(const ServicePause&) = delete;
     ServicePause& operator=(const ServicePause&) = delete;
     Result acquire(uint32_t timeoutMs);
+    // UI-task nonblocking handoff. Busy retains acquired gates until another
+    // poll or release (do not switch to acquire while pending). Existing
+    // HTTP/cache work must acknowledge before Acquired.
+    Result pollAcquire();
     void release();
 private:
     bool owned_ = false, held_ = false, quote_ = false, gate_ = false;

@@ -25,6 +25,8 @@ static constexpr uint16_t COLOR_HEADER  = 0x1082;
 
 bool init();
 
+// UI-task borrowed native output; Public currently uses unscaled display output.
+uint16_t* prepareNativeOutput(uint16_t* pixels);
 /**
  * Force a real controller reset on the reworked rev-4 board (J5.4 -> GPIO45).
  * Holds hardware reset and SPI low while cycling panel power, then TFT_eSPI

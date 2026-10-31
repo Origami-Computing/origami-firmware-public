@@ -18,6 +18,7 @@
 #include <freertos/portmacro.h>
 #include <freertos/task.h>
 #include "core/device_agent_text.h"
+#include "core/board_time.h"
 #include "core/device_id.h"
 #include "core/secrets.h"
 #include "core/telemetry.h"
@@ -787,6 +788,14 @@ void kamiSendTask(void*) {
             services::agent_coordination::setWorkerPhase(coordination::SocketConfigure);
             configureSocket();
             s_socketConfigured = true;
+        }
+        // Certificate date verification requires this boot's trusted SNTP time.
+        // Keep text pumping, cancellation, voice deadlines and reconfiguration
+        // above this gate; plain local development sockets need no wall clock.
+        if (s_wsSecure && !core::time::isSynced()) {
+            services::agent_coordination::setWorkerPhase(coordination::Waiting);
+            vTaskDelay(pdMS_TO_TICKS(200));
+            continue;
         }
         services::agent_coordination::setWorkerPhase(coordination::SocketLoop);
         const uint32_t loopAt=millis();

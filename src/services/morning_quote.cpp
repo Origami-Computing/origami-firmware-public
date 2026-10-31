@@ -274,7 +274,11 @@ void serviceBackground(uint32_t nowMs) {
     portEXIT_CRITICAL(&s_mux);
     return;
   }
-  if (services::agent_coordination::isSessionActive()) return;
+  // A background quote must not interrupt the file/OTA/network operation that
+  // already owns a transport pause. Existing results are collected above even
+  // while paused; deferred requests keep their identity and retry deadline.
+  if (services::agent_coordination::isSessionActive() ||
+      services::agent_coordination::suspendRequested()) return;
   // Mark ownership before IO so peripheral suspension waits for completion.
   portENTER_CRITICAL(&s_mux);
   if (s_peripheralPaused || s_requestRevision!=revision) { portEXIT_CRITICAL(&s_mux); return; }
@@ -312,16 +316,17 @@ void serviceBackground(uint32_t nowMs) {
   }
 }
 
-bool suspendForPeripheralIo(uint32_t timeoutMs) {
+bool pollPeripheralPause() {
   portENTER_CRITICAL(&s_mux);
   s_peripheralPaused=true;
+  const bool ready=!s_taskRunning;
   portEXIT_CRITICAL(&s_mux);
+  return ready;
+}
+
+bool suspendForPeripheralIo(uint32_t timeoutMs) {
   const uint32_t started=millis();
-  for (;;) {
-    portENTER_CRITICAL(&s_mux);
-    const bool running=s_taskRunning;
-    portEXIT_CRITICAL(&s_mux);
-    if (!running) break;
+  while (!pollPeripheralPause()) {
     if(millis()-started>=timeoutMs) {
       resumeAfterPeripheralIo();
       return false;

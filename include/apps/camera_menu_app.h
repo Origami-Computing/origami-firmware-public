@@ -13,7 +13,15 @@
  * Entering settings stops the sensor and restores background operations.
  * Committed settings apply on the next viewfinder start. Rotary changes selection
  * or the pending edit; Back cancels an edit or returns to the previous view.
- * In the viewfinder: Back exits, B-press captures, Enter opens settings.
+ * Shoot selects Photo or silent Video for this app activation. Video retains a
+ * VGA session (QVGA on low-memory fallback), queues JPEGs to VideoRecording,
+ * and stores finalized clips in /videos. The Videos app owns preview/playback;
+ * video uploads are not implemented.
+ * Development builds also offer Video + mic (30s), selected by default: bounded concurrent capture
+ * to separate AVI/WAV tracks, with no synchronized on-device audio playback.
+ * In the viewfinder: Back exits, B-tap captures or starts/stops video, Enter opens
+ * settings. During recording Back/Enter first stop and save. Cover, exit and
+ * error drain/finalize the recording before releasing camera admission.
  * In settings/manual: Enter edits/commits or opens a selected subview.
  * In the error view: Back exits; Enter retries camera startup.
  */
@@ -41,6 +49,8 @@ void onInput(hal::input::InputEvent ev);
 void onDraw(TFT_eSprite& canvas);
 
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
+// Thirty-second concurrent mic/video feasibility trial; requires live viewfinder.
+bool runAudioTrial();
 // One independently restarted VGA trial; -1 selects the production 600 ms settle loop.
 bool runSettleTrial(uint32_t runId, int discardFrames, unsigned repeat);
 bool copyPreviewForDevelopment(TFT_eSprite& target);

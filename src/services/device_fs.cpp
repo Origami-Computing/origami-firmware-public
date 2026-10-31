@@ -17,6 +17,7 @@
 #include "core/device_agent_text.h"
 #include "core/menu_config.h"
 #include "services/net_poll.h"
+#include "services/uploads.h"
 #include "services/agent_coordination.h"
 #include "core/secrets.h"
 #include "core/watchdog.h"
@@ -37,6 +38,33 @@ namespace {
 // Keep TLS writes below a TCP segment; larger bursts exhaust fragmented
 // internal lwIP buffers while the agent WebSocket is active.
 constexpr size_t kChunk = 1024;
+
+// HTTPClient otherwise submits an entire directory/manifest JSON body in one
+// socket write. Keep its header/body writes within the same lwIP budget as file
+// pushes, and service the subscribed worker's watchdog between SDK calls.
+// Cancellation/deadline are cooperative: an in-progress SDK write must return
+// before this adapter can observe them. HTTPClient retains response handling.
+template<class Transport>
+class JsonClient final : public Transport {
+public:
+  size_t write(const uint8_t* data, size_t size) override {
+    if (!started_) { started_ = true; startedMs_ = millis(); }
+    size_t sent = 0;
+    while (sent < size) {
+      core::watchdog::feed();
+      if (services::net_poll::stopRequested() || uint32_t(millis() - startedMs_) >= 30000u) break;
+      const size_t bytes = size - sent < kChunk ? size - sent : kChunk;
+      const size_t written = Transport::write(data + sent, bytes);
+      core::watchdog::feed();
+      if (!written || written > bytes) break;
+      sent += written;
+    }
+    return sent;
+  }
+private:
+  bool started_ = false;
+  uint32_t startedMs_ = 0;
+};
 
 // Operation batches and manifests can retain many small JSON allocations for
 // the entire transfer. Default malloc puts these in scarce internal RAM, which
@@ -176,7 +204,7 @@ int httpPostJson(const String& path, const String& body) {
   const auto request = core::secrets::backendRequest();
   String url = String(request.backend.url) + path;
   const bool https = url.startsWith("https://");
-  WiFiClientSecure sec; WiFiClient plain;
+  JsonClient<WiFiClientSecure> sec; JsonClient<WiFiClient> plain;
   if (https) { services::tls::useRootBundle(sec); sec.setHandshakeTimeout(8); }
   WiFiClient& wc = https ? static_cast<WiFiClient&>(sec) : static_cast<WiFiClient&>(plain);
 
@@ -186,7 +214,9 @@ int httpPostJson(const String& path, const String& body) {
   if (!http.begin(wc, url)) return -1;
   addAuth(http, request);
   http.addHeader("Content-Type", "application/json");
+  core::watchdog::feed();
   const int code = http.POST(const_cast<String&>(body));
+  core::watchdog::feed();
   http.end();
   if (code == 401) core::secrets::setDeviceTokenFor(request, "");
   return code;
@@ -502,6 +532,9 @@ void doPush(const char* path, const char* opId) {
 void doPull(const char* path, const char* url, const char* opId) {
   String sdPath(path);
   if (isExcluded(sdPath)) { reportResult(opId, false, 0, "excluded"); return; }
+  if (!services::uploads::ensureInit()) {reportResult(opId,false,0,"queue unavailable");return;}
+  UploadQueue::FileMutation mutation(services::uploads::queue(),path,false);
+  if (!mutation.ready()) {reportResult(opId,false,0,"queued media or mutation busy");return;}
 
   String dl(url ? url : "");
   if (!dl.length()) {
@@ -617,6 +650,9 @@ void doPull(const char* path, const char* url, const char* opId) {
 void doDelete(const char* path, const char* opId) {
   String sdPath(path);
   if (isExcluded(sdPath) || sdPath.length() < 2) { reportResult(opId, false, 0, "excluded"); return; }
+  if (!services::uploads::ensureInit()) {reportResult(opId,false,0,"queue unavailable");return;}
+  UploadQueue::FileMutation mutation(services::uploads::queue(),path,true);
+  if (!mutation.ready()) {reportResult(opId,false,0,"queued media or mutation busy");return;}
   hal::bus::lockSpi();
   const bool existed = SD.exists(sdPath);
   hal::bus::unlockSpi();

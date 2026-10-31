@@ -2,8 +2,16 @@
 #include <Arduino.h>
 #include <SD.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <cstring>
+#include <new>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <limits.h>
+#include <errno.h>
+#include <esp_heap_caps.h>
 #include "Pins.h"
 #include "hal/hal_bus.h"
 #include "hal/hal_display.h"
@@ -13,6 +21,92 @@ namespace sd {
 
 static bool s_mounted = false;
 static MountState s_mountState = MountState::NotAttempted;
+static constexpr char kMountPath[] = "/sd";
+struct ReadHandle { int descriptor; };
+
+// Own stdio here because Arduino File hides fflush/fclose failures. Keep the
+// existing bounded 4 KiB buffer and shared-bus write granularity.
+struct WriteHandle {
+  FILE* file=nullptr;
+#if defined(ORIGAMI_SD_SECTOR_WRITE_TRIAL)
+  // Isolate multi-sector SD transactions after sustained recorder EIO failures.
+  char buffer[512];
+#elif defined(ORIGAMI_SD_BATCH_WRITE_TRIAL)
+  // Keep the larger experiment out of scarce internal/DMA memory. Fewer
+  // multi-block STOP/program cycles may leave more bus time for live preview.
+  char buffer[16384];
+  static void* operator new(size_t bytes,const std::nothrow_t&) noexcept {
+    return heap_caps_malloc(bytes,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+  }
+  static void operator delete(void* memory) noexcept {heap_caps_free(memory);}
+#else
+  char buffer[4096];
+#endif
+};
+
+bool openWriter(const char* path, StreamWriter* writer) {
+  if (!s_mounted || !path || path[0]!='/' || !writer || writer->handle) return false;
+  const size_t length=strnlen(path,257);
+  if (length>256) return false;
+  char fullPath[260];
+  if (snprintf(fullPath,sizeof(fullPath),"%s%s",kMountPath,path)>=int(sizeof(fullPath))) return false;
+  auto* handle=new (std::nothrow) WriteHandle;
+  if (!handle) return false;
+  if (!hal::bus::lockSpi()) {delete handle;return false;}
+  handle->file=::fopen(fullPath,"wb");
+  bool ok=handle->file && ::setvbuf(handle->file,handle->buffer,_IOFBF,sizeof(handle->buffer))==0;
+  if (!ok && handle->file) ::fclose(handle->file);
+  hal::bus::unlockSpi();
+  if (ok) writer->handle=handle;
+  else delete handle;
+  return ok;
+}
+
+bool writeStream(StreamWriter* writer, const uint8_t* data, size_t len) {
+  if (!s_mounted || !writer || !writer->handle || (!data && len)) return false;
+  auto* handle=static_cast<WriteHandle*>(writer->handle);
+  // Release the bus between small writes so a video frame cannot monopolize TFT.
+  while (len) {
+    const size_t count = len > sizeof(handle->buffer) ? sizeof(handle->buffer) : len;
+    if (!hal::bus::lockSpi()) return false;
+    const size_t written=::fwrite(data,1,count,handle->file);
+    const int writeError=errno;
+    const bool failed=::ferror(handle->file)!=0;
+    hal::bus::unlockSpi();
+    if (written != count || failed) {
+      Serial.printf("[sd-write-error] requested=%u written=%u stream_error=%d errno=%d\n",
+                    (unsigned)count,(unsigned)written,failed,writeError);
+      return false;
+    }
+    data += count;
+    len -= count;
+  }
+  return true;
+}
+
+bool seekWriter(StreamWriter* writer, uint32_t position) {
+  if (!s_mounted || !writer || !writer->handle || position>LONG_MAX || !hal::bus::lockSpi()) return false;
+  auto* handle=static_cast<WriteHandle*>(writer->handle);
+  const bool ok=::fseek(handle->file,long(position),SEEK_SET)==0 && !::ferror(handle->file);
+  hal::bus::unlockSpi();
+  return ok;
+}
+
+bool closeWriter(StreamWriter* writer) {
+  if (!writer || !writer->handle) return true;
+  auto* handle=static_cast<WriteHandle*>(writer->handle);
+  hal::bus::lockSpi();
+  // Attempt every cleanup operation even after an earlier failure. fsync asks
+  // FatFS to commit metadata too; this is not a power-loss atomicity guarantee.
+  bool ok=::ferror(handle->file)==0;
+  if (::fflush(handle->file)!=0) ok=false;
+  if (::fsync(::fileno(handle->file))!=0) ok=false;
+  if (::fclose(handle->file)!=0) ok=false;
+  hal::bus::unlockSpi();
+  delete handle;
+  writer->handle=nullptr;
+  return ok;
+}
 
 static uint16_t read16(File& f) {
   uint16_t result;
@@ -31,6 +125,13 @@ static uint32_t read32(File& f) {
 }
 
 bool begin(uint32_t frequency) {
+#if defined(ORIGAMI_SD_20MHZ_TRIAL)
+  // Isolated HD throughput trial; preserve explicit non-default clock requests.
+  if (frequency == 10000000) {
+    frequency = 20000000;
+    Serial.println("[sd-clock-trial] actual_hz=20000000");
+  }
+#endif
   if (s_mounted) return true;
   hal::bus::lockSpi();
   pinMode(SD_CS, OUTPUT);
@@ -38,7 +139,7 @@ bool begin(uint32_t frequency) {
   digitalWrite(LCD_CS_PIN, HIGH);
   digitalWrite(SD_CS, HIGH);
 
-  if (!SD.begin(SD_CS, hal::display::spi(), frequency)) {
+  if (!SD.begin(SD_CS, hal::display::spi(), frequency, kMountPath)) {
     // SD.begin() is an optional probe. Fully close a partial VFS/card state,
     // deselect both devices, and restore a known-good TFT transaction before
     // allowing boot to continue.
@@ -145,52 +246,89 @@ bool streamFile(const char* path, FileChunkCallback callback, void* userData,
 }
 
 bool openStream(const char* path, StreamReader* reader) {
-  if (!s_mounted || !path || !reader || reader->handle) return false;
+  if (!s_mounted || !path || path[0]!='/' || !reader || reader->handle) return false;
+  char fullPath[260];
+  const int length=snprintf(fullPath,sizeof(fullPath),"%s%s",kMountPath,path);
+  if (length<0 || size_t(length)>=sizeof(fullPath)) return false;
   hal::bus::lockSpi();
-  File opened = SD.open(path, FILE_READ);
-  if (!opened) {
-    hal::bus::unlockSpi();
-    return false;
+  // VFS still routes to the same Arduino-mounted FatFS/card driver. Avoid a
+  // second stdio read-ahead buffer: fseek may otherwise rewind unread bytes
+  // before the requested seek, causing repeated FAT traversal in long media.
+  const int descriptor=::open(fullPath,O_RDONLY);
+  struct stat status{};
+  ReadHandle* handle=nullptr;
+  if (descriptor>=0 && ::fstat(descriptor,&status)==0 &&
+      S_ISREG(status.st_mode) && status.st_size>=0) {
+    handle=new (std::nothrow) ReadHandle{descriptor};
   }
-  File* file = new File(opened);
-  if (!file) {
-    opened.close();
-    hal::bus::unlockSpi();
-    return false;
-  }
-  reader->handle = file;
-  reader->size = file->size();
-  reader->position = 0;
+  if (handle) {
+    reader->handle=handle;
+    reader->size=size_t(status.st_size);
+    reader->position=0;
+  } else if (descriptor>=0) ::close(descriptor);
   hal::bus::unlockSpi();
-  return true;
+  return handle!=nullptr;
 }
 
 size_t readStream(StreamReader* reader, uint8_t* data, size_t len) {
   if (!reader || !reader->handle || !data || len == 0) return 0;
-  File* file = static_cast<File*>(reader->handle);
+  ReadHandle* file = static_cast<ReadHandle*>(reader->handle);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  const uint32_t began = micros();
+#endif
   hal::bus::lockSpi();
-  const int got = file->read(data, len);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  const uint32_t acquired = micros();
+#endif
+  const ssize_t got = ::read(file->descriptor,data,len);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  const uint32_t finished = micros();
+#endif
   hal::bus::unlockSpi();
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  reader->readWaitUs += uint32_t(acquired-began);
+  reader->readIoUs += uint32_t(finished-acquired);
+  // Giving SPI can wake a higher-priority task before this reader resumes.
+  reader->readHandoffUs += uint32_t(micros()-finished);
+  const uint32_t ioUs = finished-acquired;
+  if (ioUs>reader->readMaxIoUs) reader->readMaxIoUs=ioUs;
+#endif
   if (got <= 0) return 0;
   reader->position += (size_t)got;
   return (size_t)got;
 }
 
 bool seekStream(StreamReader* reader, size_t position) {
-  if (!reader || !reader->handle || position > reader->size) return false;
-  File* file = static_cast<File*>(reader->handle);
+  if (!reader || !reader->handle || position > reader->size || position>LONG_MAX) return false;
+  ReadHandle* file = static_cast<ReadHandle*>(reader->handle);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  const uint32_t began = micros();
+#endif
   hal::bus::lockSpi();
-  const bool ok = file->seek(position);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  const uint32_t acquired = micros();
+#endif
+  const bool ok = ::lseek(file->descriptor,off_t(position),SEEK_SET)==off_t(position);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  const uint32_t finished = micros();
+#endif
   hal::bus::unlockSpi();
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  reader->seekWaitUs += uint32_t(acquired-began);
+  reader->seekIoUs += uint32_t(finished-acquired);
+  reader->seekHandoffUs += uint32_t(micros()-finished);
+  const uint32_t ioUs = finished-acquired;
+  if (ioUs>reader->seekMaxIoUs) reader->seekMaxIoUs=ioUs;
+#endif
   if (ok) reader->position = position;
   return ok;
 }
 
 void closeStream(StreamReader* reader) {
   if (!reader || !reader->handle) return;
-  File* file = static_cast<File*>(reader->handle);
+  ReadHandle* file = static_cast<ReadHandle*>(reader->handle);
   hal::bus::lockSpi();
-  file->close();
+  ::close(file->descriptor);
   hal::bus::unlockSpi();
   delete file;
   *reader = StreamReader{};
@@ -531,6 +669,16 @@ bool loadBmpRegion(const char* path, uint16_t* imageBuffer, int32_t maxWidth, in
     if (loadBmpRegionOnce(path, imageBuffer, maxWidth, regionHeight, startRow)) return true;
   }
   return false;
+}
+
+bool fileInfo(const char* path, size_t& bytes, uint32_t& modified) {
+  if (!s_mounted || !path || !hal::bus::lockSpi()) return false;
+  File file = SD.open(path, FILE_READ);
+  const bool ok = file && !file.isDirectory();
+  if (ok) { bytes = file.size(); modified = (uint32_t)file.getLastWrite(); }
+  file.close();
+  hal::bus::unlockSpi();
+  return ok;
 }
 
 int listFiles(const char* dir, const char* ext, char* out, int maxFiles, int maxNameLen) {

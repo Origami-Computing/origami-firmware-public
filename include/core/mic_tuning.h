@@ -17,6 +17,7 @@ struct Settings {
     int8_t limiterDbfs = 1;            // 1 = off; otherwise -20..0 dBFS.
 };
 
+// Settings/persistence and live processors are UI-task only.
 void load();
 Settings settings();
 void setGainBasisPoints(int gainBasisPoints);
@@ -29,6 +30,9 @@ uint32_t generation();
 class Processor {
 public:
     void reset(uint32_t sampleRate = 48000);
+    // Freeze validated DSP settings before handing this processor to one worker.
+    // This mode never reads global settings/persistence; serialize instance use.
+    void resetFromSnapshot(Settings snapshot, uint32_t sampleRate = 48000);
     void processRaw(const int32_t* raw, int16_t* pcm, size_t count);
 
     uint64_t samples() const { return samples_; }
@@ -40,6 +44,9 @@ public:
 
 private:
     void refreshSettings_();
+    void resetState_(uint32_t sampleRate);
+    void applySettings_(Settings snapshot);
+    bool followLiveSettings_ = true;
 
     uint32_t sampleRate_ = 48000;
     uint32_t settingsGeneration_ = UINT32_MAX;
