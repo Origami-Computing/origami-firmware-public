@@ -103,8 +103,10 @@ BackendRequest backendRequest();
 bool setDeviceTokenFor(const BackendRequest& request, const char* token);
 bool hasDeviceToken();
 
-/** Persist a new backend URL. Production images reject every URL except the
- * canonical production origin before touching credentials or storage.
+/** Set the active backend URL; persist it only when development mode is enabled.
+ * In production mode a reboot restores the compile-time production origin.
+ * Production images reject every URL except the canonical production origin
+ * before touching credentials or storage.
  * Returns false on policy rejection or NVS error. */
 bool setBackendUrl(const char* url);
 

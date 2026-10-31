@@ -5,9 +5,13 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include "services/tls_trust.h"
+#include "services/video_upload.h"
+#include "services/video_upload_state.h"
 #include <esp_heap_caps.h>
+#include <new>
 
 #include "core/secrets.h"
+#include "core/upload_receipt.h"
 #include "core/watchdog.h"
 #include "hal/hal_bus.h"
 #include "hal/hal_sd.h"
@@ -188,7 +192,7 @@ bool UploadQueue::loadManifestFileUnlocked(const char* path) {
         it.nextEligibleAt = 0;
         it.attemptsThisTurn = 0;
         it.status        = (QueueItemStatus)(obj["status"] | 0);
-        it.deleteAfterUpload = obj["deleteAfterUpload"] | true;
+        it.deleteAfterUpload = strcmp(it.type,"video") ? (obj["deleteAfterUpload"] | true) : false;
         strlcpy(it.lastError, obj["error"] | "", sizeof(it.lastError));
 
         // Reset items stuck in UPLOADING state (interrupted by reboot OR by
@@ -301,8 +305,19 @@ uint32_t UploadQueue::generatePath(const char* prefix, const char* ext,
 
 bool UploadQueue::enqueue(const char* type, const char* filePath,
                           const char* mimeType, bool deleteAfterUpload) {
+    if(!type||!filePath||!mimeType)return false;
+    if(!strcmp(type,"video")){
+        if(deleteAfterUpload||strcmp(mimeType,"video/x-msvideo"))return false;
+        const auto result=enqueueVideo(filePath);
+        return result==VideoEnqueue::Queued||result==VideoEnqueue::AlreadyQueued;
+    }
     {
         MutexGuard g(m_mutex);
+        if(mutationBlocksUnlocked(filePath))return false;
+        const char* name=strrchr(filePath,'/');name=name?name+1:filePath;
+        if(!name[0]||strnlen(name,sizeof(QueueItem::id))>=sizeof(QueueItem::id))return false;
+        if(!strcasecmp(name,m_inFlightId))return false;
+        for(int i=0;i<m_count;++i)if(!strcasecmp(m_items[i].id,name))return false;
         if (m_count >= UPLOAD_QUEUE_MAX_ITEMS) {
             // Don't drop the new item — evict the oldest expendable one so the user's latest
             // photo / recording is the one that survives. (Old behaviour returned false here, which
@@ -420,6 +435,7 @@ void UploadQueue::workerLoop() {
     core::watchdog::unsubscribe();  // MUST unsubscribe before deleting the task
     Serial.printf("[queue] Upload worker exiting: minStackFree=%uB\n",
                   (unsigned)minStackFree);
+    hal::tasks::recordCurrentStack(hal::tasks::Id::UploadQ);
     retireWorker(); // Final owner-state access; only RTOS deletion follows.
     hal::tasks::deleteCurrent(hal::tasks::Id::UploadQ);
 }
@@ -452,6 +468,8 @@ bool UploadQueue::processOnePending() {
         item->nextEligibleAt = 0;
         snprintf(m_lastStatus, sizeof(m_lastStatus), "Uploading %s...", item->id);
         snapshot = *item;
+        strlcpy(m_inFlightId,item->id,sizeof(m_inFlightId));
+        strlcpy(m_inFlightPath,item->filePath,sizeof(m_inFlightPath));
         have = true;
         saveManifestUnlocked();
     }
@@ -471,6 +489,9 @@ bool UploadQueue::processOnePending() {
         MutexGuard g(m_mutex);
         const uint32_t now = millis();
 
+        m_inFlightId[0]=0; // Native work has returned; same-ID requeue is now safe.
+        m_inFlightPath[0]=0;
+
         // Find the live item by id (index could have shifted if main thread
         // enqueued another item while the upload was running).
         QueueItem* live = nullptr;
@@ -484,7 +505,7 @@ bool UploadQueue::processOnePending() {
         }
         if (!live) { m_resetAfterFlight=false; return true; } // cancelled mid-upload
 
-        const char* kinds[] = {"http", "transfer", "file", "prerequisite", "interrupted"};
+        const char* kinds[] = {"http", "transfer", "file", "prerequisite", "interrupted", "progress"};
         const bool succeeded = result.kind == UploadResultKind::HttpResponse &&
                                result.httpCode >= 200 && result.httpCode < 300;
         const bool charged = result.attemptStarted &&
@@ -505,6 +526,22 @@ bool UploadQueue::processOnePending() {
             live->status = QSTATUS_PENDING;
             live->nextEligibleAt = 0;
             snprintf(m_lastStatus, sizeof(m_lastStatus), "%s paused", live->id);
+            saveManifestUnlocked();
+            return false;
+        }
+
+        if (result.kind == UploadResultKind::Progress) {
+            live->status = QSTATUS_PENDING;
+            live->attemptsThisTurn = 0;
+            // A successful chunk is neither a failed attempt nor a receipt.
+            // Drop the worker/network lease between steps so NetPoll and other
+            // admitted work can run; rotate to give other media its next turn.
+            const uint32_t wait = result.deferMs < 250u ? 250u :
+                                  result.deferMs > 300000u ? 300000u : result.deferMs;
+            live->nextEligibleAt = now + wait;
+            live->lastError[0] = 0;
+            snprintf(m_lastStatus, sizeof(m_lastStatus), "%s progress saved", live->id);
+            rotateItemToBackUnlocked(liveIdx);
             saveManifestUnlocked();
             return false;
         }
@@ -620,6 +657,7 @@ bool UploadQueue::processOnePending() {
 // ---------------------------------------------------------------------------
 
 UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
+    if(strcmp(item.type,"video")==0)return doVideoUpload(item);
     const auto config = core::secrets::backendConfig();
     const char* liveUrl = config.url;
     const char* liveKey = config.apiKey;
@@ -880,6 +918,31 @@ UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
         httpCode = (statusBuf[9]-'0')*100 + (statusBuf[10]-'0')*10 + statusBuf[11]-'0';
     }
 
+    if (httpCode >= 200 && httpCode < 300) {
+        // A status line alone is not a durable receipt. In particular, a
+        // proxy's empty 200 or a lost response body must preserve local media.
+        // Keep response scratch off the shared UploadQ/NetPoll internal stack.
+        char* body=static_cast<char*>(heap_caps_malloc(1024,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+        size_t length=0;
+        auto readByte=[&]() -> int {
+            while (millis()-startMs<kRespWaitMs && !m_workerStop && !m_uploadPaused) {
+                if (client.available()) return client.read();
+                if (!client.connected()) break;
+                core::watchdog::feed();
+                vTaskDelay(pdMS_TO_TICKS(2));
+            }
+            return -1;
+        };
+        const bool receipt=body && core::uploads::readReceiptBody(readByte,body,1024,length) &&
+            core::uploads::validReceipt(body,length,item.type);
+        free(body);
+        if (!receipt) {
+            client.stop();
+            const bool aborted=m_workerStop || m_uploadPaused;
+            strlcpy(item.lastError,aborted?"Aborted for voice":"Upload receipt missing or invalid",sizeof(item.lastError));
+            return {aborted?UploadResultKind::Aborted:UploadResultKind::RetryableFailure,httpCode,true,0};
+        }
+    }
     client.stop();
     Serial.printf("[queue] Upload response: %d\n", httpCode);
     if (httpCode > 0) {
@@ -925,7 +988,7 @@ void UploadQueue::rotateItemToBackUnlocked(int index) {
 }
 
 void UploadQueue::deleteFileIfOwnedUnlocked(const QueueItem& item) {
-    if (item.deleteAfterUpload && item.filePath[0]) {
+    if (strcmp(item.type,"video") && item.deleteAfterUpload && item.filePath[0]) {
         SD.remove(item.filePath);
     }
 }
@@ -1390,3 +1453,147 @@ bool UploadQueue::parseUrl(const char* url, char* host, size_t hostLen,
 
     return host[0] != '\0';
 }
+
+UploadQueue::UploadResult UploadQueue::doVideoUpload(QueueItem& item) {
+    struct Context {UploadQueue* queue;const QueueItem* item;uint32_t checked;};
+    Context context{this,&item,millis()-10u};
+    const auto result=services::video_upload::advance(item.id,item.filePath,[](void* opaque){
+        auto& c=*static_cast<Context*>(opaque);
+        if(c.queue->m_workerStop||c.queue->m_uploadPaused)return false;
+        const uint32_t now=millis();
+        if(uint32_t(now-c.checked)<10u)return true;
+        c.checked=now;
+        core::watchdog::feed();
+        {
+            MutexGuard guard(c.queue->m_mutex);
+            if(!guard.taken)return false;
+            bool live=false;
+            for(int i=0;i<c.queue->m_count;++i){
+                const auto& it=c.queue->m_items[i];
+                if(it.status==QSTATUS_UPLOADING&&!strcmp(it.id,c.item->id)&&!strcmp(it.filePath,c.item->filePath)){live=true;break;}
+            }
+            if(!live)return false;
+        }
+        vTaskDelay(1); // Yield outside queue/SPI locks; never spawn another worker.
+        return !c.queue->m_workerStop&&!c.queue->m_uploadPaused;
+    },&context);
+    strlcpy(item.lastError,result.reason,sizeof(item.lastError));
+    using services::video_upload::Step;
+    switch(result.step){
+        case Step::Complete:return {UploadResultKind::HttpResponse,200,true,0};
+        case Step::Progress:return {UploadResultKind::Progress,int(result.httpStatus),false,result.waitMs};
+        case Step::Retry:return {UploadResultKind::RetryableFailure,int(result.httpStatus),true,0};
+        case Step::Deferred:return {UploadResultKind::GlobalDeferral,int(result.httpStatus),false,result.waitMs};
+        case Step::Cancelled:return {UploadResultKind::Aborted,int(result.httpStatus),false,0};
+        case Step::Rejected:return {UploadResultKind::PermanentItemFailure,int(result.httpStatus),false,0};
+    }
+    return {UploadResultKind::RetryableFailure,0,false,0};
+}
+
+UploadQueue::VideoEnqueue UploadQueue::enqueueVideo(const char* filePath) {
+    using namespace services::video_upload;
+    if(!m_initialized||!m_items)return VideoEnqueue::StorageUnavailable;
+    if(!filePath||strncmp(filePath,"/videos/",8)||strnlen(filePath,sizeof(QueueItem::filePath))>=sizeof(QueueItem::filePath))return VideoEnqueue::Invalid;
+    const char* name=filePath+8;
+    if(!name[0]||name[0]=='.'||strnlen(name,sizeof(QueueItem::id))>=sizeof(QueueItem::id))return VideoEnqueue::Invalid;
+    struct Owned {
+        Resume* value=static_cast<Resume*>(heap_caps_malloc(sizeof(Resume),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+        Owned(){if(value)new(value)Resume;}
+        ~Owned(){if(value){value->~Resume();heap_caps_free(value);}}
+    } owned;
+    if(!owned.value)return VideoEnqueue::StorageUnavailable;
+    Resume& record=*owned.value;
+    strlcpy(record.media.name,name,sizeof(record.media.name));
+    record.media.bytes=1;memset(record.media.sha256,'0',64);
+    if(!core::video_upload::validIdentity(record.media))return VideoEnqueue::Invalid;
+    record.media.bytes=0;record.media.sha256[0]=0;
+    const auto backend=core::secrets::backendConfig();
+    if(!binding(backend,record.backendBinding))return VideoEnqueue::AccountRequired;
+    {
+        MutexGuard guard(m_mutex);
+        if(!guard.taken)return VideoEnqueue::Busy;
+        if(mutationBlocksUnlocked(filePath))return VideoEnqueue::Busy;
+        if(!strcasecmp(name,m_inFlightId))return VideoEnqueue::Busy;
+        for(int i=0;i<m_count;++i){
+            const auto& item=m_items[i];
+            if(strcasecmp(item.id,name))continue;
+            if(strcmp(item.type,"video")||strcmp(item.filePath,filePath))return VideoEnqueue::Invalid;
+            char expected[65];memcpy(expected,record.backendBinding,sizeof(expected));
+            if(load(name,record)!=Load::Ready)return VideoEnqueue::StorageUnavailable;
+            return !strcmp(record.backendBinding,expected)?VideoEnqueue::AlreadyQueued:VideoEnqueue::AccountChanged;
+        }
+        if(m_count>=UPLOAD_QUEUE_MAX_ITEMS)return VideoEnqueue::Full;
+        size_t bytes=0;uint32_t modified=0;
+        if(!hal::sd::fileInfo(filePath,bytes,modified))return VideoEnqueue::StorageUnavailable;
+        if(!bytes||bytes>core::video_upload::kMaximumBytes)return VideoEnqueue::Invalid;
+        // This is an explicit fresh request with no live/in-flight owner. Never
+        // reuse a previous hash/receipt for potentially replaced source bytes.
+        if(!erase(name)||save(name,record)!=Save::Saved)return VideoEnqueue::StorageUnavailable;
+        QueueItem& item=m_items[m_count];memset(&item,0,sizeof(item));
+        strlcpy(item.id,name,sizeof(item.id));strlcpy(item.type,"video",sizeof(item.type));
+        strlcpy(item.filePath,filePath,sizeof(item.filePath));strlcpy(item.fileName,name,sizeof(item.fileName));
+        strlcpy(item.mimeType,"video/x-msvideo",sizeof(item.mimeType));
+        item.createdAt=millis();item.status=QSTATUS_PENDING;item.deleteAfterUpload=false;
+        ++m_count;
+        if(!saveManifestUnlocked()){
+            --m_count; // Keep resume metadata: boot may recover the new manifest.
+            return VideoEnqueue::StorageUnavailable;
+        }
+        snprintf(m_lastStatus,sizeof(m_lastStatus),"Video queued: %s",name);
+    }
+    notifyWorker();return VideoEnqueue::Queued;
+}
+
+namespace {
+bool withinUploadPath(const char* path,const char* root) {
+    const size_t n=strlen(root);
+    return n&&(!strcmp(root,"/")||(!strncasecmp(path,root,n)&&(path[n]==0||path[n]=='/')));
+}
+bool forgetVideoSource(const char* path) {
+    // A stale backup manifest must not reuse an old hash/receipt after this
+    // exact source is replaced. Camera originals are flat /videos/*.avi IDs.
+    if(strncasecmp(path,"/videos/",8))return true;
+    const char* name=path+8;const size_t n=strlen(name);
+    if(n<5||n>=24||name[0]=='.'||strcasecmp(name+n-4,".avi"))return true;
+    for(size_t i=0;i<n;++i){const char c=name[i];
+        if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'||c=='-'||c=='.'))return true;
+    }
+    return services::video_upload::erase(name);
+}
+}
+bool UploadQueue::mutationBlocksUnlocked(const char* path) const {
+    return m_mutationPath[0]&&(withinUploadPath(path,m_mutationPath)||withinUploadPath(m_mutationPath,path));
+}
+UploadQueue::MutationResult UploadQueue::beginFileMutation(const char* path,bool removePending,int& removed) {
+    removed=0;
+    if(!path||path[0]!='/'||strnlen(path,sizeof(m_mutationPath))>=sizeof(m_mutationPath))return MutationResult::Invalid;
+    char normalized[sizeof(m_mutationPath)];strlcpy(normalized,path,sizeof(normalized));
+    size_t n=strlen(normalized);while(n>1&&normalized[n-1]=='/')normalized[--n]=0;
+    if(strstr(normalized,"//")||strstr(normalized,"/../")||strstr(normalized,"/./")||
+       (n>=3&&!strcmp(normalized+n-3,"/.."))||(n>=2&&!strcmp(normalized+n-2,"/.")))return MutationResult::Invalid;
+    for(size_t i=0;i<n;++i)if(static_cast<unsigned char>(normalized[i])<32)return MutationResult::Invalid;
+    MutexGuard guard(m_mutex);
+    if(!guard.taken)return MutationResult::Busy;
+    if(!m_initialized||!m_items)return MutationResult::StorageUnavailable;
+    if(m_mutationPath[0]||(m_inFlightPath[0]&&withinUploadPath(m_inFlightPath,normalized)))return MutationResult::Busy;
+    for(int i=0;i<m_count;++i){
+        if(!withinUploadPath(m_items[i].filePath,normalized))continue;
+        if(!removePending||m_items[i].status==QSTATUS_UPLOADING)return MutationResult::Busy;
+    }
+    if(removePending){
+        for(int i=m_count-1;i>=0;--i)if(withinUploadPath(m_items[i].filePath,normalized)){
+            removeItemAtUnlocked(i);++removed;
+        }
+    }
+    // Also persist for replacement/no reference in RAM: an earlier failed queue
+    // clear may still leave a reference in a recoverable manifest.
+    if(!saveManifestUnlocked()||!forgetVideoSource(normalized))return MutationResult::StorageUnavailable;
+    strlcpy(m_mutationPath,normalized,sizeof(m_mutationPath));
+    return MutationResult::Ready;
+}
+void UploadQueue::endFileMutation(){MutexGuard guard(m_mutex);m_mutationPath[0]=0;}
+UploadQueue::FileMutation::FileMutation(UploadQueue& queue,const char* path,bool removePending){
+    result_=queue.beginFileMutation(path,removePending,removed_);
+    if(result_==MutationResult::Ready)queue_=&queue;
+}
+UploadQueue::FileMutation::~FileMutation(){if(queue_)queue_->endFileMutation();}

@@ -67,6 +67,12 @@ enum class Id : uint8_t {
 
     Haptic, // Retained 1 ms motor modulation worker, asleep between effects
 
+
+    VideoWrite, // Camera JPEG queue -> SD AVI; only while recording/finalizing
+    VideoRead,  // SD AVI -> bounded JPEG queue; decoded/presented on UI
+    VideoMic, // Concurrent video microphone RX; same camera_audio task profile
+    VideoCapture, // Exclusive camera reader -> recording queue / latest preview
+    VideoPreview, // Optional camera/playback JPEG decode; no display access
     _Count      // sentinel — do not use
 };
 
@@ -97,9 +103,11 @@ const Spec& spec(Id id);
  */
 TaskHandle_t spawn(Id id, TaskFunction_t fn, void* arg = nullptr);
 
-/** Self-delete after publishing service quiescence. UploadQ/NetPoll/OtaDownload must use
+/** Self-delete after publishing service quiescence. UploadQ/NetPoll/OtaDownload/VideoCapture must use
  * this instead of vTaskDelete: they share one retained 12 KB internal stack,
- * reusable only after same-core idle cleanup. A premature spawn returns null.
+ * reusable only after same-core idle cleanup. VideoCapture additionally holds
+ * its Camera Session peripheral reservation for the entire worker lifetime.
+ * A premature spawn returns null.
  * Mp3Play/WavPlay similarly share a separate 3584-byte internal slot.
  * Other tasks retain ordinary dynamic allocation/deletion. Never returns. */
 void deleteCurrent(Id id);

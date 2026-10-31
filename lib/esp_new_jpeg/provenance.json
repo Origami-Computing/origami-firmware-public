@@ -1,0 +1,15 @@
+{
+  "name": "esp_new_jpeg",
+  "version": "1.0.2",
+  "repository": "https://github.com/espressif/esp-adf-libs",
+  "revision": "95289ee8beba870449cbcc1fd31bf968d40855f3",
+  "upstream_directory": "esp_new_jpeg",
+  "target": "esp32s3",
+  "license": "ESPRESSIF MIT; Espressif products only, see LICENSE",
+  "files": {
+    "include/esp_jpeg_common.h": "c0852f3a5322af939c8f59fe7ba1ab231a143b6397def11847a7d955bfdb39c6",
+    "include/esp_jpeg_dec.h": "136aa1cb155444fb460292b86c6e6ee1c6cc644681c647d268a56bec6aa67d47",
+    "lib/esp32s3/libesp_new_jpeg.a": "2d08f7ed9e0e265173e2a651bf889190db8cc172fa2dff6ef63ffa8c73d24cd8",
+    "LICENSE": "0bf7f2018fffa1caff5ecbf10d79707b218eea4e26b8c705d744de4556552815"
+  }
+}

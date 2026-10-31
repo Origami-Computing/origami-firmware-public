@@ -109,6 +109,18 @@ uint32_t generation() {
 }
 
 void Processor::reset(uint32_t sampleRate) {
+    followLiveSettings_ = true;
+    resetState_(sampleRate);
+    refreshSettings_();
+}
+
+void Processor::resetFromSnapshot(Settings snapshot, uint32_t sampleRate) {
+    followLiveSettings_ = false;
+    resetState_(sampleRate);
+    applySettings_(snapshot);
+}
+
+void Processor::resetState_(uint32_t sampleRate) {
     sampleRate_ = sampleRate > 0 ? sampleRate : 48000;
     settingsGeneration_ = UINT32_MAX;
     previousInput_ = 0;
@@ -119,15 +131,20 @@ void Processor::reset(uint32_t sampleRate) {
     peak_ = 0;
     overRangeSamples_ = 0;
     limitedSamples_ = 0;
-    refreshSettings_();
 }
 
 void Processor::refreshSettings_() {
+    if (!followLiveSettings_) return;
     const uint32_t currentGeneration = generation();
     if (settingsGeneration_ == currentGeneration) return;
-    active_ = settings();
     settingsGeneration_ = currentGeneration;
+    applySettings_(settings());
+}
 
+void Processor::applySettings_(Settings snapshot) {
+    active_.gainBasisPoints = clampGain(snapshot.gainBasisPoints);
+    active_.highPassHz = clampHighPass(snapshot.highPassHz);
+    active_.limiterDbfs = clampLimiter(snapshot.limiterDbfs);
     if (active_.highPassHz == 0) {
         alphaQ15_ = 0;
         previousInput_ = 0;

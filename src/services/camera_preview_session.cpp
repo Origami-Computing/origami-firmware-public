@@ -4,8 +4,8 @@
 
 namespace services { namespace camera {
 bool Session::initializePreview(int frameSize, const hal::camera::Tuning& tuning,
-                                uint32_t settleMs, bool (&prepareConsumer)()) {
-    if (!start(frameSize, PIXFORMAT_JPEG, &tuning) || !prepareConsumer()) {
+                                uint32_t settleMs, bool (&prepareConsumer)(), int jpegQuality, int pixelFormat) {
+    if (!start(frameSize, pixelFormat<0 ? PIXFORMAT_JPEG : pixelFormat, &tuning, jpegQuality) || !prepareConsumer()) {
         stop();
         return false;
     }
@@ -14,17 +14,19 @@ bool Session::initializePreview(int frameSize, const hal::camera::Tuning& tuning
 }
 
 bool Session::openPreview(int frameSize, const hal::camera::Tuning& tuning,
-                          bool (&prepareConsumer)()) {
+                          bool (&prepareConsumer)(), int jpegQuality, int pixelFormat) {
+    if (reader_) return false;
     delay(100);
     // Preserve first-entry AE/AWB convergence before exposing sensor frames.
-    return initializePreview(frameSize, tuning, 700, prepareConsumer);
+    return initializePreview(frameSize, tuning, 700, prepareConsumer, jpegQuality, pixelFormat);
 }
 
 bool Session::restartPreview(int frameSize, const hal::camera::Tuning& tuning,
-                             uint32_t settleMs, bool (&prepareConsumer)()) {
+                             uint32_t settleMs, bool (&prepareConsumer)(), int jpegQuality, int pixelFormat) {
+    if (reader_) return false;
     stop();
     delay(50);
-    if (!initializePreview(frameSize, tuning, settleMs, prepareConsumer)) return false;
+    if (!initializePreview(frameSize, tuning, settleMs, prepareConsumer, jpegQuality, pixelFormat)) return false;
     hal::camera::CameraFrame warmup;
     if (read(&warmup)) returnFrame();
     return true;

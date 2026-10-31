@@ -59,6 +59,38 @@ public:
     // deleteAfterUpload: true for queue-owned temporary files; false for retained media
     bool enqueue(const char* type, const char* filePath, const char* mimeType,
                  bool deleteAfterUpload = true);
+    enum class VideoEnqueue { Queued, AlreadyQueued, Busy, Full, Invalid, AccountRequired, AccountChanged, StorageUnavailable };
+    // Explicit request for a finalized /videos/<name>.avi original. Brief SD
+    // setup/manifest I/O; use a workflow action/service context, never a painter.
+    // Captures the current backend/account binding before publishing the item.
+    // Originals are never queue-owned. Same pending item/account is idempotent; a fresh
+    // requeue resets old resume metadata and rehashes on the worker. Busy means
+    // a cancelled operation still owns this ID; retry after it acknowledges stop.
+    // StorageUnavailable can be an ambiguous manifest write: media is retained,
+    // and boot recovery may discover a successfully persisted pending request.
+    VideoEnqueue enqueueVideo(const char* filePath);
+    enum class MutationResult { Ready, Busy, Invalid, StorageUnavailable };
+    class FileMutation {
+    public:
+        // q must be initialized. Reserves a canonical file/directory subtree
+        // against enqueue without retaining the queue mutex during file/network
+        // I/O. removePending=false refuses queued sources; true cancels pending
+        // references and confirms the manifest before allowing deletion. Active
+        // native operations always return Busy, including after queue clearing.
+        // Exact video-source mutations invalidate prior resume metadata before
+        // changing bytes, so backup manifests cannot reuse a stale receipt.
+        FileMutation(UploadQueue& q,const char* path,bool removePending);
+        ~FileMutation();
+        FileMutation(const FileMutation&)=delete;
+        FileMutation& operator=(const FileMutation&)=delete;
+        bool ready() const {return result_==MutationResult::Ready;}
+        MutationResult result() const {return result_;}
+        int removed() const {return removed_;}
+    private:
+        UploadQueue* queue_=nullptr;
+        MutationResult result_=MutationResult::Invalid;
+        int removed_=0;
+    };
 
     // One mutex-protected observation; pending excludes active transfers.
     struct Counts { int total = 0, pending = 0, failed = 0; };
@@ -123,7 +155,10 @@ private:
         RetryableFailure,
         PermanentItemFailure,
         GlobalDeferral,
-        Aborted
+        Aborted,
+        // Durable chunk/session progress or pending verification, never a final
+        // receipt. Keep the item and media, yield the network lease, rotate fairly.
+        Progress
     };
 
     struct UploadResult {
@@ -147,6 +182,11 @@ private:
   /** Worker spawn backoff when internal RAM cannot allocate the task stack. */
   uint32_t m_nextWorkerStartAt = 0;
     char m_forcedItemId[24] = {};
+    // Retained through cancel/removal until doUpload returns. Prevents a new
+    // item or resume record reusing the identity of an in-flight completion.
+    char m_inFlightId[24] = {};
+    char m_inFlightPath[96] = {};
+    char m_mutationPath[96] = {};
     bool m_resetAfterFlight = false;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
     bool m_testMode = false;
@@ -191,6 +231,10 @@ private:
      */
     bool makeRoomForOneUnlocked();
     UploadResult doUpload(QueueItem& item);
+    UploadResult doVideoUpload(QueueItem& item);
+    bool mutationBlocksUnlocked(const char* path) const;
+    MutationResult beginFileMutation(const char* path,bool removePending,int& removed);
+    void endFileMutation();
     uint32_t jitteredDelayMs(uint32_t baseMs);
     bool isRetryable(int httpCode);
     void deleteFileIfOwnedUnlocked(const QueueItem& item);

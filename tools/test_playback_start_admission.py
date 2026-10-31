@@ -28,6 +28,7 @@ namespace core{namespace usage{void emit(const char*,const char*){++usageEvents;
 struct Log{void println(const char*){}template<class...T>void printf(const char*,T...) {}} Serial;
 struct File{operator bool()const{return true;}unsigned size(){return 4096;}unsigned position(){return 0;}void close(){}};
 struct Storage{File open(const char*,int=0){++opens;return {};}} SD;
+namespace hal{namespace sd{bool openStream(const char*,File* f){++opens;*f={};return true;}}}
 #define FILE_READ 0
 #define MINIMP3_MAX_SAMPLES_PER_FRAME 4
 namespace hal{namespace bus{void lockSpi(){}void unlockSpi(){}}namespace audio{bool txBegin(uint32_t){++txStarts;return true;}}}
@@ -39,13 +40,15 @@ struct Progress{void reset(){}void add(int,int){}};
 struct Worker{bool runningFlag=false,pending=false;bool running()const{return runningFlag;}bool cleanupPending()const{return pending;}};
 struct PlaybackWorker{struct Control{Control(Worker&){}explicit operator bool()const{return true;}};};
 struct Base{
- Worker worker_;Ring ring_;Codec codec_;Progress progress_;File file_;
+ Worker worker_;Ring ring_;Codec codec_;Progress progress_,outputProgress_;File file_;
+ struct Avi{} avi_;unsigned aviChunkEnd_=0,aviSamplesRead_=0,outputSampleRemainder_=0;
+ std::atomic<bool> streamFailed_{false};
  void* inBuf_=(void*)1;int16_t decodeBuf_[4]{};
  std::atomic<bool> playing_{false};bool fileOpen_=false,backgroundIoPaused_=true,usageTrackActive_=false;
  char currentPath_[128]{};unsigned fileSize_=0,audioStart_=0,lastGoodFilePos_=0,decodeNoProgressCount_=0,detectedRate_=0,estBitrate_=0;
  unsigned dataStart_=0,dataEnd_=0,bytesPerFrame_=0;bool wantsNext_=false;
  struct Info{int hz=48000,channels=2;unsigned bitrateKbps=64,durationMs=1000;char title[64]{};} info_;
- struct ParsedHeader{int hz=48000,channels=2;unsigned durationMs=1000,dataStart=44,dataEnd=4096,bytesPerFrame=4;};
+ struct ParsedHeader{Avi avi;int hz=48000,channels=2;unsigned durationMs=1000,dataStart=44,dataEnd=4096,bytesPerFrame=4;};
  bool startTask(){++starts;return worker_.runningFlag=spawnOk&&!worker_.pending;}
  void stopTrackUnlocked(){playing_=false;fileOpen_=false;}
  bool parseID3_(){return true;}int decodeOneFrame_(){return 0;}int scaledVolumeBasisPoints(){return 1000;}

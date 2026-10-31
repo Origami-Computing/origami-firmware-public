@@ -180,6 +180,7 @@ TFT_eSPI& tft() {
   return s_tft;
 }
 
+uint16_t* prepareNativeOutput(uint16_t* pixels) { return pixels; }
 TFT_eSPI& directTft() {
   return s_tft;
 }

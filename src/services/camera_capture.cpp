@@ -27,6 +27,7 @@ framesize_t frameSize(CaptureResolution resolution) {
 }
 }
 Session::StillResult Session::prepareStill(CaptureResolution requested, const hal::camera::Tuning& tuning) {
+    if (reader_) return StillResult::CameraBusy;
     stop();
     delay(80);
     const bool deep=requested>=CaptureResolution::Hd;

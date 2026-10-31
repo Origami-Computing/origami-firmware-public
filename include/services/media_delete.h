@@ -21,7 +21,10 @@ struct Result {
 };
 
 /**
- * Remove one matching queue item, then remove the SD file if present.
+ * Refuse active uploads; remove pending queue references and confirm the queue
+ * manifest before removing the SD file. Hold an enqueue exclusion through file
+ * removal. Failed queue persistence does not permit deletion; queue cleanup in
+ * RAM is not rolled back. The queue service must initialize successfully.
  * Returns true when the file was removed or was already missing.
  */
 bool deleteFile(const char* path, Result* result = nullptr);

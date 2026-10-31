@@ -10,11 +10,17 @@
 #define HAL_CAMERA_FRAMESIZE_VGA   8
 #define HAL_CAMERA_PIXFORMAT_JPEG  4
 // NOTE: Camera uses LCD_CAM peripheral with GDMA
-// Camera and I2S audio should not be used simultaneously
-// Always deinit camera before using audio, and vice versa
+// VideoRecording owns concurrent microphone RX under retained Camera admission.
+// Other audio workflows still require their normal exclusive session policy.
 
 namespace hal {
 namespace camera {
+
+// UI-task, cached capability; no sensor I/O. True when the latest init attempt
+// identified the OV5640 supported by our AF driver. Retained through deinit so
+// settings can query it with the camera off. False if no supported sensor was
+// identified. This does not establish lens-motor presence or a successful lock.
+bool supportsAutofocus();
 
 // Frame data from getFrame(); valid until returnFrame() is called
 struct CameraFrame {
@@ -64,6 +70,10 @@ struct Tuning {
   /** Auto exposure / auto gain. Forcing values manually here makes 90% of "weird color" reports. */
   bool exposure_ctrl = true;
   bool gain_ctrl     = true;
+  // OV3660 night-mode AEC can extend frame intervals in low light. Video
+  // preview may disable it without disabling automatic exposure/gain. Other
+  // sensors retain their existing AEC2 behavior; this is not a frame-rate cap.
+  bool allowNightMode = true;
   /** Bad/white pixel correction + gamma + lens shading — keep on for natural color. */
   bool bpc = true;
   bool wpc = true;

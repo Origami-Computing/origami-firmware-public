@@ -15,8 +15,17 @@ bool deleteFile(const char* path, Result* result) {
     return false;
   }
 
-  const bool queueRemoved = services::uploads::queue().removeByFilePath(path);
-  if (queueRemoved && result) result->queueRemoved++;
+  if (!services::uploads::ensureInit()) {
+    if (result) result->failed++;
+    return false;
+  }
+  UploadQueue::FileMutation mutation(services::uploads::queue(),path,true);
+  const bool queueRemoved = mutation.removed()!=0;
+  if (result) result->queueRemoved+=mutation.removed();
+  if (!mutation.ready()) {
+    if (result) result->failed++;
+    return false;
+  }
 
   if (!hal::sd::exists(path)) {
     if (result) result->missing++;

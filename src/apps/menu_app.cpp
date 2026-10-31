@@ -25,6 +25,7 @@
 #include "apps/mp3_menu_app.h"
 #include "apps/ota_update_app.h"
 #include "apps/photos_app.h"
+#include "apps/videos_app.h"
 #include "apps/pomodoro_app.h"
 #include "apps/pong_app.h"
 #include "apps/settings_menu_app.h"
@@ -79,6 +80,7 @@ struct PageDef {
 static const MenuEntry kMainEntries[] = {
     {"Camera", &apps::camera_menu::app, PAGE_COUNT, icons::kCamera},
     {"Photos", &apps::photos::app, PAGE_COUNT, icons::kPhotos},
+    {"Videos", &apps::videos::app, PAGE_COUNT, icons::kPhotos},
     {"Audio", nullptr, PAGE_AUDIO, icons::kAudio},
     {"Music", &apps::mp3_menu::app, PAGE_COUNT, icons::kMusic},
     {"Clock", nullptr, PAGE_TIME, icons::kClock},

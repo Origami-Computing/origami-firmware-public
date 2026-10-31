@@ -60,6 +60,12 @@ jobs:
           python3 tools/test_ota_download_resume.py
           python3 tools/test_ota_versions.py
           python3 tools/test_mp3_metadata.py
+          python3 tools/test_camera_shutter.py
+          python3 tools/test_camera_session.py
+          python3 tools/test_network_stack.py
+          python3 tools/test_camera_video_teardown.py
+          python3 tools/test_sd_write_compat.py
+          python3 tools/test_video_recording.py
           python3 tools/test_playback_start_admission.py
           python3 tools/test_ota_public_default.py
           python3 -m unittest discover -s tests/ota -v

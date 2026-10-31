@@ -3,7 +3,6 @@
 #include "services/wav_player.h"
 
 #include <Arduino.h>
-#include <SD.h>
 #include <cstring>
 #include <esp_heap_caps.h>
 
@@ -119,9 +118,9 @@ bool WavPlayer::probeTrack(const char* path) {
 
     ParsedHeader parsed;
     hal::bus::lockSpi();
-    fs::File file = SD.open(path, FILE_READ);
-    const bool ok = file && parseHeader_(file, parsed);
-    if (file) file.close();
+    hal::sd::StreamReader file;
+    const bool ok = hal::sd::openStream(path, &file) && parseHeader_(file, parsed);
+    hal::sd::closeStream(&file);
     hal::bus::unlockSpi();
     return ok;
 }
@@ -147,8 +146,7 @@ bool WavPlayer::startTrack(const char* path) {
     currentPath_[sizeof(currentPath_) - 1] = 0;
 
     hal::bus::lockSpi();
-    file_ = SD.open(path, FILE_READ);
-    if (!file_) {
+    if (!hal::sd::openStream(path, &file_)) {
         hal::bus::unlockSpi();
         Serial.printf("[wav] Cannot open: %s\n", path);
         return false;
@@ -170,9 +168,12 @@ bool WavPlayer::startTrack(const char* path) {
     dataEnd_ = parsed.dataEnd;
     bytesPerFrame_ = parsed.bytesPerFrame;
     lastGoodFilePos_ = dataStart_;
+    avi_ = parsed.avi; aviChunkEnd_ = dataStart_; aviSamplesRead_ = 0; streamFailed_ = false;
 
     nameFromPath(path, info_.title, sizeof(info_.title));
     progress_.reset();
+    outputProgress_.reset();
+    outputSampleRemainder_ = 0;
     wantsNext_ = false;
     ring_.reset();
     clearSpectrum();
@@ -186,6 +187,8 @@ bool WavPlayer::startTrack(const char* path) {
     for (int i = 0; i < 12 && ring_.free() > 2048; ++i) {
         if (!pumpFileToRing_()) break;
     }
+
+    if (streamFailed_.load()) { stopTrackUnlocked(); return false; }
 
     Serial.printf("[wav] START '%s' %dHz ch=%d data=%uB dur=%ums\n",
                   path, info_.hz, info_.channels,
@@ -209,8 +212,14 @@ void WavPlayer::stopTrackUnlocked() {
     playing_ = false;
     hal::audio::txEnd();
     if (fileOpen_) {
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+        Serial.printf("[wav-sd] read_wait_us=%lu read_io_us=%lu seek_wait_us=%lu seek_io_us=%lu read_max_us=%lu seek_max_us=%lu\n",
+            (unsigned long)file_.readWaitUs,(unsigned long)file_.readIoUs,
+            (unsigned long)file_.seekWaitUs,(unsigned long)file_.seekIoUs,
+            (unsigned long)file_.readMaxIoUs,(unsigned long)file_.seekMaxIoUs);
+#endif
         hal::bus::lockSpi();
-        file_.close();
+        hal::sd::closeStream(&file_);
         hal::bus::unlockSpi();
         fileOpen_ = false;
     }
@@ -224,21 +233,25 @@ bool WavPlayer::restartTrack() {
     if (!fileOpen_ || dataStart_ == 0 || bytesPerFrame_ == 0) return false;
     playing_ = false;
     hal::bus::lockSpi();
-    if (!file_ && !recoverSdFile_()) {
+    if (!file_.handle && !recoverSdFile_()) {
         hal::bus::unlockSpi();
         return false;
     }
-    const bool ok = file_.seek(dataStart_);
+    const bool ok = hal::sd::seekStream(&file_, dataStart_);
     hal::bus::unlockSpi();
     if (!ok) return false;
     ring_.reset();
     progress_.reset();
+    outputProgress_.reset();
+    outputSampleRemainder_ = 0;
     lastGoodFilePos_ = dataStart_;
+    aviChunkEnd_ = dataStart_; aviSamplesRead_ = 0; streamFailed_ = false;
     wantsNext_ = false;
     clearSpectrum();
     for (int i = 0; i < 12 && ring_.free() > 2048; ++i) {
         if (!pumpFileToRing_()) break;
     }
+    if (streamFailed_.load()) return false;
     playing_ = true;
     usageTrackActive_ = true;
     core::usage::emit("recordings","audio.start");
@@ -257,10 +270,22 @@ bool WavPlayer::consumeWantsNextTrack() {
     return wantsNext_.exchange(false);
 }
 
-bool WavPlayer::parseHeader_(fs::File& file, ParsedHeader& parsed) {
+bool WavPlayer::parseHeader_(hal::sd::StreamReader& file, ParsedHeader& parsed) {
+    if (file.size>UINT32_MAX) return false;
     uint8_t hdr[12];
-    if (file.read(hdr, sizeof(hdr)) != (int)sizeof(hdr)) return false;
-    if (memcmp(hdr, "RIFF", 4) != 0 || memcmp(hdr + 8, "WAVE", 4) != 0) return false;
+    if (hal::sd::readStream(&file, hdr, sizeof(hdr)) != (int)sizeof(hdr)) return false;
+    if (memcmp(hdr,"RIFF",4)) return false;
+    if (!memcmp(hdr+8,"AVI ",4)) {
+        uint8_t header[core::avi::kAudioHeaderBytes];
+        memcpy(header,hdr,sizeof(hdr));
+        if (hal::sd::readStream(&file, header+12,sizeof(header)-12)!=int(sizeof(header)-12) ||
+            !core::avi::parse(header,uint32_t(file.size),parsed.avi,sizeof(header)) || !parsed.avi.audioSamples) return false;
+        parsed.hz=core::avi::kAudioRate;parsed.channels=1;parsed.bytesPerFrame=2;
+        parsed.dataStart=parsed.avi.headerBytes;parsed.dataEnd=parsed.avi.movieEnd;
+        parsed.durationMs=uint64_t(parsed.avi.audioSamples)*1000/core::avi::kAudioRate;
+        return parsed.durationMs>0 && hal::sd::seekStream(&file, parsed.dataStart);
+    }
+    if (memcmp(hdr+8,"WAVE",4)) return false;
 
     bool haveFmt = false;
     bool haveData = false;
@@ -269,13 +294,13 @@ bool WavPlayer::parseHeader_(fs::File& file, ParsedHeader& parsed) {
     uint32_t sampleRate = 0;
     uint16_t bitsPerSample = 0;
 
-    while (file.available() >= 8) {
-        uint32_t chunkPos = file.position();
+    while (file.position <= file.size && file.size-file.position >= 8) {
+        uint32_t chunkPos = file.position;
         if (chunkPos == UINT32_MAX) return false;
         uint8_t ch[8];
-        if (file.read(ch, sizeof(ch)) != (int)sizeof(ch)) break;
+        if (hal::sd::readStream(&file, ch, sizeof(ch)) != (int)sizeof(ch)) break;
         uint32_t chunkSize = rd32(ch + 4);
-        uint32_t payloadPos = file.position();
+        uint32_t payloadPos = file.position;
         if (payloadPos == UINT32_MAX || chunkSize > UINT32_MAX - payloadPos) return false;
         uint32_t nextPos = payloadPos + chunkSize + (chunkSize & 1u);
         if (nextPos < payloadPos) return false;
@@ -283,7 +308,7 @@ bool WavPlayer::parseHeader_(fs::File& file, ParsedHeader& parsed) {
         if (memcmp(ch, "fmt ", 4) == 0) {
             if (chunkSize < 16) return false;
             uint8_t fmt[16];
-            if (file.read(fmt, sizeof(fmt)) != (int)sizeof(fmt)) return false;
+            if (hal::sd::readStream(&file, fmt, sizeof(fmt)) != (int)sizeof(fmt)) return false;
             audioFormat = rd16(fmt + 0);
             channels = rd16(fmt + 2);
             sampleRate = rd32(fmt + 4);
@@ -296,7 +321,7 @@ bool WavPlayer::parseHeader_(fs::File& file, ParsedHeader& parsed) {
         }
 
         if (haveFmt && haveData) break;
-        if (nextPos <= chunkPos || !file.seek(nextPos)) break;
+        if (nextPos <= chunkPos || !hal::sd::seekStream(&file, nextPos)) break;
     }
 
     if (!haveFmt || !haveData) return false;
@@ -310,14 +335,14 @@ bool WavPlayer::parseHeader_(fs::File& file, ParsedHeader& parsed) {
     parsed.hz = (int)sampleRate;
     parsed.channels = (int)channels;
     parsed.bytesPerFrame = (uint32_t)channels * sizeof(int16_t);
-    const uint32_t fileSize = (uint32_t)file.size();
+    const uint32_t fileSize = (uint32_t)file.size;
     if (parsed.dataEnd <= parsed.dataStart || parsed.dataEnd > fileSize) return false;
 
     const uint32_t dataBytes = parsed.dataEnd - parsed.dataStart;
     if (dataBytes % parsed.bytesPerFrame != 0) return false;
     parsed.durationMs = (uint32_t)((uint64_t)dataBytes * 1000ULL /
                                    ((uint64_t)parsed.bytesPerFrame * sampleRate));
-    return parsed.durationMs > 0 && file.seek(parsed.dataStart);
+    return parsed.durationMs > 0 && hal::sd::seekStream(&file, parsed.dataStart);
 }
 
 bool WavPlayer::recoverSdFile_() {
@@ -329,18 +354,17 @@ bool WavPlayer::recoverSdFile_() {
     replayPos = dataStart_ +
         ((replayPos - dataStart_) / bytesPerFrame_) * bytesPerFrame_;
 
-    file_.close();
-    file_ = SD.open(currentPath_, FILE_READ);
-    if (!file_) {
+    hal::sd::closeStream(&file_);
+    if (!hal::sd::openStream(currentPath_, &file_)) {
         fileOpen_ = false;
         Serial.printf("[wav] SD recover failed reopen path='%s'\n", currentPath_);
         return false;
     }
     fileOpen_ = true;
-    if (!file_.seek(replayPos)) {
+    if (!hal::sd::seekStream(&file_, replayPos)) {
         Serial.printf("[wav] SD recover seek failed pos=%u path='%s'\n",
                       (unsigned)replayPos, currentPath_);
-        file_.close();
+        hal::sd::closeStream(&file_);
         fileOpen_ = false;
         return false;
     }
@@ -355,16 +379,45 @@ bool WavPlayer::atEndOfFile_() {
     bool atEnd = false;
     hal::bus::lockSpi();
     if (fileOpen_) {
-        if (!file_ && !recoverSdFile_()) {
+        if (!file_.handle && !recoverSdFile_()) {
             hal::bus::unlockSpi();
             return false;
         }
-        uint32_t pos = file_.position();
-        if (pos == UINT32_MAX && recoverSdFile_()) pos = file_.position();
-        atEnd = pos != UINT32_MAX && pos >= dataEnd_;
+        atEnd = file_.position >= dataEnd_;
+        if (atEnd && avi_.audioSamples && aviSamplesRead_!=avi_.audioSamples) {
+            failAviStream_(); atEnd=false;
+        }
     }
     hal::bus::unlockSpi();
     return atEnd;
+}
+
+bool WavPlayer::failAviStream_() {
+    streamFailed_.store(true); playing_.store(false);
+    return false;
+}
+
+bool WavPlayer::prepareAviAudioChunk_() {
+    uint32_t pos=file_.position;
+    if (pos<aviChunkEnd_) return true;
+    // At most sixteen header/seek operations in one pump, even on malformed or
+    // unusually sparse input. File reads and I2S delivery remain on WavPlay.
+    for (unsigned scanned=0;scanned<16;++scanned) {
+        if (pos==dataEnd_) {
+            if (aviSamplesRead_!=avi_.audioSamples) return failAviStream_();
+            return false;
+        }
+        uint8_t header[8];core::avi::Chunk chunk;
+        if (hal::sd::readStream(&file_, header,8)!=8 || !core::avi::parseChunk(header,pos,avi_,chunk)) return failAviStream_();
+        if (chunk.audio) {
+            if (chunk.bytes/2>avi_.audioSamples-aviSamplesRead_) return failAviStream_();
+            aviChunkEnd_=chunk.nextOffset;lastGoodFilePos_=chunk.dataOffset;
+            return true;
+        }
+        if (!hal::sd::seekStream(&file_, chunk.nextOffset)) return failAviStream_();
+        pos=chunk.nextOffset;lastGoodFilePos_=pos;
+    }
+    return false;
 }
 
 bool WavPlayer::pumpFileToRing_() {
@@ -375,17 +428,14 @@ bool WavPlayer::pumpFileToRing_() {
         hal::bus::unlockSpi();
         return false;
     }
-    if (!file_ && !recoverSdFile_()) {
+    if (!file_.handle && !recoverSdFile_()) {
         hal::bus::unlockSpi();
         return false;
     }
-    uint32_t pos = file_.position();
-    if (pos == UINT32_MAX) {
-        if (!recoverSdFile_()) {
-            hal::bus::unlockSpi();
-            return false;
-        }
-        pos = file_.position();
+    uint32_t pos = file_.position;
+    if (avi_.audioSamples) {
+        if (!prepareAviAudioChunk_()) { hal::bus::unlockSpi(); return false; }
+        pos=file_.position;
     }
     if (pos >= dataEnd_) {
         hal::bus::unlockSpi();
@@ -400,7 +450,7 @@ bool WavPlayer::pumpFileToRing_() {
         return true;
     }
 
-    uint32_t remainBytes = dataEnd_ - pos;
+    uint32_t remainBytes = (avi_.audioSamples ? aviChunkEnd_ : dataEnd_) - pos;
     uint32_t wantBytes = (uint32_t)frames * bytesPerFrame_;
     if (wantBytes > remainBytes) wantBytes = remainBytes - (remainBytes % bytesPerFrame_);
     if (wantBytes == 0) {
@@ -408,22 +458,24 @@ bool WavPlayer::pumpFileToRing_() {
         return false;
     }
 
-    int got = file_.read((uint8_t*)pcmBuf_, wantBytes);
+    int got = hal::sd::readStream(&file_, (uint8_t*)pcmBuf_, wantBytes);
     if (got <= 0 && pos < dataEnd_ && recoverSdFile_()) {
-        pos = file_.position();
-        got = file_.read((uint8_t*)pcmBuf_, wantBytes);
+        pos = file_.position;
+        got = hal::sd::readStream(&file_, (uint8_t*)pcmBuf_, wantBytes);
     }
     if (got > 0) {
         uint32_t nextPos = pos + (uint32_t)got;
         if (nextPos <= dataEnd_) lastGoodFilePos_ = nextPos;
     }
     hal::bus::unlockSpi();
+    if (avi_.audioSamples && (got<=0 || got%2 || got>int(wantBytes))) return failAviStream_();
     if (got <= 0) return false;
 
     got -= got % (int)bytesPerFrame_;
     int gotFrames = got / (int)bytesPerFrame_;
     if (gotFrames <= 0) return false;
 
+    if (avi_.audioSamples) aviSamplesRead_ += uint32_t(gotFrames);
     analyzeVis_(pcmBuf_, gotFrames, info_.channels);
     progress_.add((uint32_t)gotFrames, info_.hz);
     core::dsp::pushStereoWithVolumeBasisPoints(pcmBuf_, gotFrames, info_.channels,
@@ -441,6 +493,9 @@ void WavPlayer::drainToI2S_() {
         size_t written = 0;
         hal::audio::txWrite(chunk, (size_t)got, &written, 0);
         int samplesWritten = (int)(written / sizeof(int16_t));
+        const uint32_t outputSamples = outputSampleRemainder_ + (uint32_t)samplesWritten;
+        outputProgress_.add(outputSamples / 2, info_.hz);
+        outputSampleRemainder_ = outputSamples % 2;
         if (samplesWritten < got) {
             ring_.putBack(got - samplesWritten);
             break;

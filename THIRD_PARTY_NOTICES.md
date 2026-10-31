@@ -4,6 +4,7 @@ MIT at the repository root applies to approved Origami-original work only. Retai
 
 | Component | Evidence retained | Review status |
 | --- | --- | --- |
+| Espressif esp_new_jpeg 1.0.2 | `lib/esp_new_jpeg/LICENSE`, pinned source and binary hashes in `lib/esp_new_jpeg/provenance.json` | Espressif MIT notice retained; use restricted to Espressif products; target is ESP32-S3 |
 | Lua 5.4.9 | `lib/lua/LICENSE` | MIT notice retained |
 | minimp3 | `lib/minimp3/LICENSE` | CC0 notice retained |
 | qrcodegen | `lib/qrcodegen/LICENSE` | MIT notice retained |

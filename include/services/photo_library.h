@@ -7,7 +7,7 @@ namespace services { namespace photos {
 // The library owns catalog storage and browsing/network exclusion. No rendering.
 class Library {
 public:
-    enum class BrowseResult { Ready, UploadsBusy, NetworkBusy };
+    enum class BrowseResult { Ready, UploadsBusy, NetworkBusy, Pending };
     using LoadResult = hal::sd::PhotoCatalogResult;
     using File = hal::sd::PhotoFile;
     struct SyncStatus { int pending; int failed; bool connected; };
@@ -15,8 +15,9 @@ public:
     ~Library() { close(); }
     Library(const Library&) = delete;
     Library& operator=(const Library&) = delete;
-    BrowseResult beginBrowsing();
-    bool browsing() const { return reservation_.held(); }
+    // deferred retains a Pending handoff for subsequent calls; close cancels.
+    BrowseResult beginBrowsing(bool deferred=false);
+    bool browsing() const { return browseReady_; }
     // Requires successful beginBrowsing(); entries remain valid until load,
     // clear, successful removal or close. Indices must be less than count().
     LoadResult load();
@@ -33,6 +34,7 @@ public:
 private:
     hal::sd::PhotoCatalog catalog_;
     background_network::PeripheralReservation reservation_;
-    bool active_=false;
+    agent_coordination::TransportPause browseAgentPause_;
+    bool active_=false, browseReady_=false;
 };
 } }

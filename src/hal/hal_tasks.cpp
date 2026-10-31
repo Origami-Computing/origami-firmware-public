@@ -45,6 +45,13 @@ static constexpr Spec kSpecs[] = {
     { "ota_download", CORE_SVC,   PRIO_BACKGROUND,  12288 },
     { "ota_notice",   CORE_SVC,   PRIO_BACKGROUND,  10240 },
     { "haptic",       CORE_SVC,   PRIO_REALTIME,     3072 },
+    { "video_write",  CORE_SVC,   PRIO_BACKGROUND,   4096 },
+    { "video_read",   CORE_SVC,   PRIO_BACKGROUND,   4096 },
+    // Probe WAV finalization left only 336 B free at 4096 on rev4; retain
+    // additional headroom for SD and logging error paths.
+    { "camera_audio", CORE_SVC,   PRIO_REALTIME,     6144 },
+    { "video_capture",CORE_SVC,   PRIO_SERVICE,      4096 },
+    { "video_preview",CORE_SVC,   PRIO_BACKGROUND,   6144 },
 };
 
 static_assert(sizeof(kSpecs) / sizeof(kSpecs[0]) == (size_t)Id::_Count,
@@ -57,6 +64,10 @@ struct Observation {
 static Observation s_observations[(size_t)Id::_Count];
 // These workers alternate under background_network admission; OTA holds a
 // firmware_update network reservation while downloading.
+// Camera acquisition holds a peripheral reservation excluding UploadQ/NetPoll
+// and borrows this storage without another permanent stack or a fragmented
+// 4 KiB allocation. The HAL slot also excludes concurrent OTA stack use;
+// ordinary feature admission still applies.
 // Reserve their one internal stack so TLS/SD heap fragmentation cannot prevent
 // either from restarting. Do not reduce TLS stack headroom or use PSRAM stacks.
 static constexpr size_t kNetworkStackBytes = 12288;
@@ -77,9 +88,11 @@ static_assert(kSpecs[(size_t)Id::UploadQ].stackBytes <= kNetworkStackBytes &&
               kSpecs[(size_t)Id::UploadQ].core == CORE_SVC &&
               kSpecs[(size_t)Id::NetPoll].core == CORE_SVC &&
               kSpecs[(size_t)Id::OtaDownload].stackBytes == kNetworkStackBytes &&
-              kSpecs[(size_t)Id::OtaDownload].core == CORE_SVC,
+              kSpecs[(size_t)Id::OtaDownload].core == CORE_SVC &&
+              kSpecs[(size_t)Id::VideoCapture].stackBytes <= kNetworkStackBytes &&
+              kSpecs[(size_t)Id::VideoCapture].core == CORE_SVC,
               "Shared network stack must fit all registered workers");
-static bool usesNetworkStack(Id id) { return id == Id::UploadQ || id == Id::NetPoll || id == Id::OtaDownload; }
+static bool usesNetworkStack(Id id) { return id == Id::UploadQ || id == Id::NetPoll || id == Id::OtaDownload || id == Id::VideoCapture; }
 static_assert(kSpecs[(size_t)Id::Mp3Play].stackBytes == kPlaybackStackBytes &&
               kSpecs[(size_t)Id::WavPlay].stackBytes == kPlaybackStackBytes &&
               kSpecs[(size_t)Id::Mp3Play].core == CORE_SVC &&

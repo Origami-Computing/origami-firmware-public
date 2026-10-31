@@ -17,7 +17,8 @@ namespace services { namespace background_network {
 namespace {
 std::atomic<bool> periodicOwned{false}, periodicContended{false};
 ServicePause s_peripheralPause;
-uint32_t s_peripheralHolders = 0; // UI-task nested successful reservations.
+uint32_t s_peripheralHolders = 0; // UI-task retained requests/reservations.
+bool s_peripheralPending=false, s_peripheralWorkersRequested=false;
 agent_coordination::TransportPause uploadAgentPause;
 PeriodicWork uploadNetworkWork;
 constexpr unsigned kBusy = 1, kPaused = 2;
@@ -40,9 +41,14 @@ void resumeAudioIfIdle() {
 
 bool PeriodicWork::tryEnter() {
     if (entered_) return true;
-    if (audioPriorityActive()) return false;
+    if (audioPriorityActive() || pauseOwner.load()) return false;
     bool idle = false;
     entered_ = periodicOwned.compare_exchange_strong(idle, true);
+    // Close the check/acquire race with a foreground request. Admission must
+    // be rechecked before the caller allocates a worker or starts HTTP.
+    if (entered_ && (audioPriorityActive() || pauseOwner.load())) {
+        release();return false;
+    }
     if (!entered_) periodicContended.store(true);
     return entered_;
 }
@@ -62,6 +68,22 @@ ServiceWork::ServiceWork() {
 }
 ServiceWork::~ServiceWork() {
     if (entered_) serviceState.fetch_and(~kBusy);
+}
+
+ServicePause::Result ServicePause::pollAcquire() {
+    if (held_) return Result::Acquired;
+    if (!owned_) {
+        bool available=false;
+        if (!pauseOwner.compare_exchange_strong(available,true)) return Result::AlreadyOwned;
+        owned_=true;
+    }
+    quote_=true;
+    if (!morning_quote::pollPeripheralPause()) return Result::QuoteBusy;
+    serviceState.fetch_or(kPaused);
+    gate_=true;
+    if ((serviceState.load() & kBusy) || firmware_update::noticeInFlight()) return Result::ServiceBusy;
+    held_=true;
+    return Result::Acquired;
 }
 
 ServicePause::Result ServicePause::acquire(uint32_t timeoutMs) {
@@ -261,7 +283,10 @@ void resumeAfterMusicAudio() {
 bool suspendForPeripheralIo(uint32_t timeoutMs) {
   if (hal::audio::retirementPending()) return false;
   if (!uploads::ensureInit()) return false;
-  if (s_peripheralHolders) { ++s_peripheralHolders; return true; }
+  if (s_peripheralHolders) {
+    if (s_peripheralPending) return false;
+    ++s_peripheralHolders; return true;
+  }
   if (s_peripheralPause.acquire(timeoutMs) != background_network::ServicePause::Result::Acquired)
     return false;
   if (!uploads::queue().stopWorkerForVoice(timeoutMs)) {
@@ -288,12 +313,39 @@ bool suspendForPeripheralIo(uint32_t timeoutMs) {
   return true;
 }
 
+void requestPeripheralIo() {
+  if (s_peripheralHolders++) return;
+  s_peripheralPending=true;
+  s_peripheralWorkersRequested=false;
+}
+
+bool peripheralIoReady() {
+  if (!s_peripheralHolders) return false;
+  if (!s_peripheralPending) return true;
+  if (hal::audio::retirementPending()) return false;
+  if (s_peripheralPause.pollAcquire()!=ServicePause::Result::Acquired) return false;
+  // Keep cancellation asserted across UI ticks instead of timing out and
+  // restarting the same transfer while the user is waiting for a preview.
+  requestAudioPause();
+  s_peripheralWorkersRequested=true;
+  auto* queue=uploads::readyQueue();
+  if (uploadAcquiring.load() || (queue && queue->workerRunning()) ||
+      services::net_poll::running() || !widgets::sync::pollingPaused() ||
+      periodicOwned.load()) return false;
+  s_peripheralPending=false;
+  return true;
+}
+
 void resumeAfterPeripheralIo() {
   if (!s_peripheralHolders || --s_peripheralHolders) return;
+  const bool restoreWorkers=!s_peripheralPending || s_peripheralWorkersRequested;
+  s_peripheralPending=s_peripheralWorkersRequested=false;
+  if (!restoreWorkers) {s_peripheralPause.release();return;}
   if(audioPriorityActive()) { s_peripheralPause.release(); return; }
   widgets::sync::resumePolling();
   services::net_poll::requestStart();
-  if (!uploads::queue().resumeWorker()) {
+  auto* queue=uploads::readyQueue();
+  if (queue && !queue->resumeWorker()) {
     Serial.println("[queue] Failed to resume worker after peripheral I/O");
   }
   s_peripheralPause.release();

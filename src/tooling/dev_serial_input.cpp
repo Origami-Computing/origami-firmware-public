@@ -21,6 +21,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <new>
+#include <memory>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/time.h>
@@ -59,6 +60,7 @@
 #include "apps/voice_recorder_app.h"
 #include "core/recording_waveform.h"
 #include "apps/photos_app.h"
+#include "apps/videos_app.h"
 #include "apps/tutorial_app.h"
 #include "apps/safe_area_app.h"
 #include "apps/settings_menu_app.h"
@@ -70,6 +72,7 @@
 #include "widgets/app.h"
 #include "services/uploads.h"
 #include "services/background_network.h"
+#include "services/peripheral_reservation.h"
 #include "apps/mp3_menu_app.h"
 #include "core/audio_dsp.h"
 #include "services/media_volume.h"
@@ -152,6 +155,7 @@ static bool s_provisioningComplete = false;
 static services::audio::Mp3Player* s_devMp3=nullptr;
 
 struct SdUploadState {
+  std::unique_ptr<UploadQueue::FileMutation> mutation;
   bool active = false;
   char path[kSdPathCap] = {};
   uint32_t expectedSize = 0;
@@ -166,7 +170,6 @@ static uint8_t s_sdRxBuf[kSdRxChunk];
 
 struct SdDownloadState {
   bool active = false;
-  bool backgroundPaused = false;
   char path[kSdPathCap] = {};
   uint32_t size = 0;
   uint32_t sent = 0;
@@ -185,6 +188,7 @@ struct MicTuneRecordState {
 };
 
 static SdDownloadState s_sdDownload;
+static services::background_network::PeripheralReservation s_sdDownloadReservation;
 static MicTuneRecordState* s_micTuneRecord = nullptr;
 
 static bool schedule(EventType type, int16_t delta, uint32_t dueMs) {
@@ -328,7 +332,7 @@ static void printHelp() {
   Serial.println("  wifi qrfail jobqueue|resultqueue|task|off  one-shot idle startup fault");
 #endif
   Serial.println("  backend status     show backend URL");
-  Serial.println("  backend set URL    persist backend URL");
+  Serial.println("  backend set URL    set URL (persistent only in dev mode)");
   Serial.println("  backend mode dev|prod  same as Settings > Server");
   Serial.println("  api status         show API key state");
   Serial.println("  api set KEY        persist API key");
@@ -339,6 +343,7 @@ static void printHelp() {
   Serial.println("  ota channel NAME   select public/private/staging using normal access checks");
   Serial.println("  queue status       show upload order, attempts, turn, and cooldown");
   Serial.println("  queue enqueue image|audio /upload_queue/test-NAME  enqueue retained test media");
+  Serial.println("  queue enqueue video /videos/test-NAME.avi         enqueue retained video fixture");
   Serial.println("  queue clear        clear live upload queue + persisted manifest");
   Serial.println("  provision begin    enter boot-time provisioning mode");
   Serial.println("  provision done     leave boot-time provisioning mode");
@@ -1782,12 +1787,6 @@ static size_t base64Encode(const uint8_t* src, size_t len, char* out, size_t out
   return oi;
 }
 
-static void resumeSdDownloadBackground() {
-  if (!s_sdDownload.backgroundPaused) return;
-  s_sdDownload.backgroundPaused = false;
-  services::background_network::resumeAfterPeripheralIo();
-}
-
 static void finishSdDownload(const char* error = nullptr) {
   if (s_sdDownload.file) {
     hal::bus::lockSpi();
@@ -1802,7 +1801,7 @@ static void finishSdDownload(const char* error = nullptr) {
                   (unsigned long)s_sdDownload.sent,
                   (unsigned long)~s_sdDownload.crc, s_sdDownload.path);
   }
-  resumeSdDownloadBackground();
+  s_sdDownloadReservation.release();
   s_sdDownload = SdDownloadState();
 }
 
@@ -1812,31 +1811,45 @@ static void pumpSdDownload() {
   uint8_t raw[kRawChunk];
   char encoded[((kRawChunk + 2) / 3) * 4 + 1];
 
-  for (int burst = 0; burst < 4 && s_sdDownload.active; ++burst) {
-    const uint32_t remaining = s_sdDownload.size - s_sdDownload.sent;
-    if (remaining == 0) {
-      finishSdDownload();
-      return;
-    }
-    const size_t wanted = remaining < sizeof(raw) ? (size_t)remaining : sizeof(raw);
-    hal::bus::lockSpi();
-    const int got = s_sdDownload.file.read(raw, wanted);
-    hal::bus::unlockSpi();
-    if (got <= 0) {
-      finishSdDownload("read");
-      return;
-    }
-    const size_t encodedLen = base64Encode(raw, (size_t)got, encoded, sizeof(encoded));
-    if (encodedLen == 0) {
-      finishSdDownload("encode");
-      return;
-    }
-    const uint32_t offset = s_sdDownload.sent;
-    s_sdDownload.crc = crc32UpdateRaw(s_sdDownload.crc, raw, (size_t)got);
-    s_sdDownload.sent += (uint32_t)got;
-    Serial.printf("SDGET DATA offset=%lu bytes=%d %s\n",
-                  (unsigned long)offset, got, encoded);
+  // One checked packet per UI tick: slow/disconnected hosts cannot consume
+  // four consecutive timeout budgets or silently truncate the data stream.
+  const uint32_t remaining = s_sdDownload.size - s_sdDownload.sent;
+  if (remaining == 0) {
+    finishSdDownload();
+    return;
   }
+  const size_t wanted = remaining < sizeof(raw) ? (size_t)remaining : sizeof(raw);
+  hal::bus::lockSpi();
+  const int got = s_sdDownload.file.read(raw, wanted);
+  hal::bus::unlockSpi();
+  if (got <= 0) {
+    finishSdDownload("read");
+    return;
+  }
+  const size_t encodedLen = base64Encode(raw, (size_t)got, encoded, sizeof(encoded));
+  if (encodedLen == 0) {
+    finishSdDownload("encode");
+    return;
+  }
+  const uint32_t offset = s_sdDownload.sent;
+  char packet[sizeof(encoded) + 64];
+  const int length = snprintf(packet, sizeof(packet), "SDGET DATA offset=%lu bytes=%d %s\n",
+                              (unsigned long)offset, got, encoded);
+#if defined(ARDUINO_USB_CDC_ON_BOOT)
+  Serial.setTxTimeoutMs(100);
+#endif
+  const bool delivered = length > 0 && size_t(length) < sizeof(packet) &&
+      Serial.write(reinterpret_cast<const uint8_t*>(packet), size_t(length)) == size_t(length);
+#if defined(ARDUINO_USB_CDC_ON_BOOT)
+  Serial.setTxTimeoutMs(5);
+#endif
+  if (!delivered) {
+    Serial.println(); // Terminate a partial packet before the error record.
+    finishSdDownload("transmit");
+    return;
+  }
+  s_sdDownload.crc = crc32UpdateRaw(s_sdDownload.crc, raw, (size_t)got);
+  s_sdDownload.sent += (uint32_t)got;
 }
 
 static bool startSdDownload(const char* path) {
@@ -1849,11 +1862,11 @@ static bool startSdDownload(const char* path) {
     Serial.println("SDGET ERR reason=args_or_sd");
     return true;
   }
-  if (!services::background_network::suspendForPeripheralIo(5000)) {
+  if (s_sdDownloadReservation.acquire(true,5000) !=
+      services::background_network::PeripheralReservation::Result::Acquired) {
     Serial.println("SDGET ERR reason=background_busy");
     return true;
   }
-  s_sdDownload.backgroundPaused = true;
 
   hal::bus::lockSpi();
   File file = SD.open(path, FILE_READ);
@@ -1865,7 +1878,7 @@ static bool startSdDownload(const char* path) {
       file.close();
       hal::bus::unlockSpi();
     }
-    resumeSdDownloadBackground();
+    s_sdDownloadReservation.release();
     s_sdDownload = SdDownloadState();
     Serial.println("SDGET ERR reason=open_or_size");
     return true;
@@ -2057,6 +2070,9 @@ static bool startSdUpload(const char* path, uint32_t size, uint32_t crc) {
     Serial.println("SDPUT ERR args");
     return true;
   }
+  if (!services::uploads::ensureInit()) {Serial.println("SDPUT ERR queue_unavailable");return true;}
+  std::unique_ptr<UploadQueue::FileMutation> mutation(new(std::nothrow) UploadQueue::FileMutation(services::uploads::queue(),path,false));
+  if (!mutation || !mutation->ready()) {Serial.println("SDPUT ERR queued_media_or_busy");return true;}
   if (!ensureParentDirs(path)) {
     Serial.println("SDPUT ERR mkdir");
     return true;
@@ -2072,6 +2088,7 @@ static bool startSdUpload(const char* path, uint32_t size, uint32_t crc) {
   }
 
   s_sdUpload = SdUploadState();
+  s_sdUpload.mutation=std::move(mutation);
   s_sdUpload.active = true;
   copyLine(s_sdUpload.path, sizeof(s_sdUpload.path), path);
   s_sdUpload.expectedSize = size;
@@ -2093,6 +2110,9 @@ static bool handleSdCommand(const char* rawLine) {
       Serial.println("SDCLEAR ERR args");
       return true;
     }
+    if (!services::uploads::ensureInit()) {Serial.println("SDCLEAR ERR queue_unavailable");return true;}
+    UploadQueue::FileMutation mutation(services::uploads::queue(),line,true);
+    if (!mutation.ready()) {Serial.println("SDCLEAR ERR queued_media_or_busy");return true;}
     const bool ok = clearDirContents(line);
     Serial.printf("SDCLEAR %s %s\n", ok ? "OK" : "ERR", line);
     return true;
@@ -3285,6 +3305,11 @@ static void handleLine(char* line, uint32_t nowMs) {
     TFT_eSprite& frame = hal::display::canvas();
     if(NavHandler::instance().top()==&apps::camera_menu::app)
       Serial.printf("[morning-frame] camera-composite=%u\n",apps::camera_menu::copyPreviewForDevelopment(frame));
+    if(NavHandler::instance().top()==&apps::videos::app) {
+      const bool copied=apps::videos::copyPreviewForDevelopment(frame);
+      Serial.printf("[morning-frame] video-composite=%u\n",copied);
+      if (!copied) {Serial.println("[morning-frame] aborted");return;}
+    }
     static constexpr char hex[] = "0123456789abcdef";
     char row[1152]; // prefix + at most 280 RGB565 pixels + newline
     if (frame.width() <= 0 || frame.width() > 280) return;
@@ -3432,8 +3457,8 @@ static void handleLine(char* line, uint32_t nowMs) {
   if (strncmp(line, "queue enqueue ", 14) == 0) {
     char type[8] = {}, path[96] = {}, extra = 0;
     const bool valid = sscanf(line + 14, "%7s %95s %c", type, path, &extra) == 2 &&
-        (!strcmp(type, "image") || !strcmp(type, "audio")) &&
-        !strncmp(path, "/upload_queue/test-", 19) && !strstr(path, "..");
+        (((!strcmp(type, "image") || !strcmp(type, "audio")) && !strncmp(path, "/upload_queue/test-", 19)) ||
+         (!strcmp(type,"video") && !strncmp(path,"/videos/test-",13))) && !strstr(path, "..");
     if (!valid || !services::uploads::ensureInit()) {
       Serial.println("QUEUE ENQUEUE ERR args_or_storage");
       return;
@@ -3441,7 +3466,7 @@ static void handleLine(char* line, uint32_t nowMs) {
     // Development adapter only: normal queue persistence, admission and worker.
     // Keep synthetic files on SD for integrity checks and retry/reboot fixtures.
     const bool ok = services::uploads::queue().enqueue(type, path,
-        !strcmp(type, "image") ? "image/jpeg" : "audio/wav", false);
+        !strcmp(type, "image") ? "image/jpeg" : !strcmp(type,"video") ? "video/x-msvideo" : "audio/wav", false);
     Serial.printf("QUEUE ENQUEUE %s\n", ok ? "OK" : "ERR");
     return;
   }
@@ -3707,12 +3732,42 @@ static void handleLine(char* line, uint32_t nowMs) {
     apps::photos::dumpStatus(Serial);
     return;
   }
+  if (strcmp(line, "videos open") == 0) {
+    services::notifyUserActivity();
+    NavHandler::instance().open(&apps::videos::app);
+    return;
+  }
+  if (strcmp(line, "videos files") == 0) {
+    // Read-only local retrieval aid. Never sync or modify recorded media.
+    constexpr int capacity = 192, pathBytes = 64;
+    auto* paths = static_cast<char*>(heap_caps_malloc(capacity * pathBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!paths) { Serial.println("[video-files] error=memory"); return; }
+    const int count = hal::sd::listFiles("/videos", "", paths, capacity, pathBytes);
+    for (int i = 0; i < count; ++i) {
+      size_t bytes = 0; uint32_t modified = 0;
+      const char* path = paths + i * pathBytes;
+      if (hal::sd::fileInfo(path, bytes, modified))
+        Serial.printf("[video-file] path=%s bytes=%u modified=%lu\n", path, (unsigned)bytes, (unsigned long)modified);
+    }
+    heap_caps_free(paths);
+    Serial.printf("[video-files] end count=%d capped=%d\n", count, count == capacity);
+    return;
+  }
+  if (strcmp(line, "videos status") == 0) {
+    apps::videos::dumpStatus(Serial);
+    return;
+  }
   if (strcmp(line, "camera open") == 0) {
     services::notifyUserActivity();
     if (NavHandler::instance().top() != &apps::camera_menu::app) {
       NavHandler::instance().push(&apps::camera_menu::app);
     }
     Serial.println("[camera-settle] OPEN");
+    return;
+  }
+  if (strcmp(line, "camera audio-test") == 0) {
+    services::notifyUserActivity();
+    Serial.printf("[camera-audio] accepted=%d\n", apps::camera_menu::runAudioTrial());
     return;
   }
   if (strncmp(line, "camera settle ", 14) == 0) {

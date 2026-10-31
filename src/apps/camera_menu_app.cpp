@@ -51,6 +51,9 @@
  */
 
 #include "apps/camera_menu_app.h"
+#if defined(ORIGAMI_ASYNC_CAMERA_PREVIEW)
+#include "services/camera_preview_decode.h"
+#endif
 #include "apps/tutorial_app.h"
 #include "ui/safe_area_draw.h"
 #include "services/camera_snapshot.h"
@@ -72,6 +75,7 @@
 #include "core/usage_events.h"
 #include "hal/hal_camera.h"
 #include "services/camera_session.h"
+#include "services/video_recording.h"
 #include "hal/hal_input.h"
 #include "hal/hal_sd.h"
 #include "nav_handler.h"
@@ -119,6 +123,59 @@ static uint32_t    s_lastCaptureSeq   = 0;
 static char        s_lastCaptureLabel[28] = {0};  // "#N  DD/MM  HH:MM:SS"
 static uint32_t    s_captureInfoMs    = 0;        // millis() when last capture finished
 static services::camera::Session s_camera;
+static services::camera::VideoRecording s_video;
+#if defined(ORIGAMI_ASYNC_CAMERA_PREVIEW)
+static services::camera::PreviewDecode s_previewDecode;
+static uint64_t s_previewSubmittedUs=0;
+#endif
+static constexpr int kDefaultShootMode = 0;
+// Video has a sustained SD/decoder bandwidth budget. QR and still photos retain
+// their existing HAL quality defaults; this value applies only to video mode.
+static constexpr int kVideoJpegQuality = 12;
+static constexpr int kHdVideoJpegQuality = 16;
+static int s_shootMode = kDefaultShootMode;
+static const char* const kShootLabels[] = {"Photo", "Video silent", "Video + mic"};
+static constexpr int kShootModes = sizeof(kShootLabels) / sizeof(kShootLabels[0]);
+static bool s_videoPending = false, s_videoStopping = false;
+static uint32_t s_videoStartedMs = 0, s_videoPreviewMs = 0;
+static uint32_t s_videoNoticeMs = 0;
+static char s_videoNotice[32]{};
+// UI-task shutter gesture. HAL still owns debouncing and A+B chord detection.
+static constexpr uint32_t kVideoHoldMs = 1200;
+static bool s_shutterArmed = false, s_shutterSkipTap = false, s_quickVideo = false;
+static uint32_t s_shutterPressedMs = 0;
+static void camFinishQuickVideo() {
+  if (s_quickVideo) s_shootMode = kDefaultShootMode;
+  s_quickVideo = false;
+  s_shutterArmed = false;
+}
+
+// UI-owned pipeline measurements; sensor timestamps distinguish acquisition
+// cadence from the recording submission gate and display work.
+static struct VideoPerf {
+  uint32_t reads=0, unique=0, previews=0, maxReadUs=0, maxPreviewUs=0, maxBytes=0;
+  uint64_t readUs=0, previewUs=0, firstSensorUs=0, lastSensorUs=0;
+} s_videoPerf;
+
+static bool camVideoHd();
+
+static const char* camVideoLabel() {
+  using State = services::camera::VideoRecording::State;
+  static char label[32];
+  const auto state = s_video.state();
+  if (state == State::Starting) return "STARTING VIDEO";
+  if (s_videoStopping || state == State::Finishing) return "SAVING VIDEO";
+  if (state == State::Recording) {
+    const uint32_t seconds = (millis() - s_videoStartedMs) / 1000;
+    snprintf(label, sizeof(label), "REC %02lu:%02lu  B: STOP",
+             (unsigned long)(seconds / 60), (unsigned long)(seconds % 60));
+    return label;
+  }
+  if (s_videoNoticeMs && millis() - s_videoNoticeMs < 4000) return s_videoNotice;
+  if (!s_shootMode) return nullptr;
+  snprintf(label,sizeof(label),"%s %s  B: REC",camVideoHd()?"720p":"VGA",s_shootMode==2?"+ MIC":"SILENT");
+  return label;
+}
 static uint32_t    s_lastFrameMs  = 0;
 static bool s_tutorialRequested=false,s_tutorialCapture=false;
 static services::photos::Target s_tutorialPhoto;
@@ -135,6 +192,14 @@ static uint32_t    s_vgaShot = 0;
 static uint32_t    s_previewSamples = 0;
 static uint64_t    s_previewWindowUs = 0;
 static uint32_t    s_previewWindowFrames = 0;
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+// One bounded presentation window; no per-frame serial traffic. DMA timestamps
+// measure driver-to-display age, not optical exposure or glass-to-glass latency.
+static struct {
+  uint64_t decodeUs=0, blitUs=0, ageUs=0, gapUs=0, lastPresentedUs=0, lastDmaUs=0;
+  uint32_t ageSamples=0, repeatedDma=0, maxAgeUs=0, maxGapUs=0;
+} s_previewTiming;
+#endif
 static uint32_t    s_teWaitUs = 0;
 static uint32_t    s_teMisses = 0;
 static uint32_t    s_previewMaxUs = 0;
@@ -171,6 +236,12 @@ static ui::ListView  s_manualList;
 static int           s_readmeScroll    = 0;
 static bool          s_readmeNeedsRedraw = false;
 static services::camera::Settings s_settings;
+// Video supports VGA and HD; higher still-photo presets use the explicitly
+// displayed HD video setting without changing the saved photo preference.
+static bool camVideoHd() { return s_settings.capture != CR_VGA; }
+static int camVideoQuality() {
+  return !s_shootMode ? -1 : s_continuousVga && camVideoHd() ? kHdVideoJpegQuality : kVideoJpegQuality;
+}
 
 static const char* kWbModeLabels[5] = {"Auto", "Sunny", "Cloudy", "Office", "Home"};
 static const char* kGainLabels[4] = {"2X", "4X", "8X", "16X"};
@@ -181,7 +252,17 @@ static int clampInt(int v, int lo, int hi) {
   return v;
 }
 
-static int sPreviewFrameSize() { return s_continuousVga ? FRAMESIZE_VGA : FRAMESIZE_QVGA; }
+static int sPreviewFrameSize() {
+  if (s_shootMode && s_continuousVga && camVideoHd()) return FRAMESIZE_HD;
+  return s_continuousVga ? FRAMESIZE_VGA : FRAMESIZE_QVGA;
+}
+
+static int sPreviewPixelFormat() {
+#if defined(ORIGAMI_RGB_PREVIEW_TRIAL)
+  if (s_shootMode && !s_continuousVga && s_cameraPreview.hasSurfaces()) return PIXFORMAT_RGB565;
+#endif
+  return PIXFORMAT_JPEG;
+}
 
 static void camReleaseDecoder() { s_cameraPreview.closeDecoder(); }
 
@@ -201,14 +282,25 @@ static void camPreparePreviewBuffers() {
     Serial.println("[camera-vga] no preview scratch memory; using cold capture");
     return;
   }
-  s_continuousVga = s_settings.capture == CR_VGA;
+  // Video framing only needs the display-sized stream. Recording explicitly
+  // switches to VGA before starting its writer/microphone session.
+  s_continuousVga = !s_shootMode && s_settings.capture == CR_VGA;
 }
 
 
-// Allocate AFTER camera init so its DMA buffers get first claim on internal RAM.
+// Allocate the synchronous codec after camera DMA setup. The experimental
+// worker may already own its codec; do not allocate a second one on restart.
 // Fallback preserves camera operation when the remaining heap is fragmented.
 static bool camPrepareDecoder() {
-  return s_cameraPreview.prepareDecoder();
+  if (sPreviewPixelFormat()==PIXFORMAT_RGB565) {s_cameraPreview.closeDecoder();return true;}
+#if (defined(ORIGAMI_VIDEO_HD_TRIAL) && !defined(ORIGAMI_VIDEO_HD_PREVIEW_TRIAL)) || defined(ORIGAMI_VIDEO_CAPTURE_ONLY_TRIAL)
+  if (s_shootMode && s_continuousVga) return true; // Capture-only benchmark.
+#endif
+#if defined(ORIGAMI_ASYNC_CAMERA_PREVIEW)
+  if (s_previewDecode.active()) return true;
+#endif
+  if (s_shootMode && s_continuousVga && camVideoHd()) return s_cameraPreview.prepareDecoder(true,false,true);
+  return s_cameraPreview.prepareDecoder(false, s_continuousVga);
 }
 
 // --- Viewfinder overlay ----------------------------------------------------
@@ -255,11 +347,14 @@ static void camPublishViewfinderScene(bool renderNow) {
 static void camDrawViewfinderOverlay(bool force) {
   if (s_cameraPreview.hasSurfaces()) return;
   const bool showCapture = s_captureInfoMs && (millis() - s_captureInfoMs < 3000u);
-  if (!force && !showCapture && s_lastModeDrawn == (int)s_settings.mode) return;
+  const char* videoLabel = camVideoLabel();
+  if (!force && !videoLabel && !showCapture && s_lastModeDrawn == (int)s_settings.mode) return;
 
   char modeLabel[28];
   const char* label;
-  if (showCapture) {
+  if (videoLabel) {
+    label = videoLabel;
+  } else if (showCapture) {
     label = s_lastCaptureLabel;
   } else {
     snprintf(modeLabel, sizeof(modeLabel), "%s", kModeLabels[(int)s_settings.mode]);
@@ -292,7 +387,8 @@ static void camPresentPhotographer() {
  const uint32_t now=millis();
  const unsigned age=std::min(999u,(unsigned)(now-s_cameraStageAt));
  const int pulseAge=s_cameraPulseAt && now-s_cameraPulseAt<140u ? int(now-s_cameraPulseAt) : -1;
- const auto presented=s_cameraPreview.present(s_cameraStage*1000+age,pulseAge,s_tutorialCapture);
+ const auto presented=s_cameraPreview.present(s_cameraStage*1000+age,pulseAge,
+     s_tutorialCapture ? nullptr : (!s_shootMode && !s_cameraStage ? (s_shutterArmed && now-s_shutterPressedMs>=300u ? "HOLD B FOR VIDEO" : "B: PHOTO / HOLD: VIDEO") : camVideoLabel()), s_video.busy(), s_tutorialCapture);
  if(presented.syncMissed)++s_teMisses;
  s_teWaitUs=presented.syncWaitUs;
  s_cameraAnimationAt=now;
@@ -310,16 +406,17 @@ static bool camPreviewShouldAbort(void* context) {
   lastInputMs = now;
   // Sample/enqueue only; never dispatch navigation while decoding a held frame.
   hal::input::service(now);
-  return hal::input::buttonADown() || hal::input::buttonBDown() || hal::input::buttonCDown();
+  return hal::input::buttonADown() || (hal::input::buttonBDown() && !s_shutterArmed && !s_shutterSkipTap) || hal::input::buttonCDown();
 }
 
-static bool camDrawVgaJpeg(const uint8_t* data, size_t len, bool interruptible = false) {
+static bool camDrawPreview(const uint8_t* data, size_t len, bool interruptible = false, bool fit = false, bool rawRgb565 = false) {
   s_previewInterrupted = false;
-  if (!s_cameraPreview.ready() || len > INT32_MAX) return false;
+  if (!(rawRgb565 ? s_cameraPreview.hasSurfaces() : s_cameraPreview.ready()) || len > INT32_MAX) return false;
   const uint64_t startUs = esp_timer_get_time();
   uint32_t lastInputMs = millis();
-  const auto result = s_cameraPreview.decode(data, len,
-      interruptible ? camPreviewShouldAbort : nullptr, &lastInputMs);
+  const auto result = rawRgb565
+      ? s_cameraPreview.copyRgb565(data,len,interruptible ? camPreviewShouldAbort : nullptr,&lastInputMs)
+      : s_cameraPreview.decode(data,len,interruptible ? camPreviewShouldAbort : nullptr,&lastInputMs,fit);
   s_previewInterrupted = result == ui::CameraPreview::Result::Interrupted;
   if (result != ui::CameraPreview::Result::Decoded) return false;
   const uint64_t decodedUs = esp_timer_get_time();
@@ -330,17 +427,42 @@ static bool camDrawVgaJpeg(const uint8_t* data, size_t len, bool interruptible =
   return true;
 }
 
-static bool camRenderJpeg(const hal::camera::CameraFrame& fb) {
-  if (fb.format != PIXFORMAT_JPEG) return false;
-  if (s_cameraPreview.ready()) {
+static bool camRenderFrame(const hal::camera::CameraFrame& fb) {
+  const bool raw=fb.format==PIXFORMAT_RGB565 && fb.width==320 && fb.height==240;
+  if (fb.format!=PIXFORMAT_JPEG && !raw) return false;
+  if (raw && !s_cameraPreview.hasSurfaces()) return false;
+  if (raw || s_cameraPreview.ready()) {
     const uint64_t startUs = esp_timer_get_time();
-    if (!s_previewWindowUs) s_previewWindowUs = startUs;
+    if (!s_previewWindowUs) {
+      s_previewWindowUs = startUs;
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+      s_previewTiming = {};
+#endif
+    }
     s_previewInterrupted = false;
     if (fb.buf && fb.len &&
-        camDrawVgaJpeg(fb.buf, fb.len, true)) {
+        camDrawPreview(fb.buf, fb.len, true, fb.width == 1280 && fb.height == 720, raw)) {
       const uint32_t elapsedUs = (uint32_t)(esp_timer_get_time() - startUs);
       if (elapsedUs > s_previewMaxUs) s_previewMaxUs = elapsedUs;
       ++s_previewSamples;
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+      const uint64_t presentedUs=esp_timer_get_time();
+      auto& timing=s_previewTiming;
+      timing.decodeUs+=s_decodeUs;timing.blitUs+=s_blitUs;
+      if (timing.lastPresentedUs) {
+        const uint64_t gap=presentedUs-timing.lastPresentedUs;
+        timing.gapUs+=gap;
+        timing.maxGapUs=std::max(timing.maxGapUs,uint32_t(std::min(gap,uint64_t(UINT32_MAX))));
+      }
+      timing.lastPresentedUs=presentedUs;
+      if (fb.dmaStartUs && fb.dmaStartUs<=presentedUs) {
+        const uint64_t age=presentedUs-fb.dmaStartUs;
+        timing.ageUs+=age;++timing.ageSamples;
+        timing.maxAgeUs=std::max(timing.maxAgeUs,uint32_t(std::min(age,uint64_t(UINT32_MAX))));
+        if (fb.dmaStartUs==timing.lastDmaUs) ++timing.repeatedDma;
+        timing.lastDmaUs=fb.dmaStartUs;
+      }
+#endif
       if (++s_previewWindowFrames == 60) {
         const uint64_t nowUs = esp_timer_get_time();
         const double fps = 60000000.0 / (double)(nowUs - s_previewWindowUs);
@@ -348,6 +470,16 @@ static bool camRenderJpeg(const hal::camera::CameraFrame& fb) {
                       (unsigned long)s_previewSamples, (unsigned long)s_previewMaxUs,
                       (unsigned long)s_decodeUs, (unsigned long)s_fitUs, (unsigned long)s_blitUs,
                       fps, (unsigned long)s_teWaitUs, (unsigned long)s_teMisses);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+        Serial.printf("[camera-preview-timing] mode=%s frames=60 decode_mean_us=%llu blit_mean_us=%llu gap_mean_us=%llu gap_max_us=%lu dma_age_samples=%lu dma_age_mean_us=%llu dma_age_max_us=%lu repeated_dma=%lu\n",
+            s_videoPending ? "recording" : "idle",
+            (unsigned long long)(timing.decodeUs/60), (unsigned long long)(timing.blitUs/60),
+            (unsigned long long)(timing.gapUs/59), (unsigned long)timing.maxGapUs,
+            (unsigned long)timing.ageSamples,
+            (unsigned long long)(timing.ageSamples ? timing.ageUs/timing.ageSamples : 0),
+            (unsigned long)timing.maxAgeUs, (unsigned long)timing.repeatedDma);
+        timing = {};
+#endif
         s_previewWindowUs = nowUs;
         s_previewWindowFrames = 0;
       }
@@ -444,13 +576,19 @@ static bool camPrepareViewfinderConsumer() {
   return true;
 }
 
+static hal::camera::Tuning camPreviewTuning() {
+  auto tuning=s_settings.tuning();
+  tuning.allowNightMode=s_shootMode==0;
+  return tuning;
+}
+
 static bool camStartViewfinder() {
   LOGI("camera", "viewfinder requested");
   camStatusMsg[0] = 0;
   if (!camStopWifiForCamera(false)) return false;
   camPreparePreviewBuffers();
-  const hal::camera::Tuning tuning = s_settings.tuning();
-  if (!s_camera.openPreview(sPreviewFrameSize(), tuning, camPrepareViewfinderConsumer)) {
+  const hal::camera::Tuning tuning = camPreviewTuning();
+  if (!s_camera.openPreview(sPreviewFrameSize(), tuning, camPrepareViewfinderConsumer, camVideoQuality(), sPreviewPixelFormat())) {
     camReleasePreviewBuffers();
     snprintf(camStatusMsg, sizeof(camStatusMsg), "Camera init failed");
     LOGE("camera", "viewfinder init failed");
@@ -481,8 +619,53 @@ static bool camStartViewfinder() {
   return true;
 }
 
+// Report terminal recordings from both normal Stop and workflow teardown.
+// Caller has observed completion or close() has acknowledged all workers.
+static void camReportVideoResult() {
+  const bool saved = s_video.state() == services::camera::VideoRecording::State::Saved;
+  Serial.printf("[video] %s path=%s frames=%lu dropped=%lu\n", saved ? "saved" : "failed",
+      s_video.path(), (unsigned long)s_video.frames(), (unsigned long)s_video.dropped());
+  if (!saved) Serial.printf("[video-error] %s\n", s_video.error());
+  const auto submitted=s_video.submissionStats();
+  const auto writer=s_video.writerStats();
+  Serial.printf("[video-write] jpeg_chunks=%lu jpeg_bytes=%lu repeated_chunks=%lu repeated_bytes=%lu pcm_bytes=%lu chunk_ms=%lu max_chunk_ms=%lu\n",
+      (unsigned long)writer.jpegChunks,(unsigned long)writer.jpegBytes,
+      (unsigned long)writer.repeatedJpegChunks,(unsigned long)writer.repeatedJpegBytes,
+      (unsigned long)writer.pcmBytes,(unsigned long)writer.chunkWriteMs,(unsigned long)writer.maxChunkWriteMs);
+  Serial.printf("[video-submit] accepted=%lu queue_full=%lu oversized=%lu invalid=%lu max_queued=%lu\n",
+      (unsigned long)submitted.accepted, (unsigned long)submitted.queueFull,
+      (unsigned long)submitted.oversized, (unsigned long)submitted.invalid,
+      (unsigned long)submitted.maxQueued);
+  Serial.printf("[video-audio] samples=%lu repeated=%lu\n",
+      (unsigned long)s_video.audioSamples(), (unsigned long)s_video.repeatedFrames());
+  const auto captured=s_video.captureStats();
+  s_videoPerf.reads=captured.reads;s_videoPerf.unique=captured.unique;
+  s_videoPerf.readUs=captured.readUs;s_videoPerf.maxReadUs=captured.maxReadUs;
+  s_videoPerf.maxBytes=captured.maxBytes;s_videoPerf.firstSensorUs=captured.firstSensorUs;
+  s_videoPerf.lastSensorUs=captured.lastSensorUs;
+  Serial.printf("[video-perf] reads=%lu unique=%lu sensor_span_us=%llu read_us=%llu read_max_us=%lu previews=%lu preview_us=%llu preview_max_us=%lu jpeg_max_bytes=%lu\n",
+      (unsigned long)s_videoPerf.reads, (unsigned long)s_videoPerf.unique,
+      (unsigned long long)(s_videoPerf.lastSensorUs-s_videoPerf.firstSensorUs),
+      (unsigned long long)s_videoPerf.readUs, (unsigned long)s_videoPerf.maxReadUs,
+      (unsigned long)s_videoPerf.previews, (unsigned long long)s_videoPerf.previewUs,
+      (unsigned long)s_videoPerf.maxPreviewUs, (unsigned long)s_videoPerf.maxBytes);
+}
+
 static void camStopViewfinder() {
+#if defined(ORIGAMI_ASYNC_CAMERA_PREVIEW)
+  s_previewDecode.close();
+#endif
+  // Retain camera/background admission until SD has drained and closed.
+  s_video.close();
+  camFinishQuickVideo();
+  s_shutterSkipTap = false;
+  if (s_videoPending) camReportVideoResult();
+  s_videoPending = s_videoStopping = false;
+  NavHandler::instance().runtimePolicyChanged();
   hal::display::exitOptimizedRender();
+  // The direct camera surface replaced the panel, including the clock strip.
+  // Settings must repaint cached chrome even when its values/color are unchanged.
+  NavHandler::instance().invalidateChrome();
   s_camera.stop();
   camReleasePreviewBuffers();
   delay(100);
@@ -493,8 +676,8 @@ static bool camRestorePreviewAfterCapture(uint32_t settleMs) {
   s_cameraStage=0;s_cameraPulseAt=0;
   s_reviewActive = false;
   camReleaseDecoder();
-  const hal::camera::Tuning tuning = s_settings.tuning();
-  if (!s_camera.restartPreview(sPreviewFrameSize(), tuning, settleMs, camPrepareDecoder)) {
+  const hal::camera::Tuning tuning = camPreviewTuning();
+  if (!s_camera.restartPreview(sPreviewFrameSize(), tuning, settleMs, camPrepareDecoder, camVideoQuality(), sPreviewPixelFormat())) {
     camReleasePreviewBuffers();
     LOGE("camera", "preview restore failed after capture");
     snprintf(camStatusMsg, sizeof(camStatusMsg), "Camera restart failed");
@@ -506,6 +689,10 @@ static bool camRestorePreviewAfterCapture(uint32_t settleMs) {
   hal::display::endDirectDraw();
   s_lastModeDrawn = -1;
   s_lastFrameMs = millis();
+  // Do not mix recording/settle time into the next live-preview FPS window.
+  s_previewWindowUs = 0;
+  s_previewWindowFrames = 0;
+  s_previewMaxUs = 0;
   return true;
 }
 
@@ -563,7 +750,7 @@ static bool camCaptureContinuousVga() {
 
   s_cameraStage=2;s_cameraStageAt=millis();s_cameraPulseAt=millis();
   camPresentPhotographer(); // Actual fresh buffer copied: one whole-screen pulse.
-  const bool rendered = camDrawVgaJpeg(snapshot.data(), bytes);
+  const bool rendered = camDrawPreview(snapshot.data(), bytes);
   camDrawReviewStatus(rendered ? "Saving..." : "Saving (no preview)");
   const uint64_t reviewUs = esp_timer_get_time();
   const auto photo = services::photos::prepare();
@@ -639,9 +826,70 @@ static bool camCaptureHighRes() {
 }
 
 // --- Capture diagnostics ---------------------------------------------------
+static bool camBeginVideo() {
+  if (s_video.busy() || s_videoPending) return false;
+#if defined(ORIGAMI_ASYNC_CAMERA_PREVIEW)
+  s_previewSubmittedUs=0;
+  if (s_cameraPreview.hasSurfaces()) {
+    s_cameraPreview.closeDecoder();
+    const bool decoding=s_previewDecode.begin();
+    if (!decoding) s_cameraPreview.prepareDecoder(false,s_continuousVga);
+    Serial.printf("[camera-preview-worker] started=%u\n", decoding?1u:0u);
+  }
+#endif
+  // Reconfigure within the existing camera reservation, before the microphone
+  // starts. Never label QVGA payload as the selected recording size if restart fails.
+  if (!s_continuousVga) {
+    s_continuousVga = true;
+    if (!camRestorePreviewAfterCapture(700)) {
+#if defined(ORIGAMI_ASYNC_CAMERA_PREVIEW)
+      s_previewDecode.close();
+#endif
+      return false;
+    }
+  }
+  s_videoPerf = {};
+  s_reviewActive = false;
+  s_cameraStage = 0;
+  s_videoStartedMs = millis();
+  s_videoPreviewMs = 0;
+  s_videoStopping = false;
+  s_videoPending = true;
+  NavHandler::instance().runtimePolicyChanged();
+  const uint16_t width = camVideoHd() ? 1280 : 640;
+  const uint16_t height = camVideoHd() ? 720 : 480;
+#if defined(ORIGAMI_VIDEO_CAPTURE_ONLY_TRIAL)
+  camDrawReviewStatus("Recording - B to stop");
+  bool started=s_video.beginCamera(s_camera, width, height, s_shootMode == 2, false);
+#else
+  bool started=s_video.beginCamera(s_camera, width, height, s_shootMode == 2);
+#endif
+#if defined(ORIGAMI_ASYNC_CAMERA_PREVIEW)
+  if (!started && s_previewDecode.active()) {
+    // Optional acceleration must not consume memory needed to record. The
+    // failed begin has joined its workers; release acceleration and retry once.
+    s_previewDecode.close();
+    s_cameraPreview.prepareDecoder(false,true);
+    Serial.println("[camera-preview-worker] recording retry without acceleration");
+    started=s_video.beginCamera(s_camera, width, height, s_shootMode == 2);
+  }
+#endif
+  return started;
+}
+
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
+bool runAudioTrial() {
+  if (NavHandler::instance().top() != &app || camState != CAM_VIEWFINDER ||
+      s_video.busy() || s_videoPending) return false;
+  // Keep the ordinary Camera reservation and VGA preview during this trial.
+  camStopViewfinder();
+  s_shootMode = 2;
+  if (!camStartViewfinder()) { showError(); return false; }
+  return camBeginVideo();
+}
+
 bool runSettleTrial(uint32_t runId, int discardFrames, unsigned repeat) {
-  if (NavHandler::instance().top() != &app || camState != CAM_VIEWFINDER) {
+  if (NavHandler::instance().top() != &app || camState != CAM_VIEWFINDER || s_video.busy() || s_videoPending) {
     Serial.println("[camera-settle] ERR args_or_camera_not_ready");
     return false;
   }
@@ -671,16 +919,24 @@ enum SettingsRow {
   SR_MODE = 0,
   SR_AUTOFOCUS,
   SR_CAPTURE,
+  SR_VIDEO,
   SR_MANUAL,
   SR_COUNT
 };
 
 static int settingsRowCount() {
-  return s_settings.mode == CM_MANUAL ? SR_COUNT : SR_COUNT - 1;
+  return SR_COUNT - (s_settings.mode == CM_MANUAL ? 0 : 1) -
+         (hal::camera::supportsAutofocus() ? 0 : 1);
+}
+
+// Visible indices omit autofocus when this sensor has no supported AF driver.
+static SettingsRow settingsRowAt(int index) {
+  if (!hal::camera::supportsAutofocus() && index >= SR_AUTOFOCUS) ++index;
+  return static_cast<SettingsRow>(index);
 }
 
 static void camSettingsLabel(int i, char* buf, size_t cap) {
-    switch (i) {
+    switch (settingsRowAt(i)) {
         case SR_MODE:
             snprintf(buf, cap, "Camera mode  %s", kModeLabels[(int)s_settings.mode]);
             break;
@@ -688,6 +944,10 @@ static void camSettingsLabel(int i, char* buf, size_t cap) {
             snprintf(buf, cap, "Autofocus  %s", s_settings.autofocus ? "ON" : "OFF");
             break;
         case SR_CAPTURE: {
+            if (s_shootMode) {
+                snprintf(buf,cap,"Capture  %s",camVideoHd()?"HD (720p)":"VGA (480p)");
+                break;
+            }
             const CapturePreset maxAllowed = services::camera::maxCaptureResolution();
             if ((int)s_settings.capture > (int)maxAllowed)
                 snprintf(buf, cap, "Capture  %s (!mem)", services::camera::captureLabel(s_settings.capture));
@@ -698,6 +958,9 @@ static void camSettingsLabel(int i, char* buf, size_t cap) {
         case SR_MANUAL:
             snprintf(buf, cap, "Manual settings");
             break;
+        case SR_VIDEO:
+            snprintf(buf, cap, "Recording  %s", kShootLabels[s_shootMode]);
+            break;
         default: buf[0] = 0; break;
     }
 }
@@ -707,7 +970,7 @@ static ui::ListItem camSettingsItemFn(int idx, void*) {
     camSettingsLabel(idx, label, sizeof(label));
     ui::ListItem item;
     item.editing=s_editMode && idx==s_settingsSel; item.blinkOn=s_editBlink;
-    item.opensScreen = idx == SR_MANUAL;
+    item.opensScreen = settingsRowAt(idx) == SR_MANUAL;
     item.label = label;
     item.fg = kUiFg;
     return item;
@@ -971,6 +1234,8 @@ static void camEnter() {
   camPhotoCount  = 0;
   camStatusMsg[0] = 0;
   s_settings.load();
+  s_shootMode = s_tutorialCapture ? 0 : kDefaultShootMode;
+  s_videoNoticeMs = 0;
   s_lastModeDrawn   = -1;
   s_settingsSel     = 0;
   s_manualSel       = 0;
@@ -992,12 +1257,81 @@ static void camExit() {
   camState = CAM_INIT;
 }
 
+// A long press latches recording; its release must not become a stop/photo tap.
+static bool camShutterInput(hal::input::InputEvent ev) {
+  using ET = hal::input::EventType;
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  if (ev.type == ET::ButtonB_Press || ev.type == ET::ButtonB_Release || ev.type == ET::ButtonB_Tap)
+    Serial.printf("[camera-shutter] event=%u armed=%u skip=%u quick=%u busy=%u\n",
+        unsigned(ev.type),s_shutterArmed,s_shutterSkipTap,s_quickVideo,s_video.busy());
+#endif
+  if (ev.type == ET::ButtonB_Press) {
+    s_shutterSkipTap = false;
+    s_shutterArmed = camState == CAM_VIEWFINDER && !s_tutorialCapture &&
+        !s_shootMode && !s_videoPending && !s_video.busy() && !s_reviewActive;
+    s_shutterPressedMs = millis();
+  } else if (ev.type == ET::ButtonB_Release) {
+    s_shutterArmed = false;
+  } else if (ev.type == ET::ButtonA_Press || ev.type == ET::ButtonC_Press) {
+    if (s_shutterArmed) s_shutterSkipTap = true;
+    s_shutterArmed = false;
+  } else if (ev.type == ET::ButtonB_Tap) {
+    s_shutterArmed = false;
+    if (s_shutterSkipTap) { s_shutterSkipTap = false; return true; }
+  }
+  return false;
+}
+
+static void camTickShutter() {
+  if (!s_shutterArmed) return;
+  if (!hal::input::buttonBDown() || hal::input::buttonADown() || hal::input::buttonCDown()) {
+    // Cancellation cannot turn a partial chord into a photo.
+    if (hal::input::buttonADown() || hal::input::buttonCDown()) s_shutterSkipTap = true;
+    s_shutterArmed = false;
+    return;
+  }
+  if (uint32_t(millis()-s_shutterPressedMs) < kVideoHoldMs) return;
+  s_shutterArmed = false;
+  s_shutterSkipTap = true;
+  s_quickVideo = true;
+  s_shootMode = 2; // Quick video always uses the recorder's microphone processing.
+  // Even VGA Photo needs video tuning/quality applied before the worker starts.
+  s_continuousVga = false;
+  if (!camBeginVideo() && !s_videoPending) camFinishQuickVideo();
+  camPresentPhotographer();
+}
+
 static void camTick() {
   if(s_editMode && millis()-s_editBlinkMs>=450u) {
     s_editBlinkMs=millis(); s_editBlink=!s_editBlink;
     s_settingsNeedsRedraw=s_manualNeedsRedraw=true;
   }
   if (camState == CAM_VIEWFINDER) {
+    camTickShutter();
+    if (camState != CAM_VIEWFINDER) return;
+    using VideoState = services::camera::VideoRecording::State;
+    if (s_videoPending && !s_video.busy()) {
+#if defined(ORIGAMI_ASYNC_CAMERA_PREVIEW)
+      s_previewDecode.close();
+#endif
+      const bool saved = s_video.state() == VideoState::Saved;
+      snprintf(s_videoNotice, sizeof(s_videoNotice), "%s", !saved ? s_video.error() :
+          s_video.hasAudio() ? "VIDEO + MIC SAVED" : "VIDEO SAVED TO SD");
+      camReportVideoResult();
+      s_videoNoticeMs = millis();
+      s_video.close();
+      camFinishQuickVideo();
+      s_videoPending = s_videoStopping = false;
+      NavHandler::instance().runtimePolicyChanged();
+      // close() acknowledges writer/microphone completion before sensor restart.
+      // Keep the camera reservation while returning to the faster framing view.
+      s_continuousVga = false;
+      if (!camRestorePreviewAfterCapture(700)) return;
+    }
+    uint32_t videoLimit = services::camera::VideoRecording::kMaxDurationMs;
+    if (s_video.busy() && millis() - s_videoStartedMs >= videoLimit) {
+      s_video.stop(); s_videoStopping = true;
+    }
     if (s_reviewActive) {
       if ((uint32_t)(millis() - s_reviewStartMs) < s_reviewDurationMs) {
         if(s_cameraPreview.hasSurfaces() && millis()-s_cameraAnimationAt>=40u &&
@@ -1013,9 +1347,59 @@ static void camTick() {
       s_lastModeDrawn = -1;
       s_lastFrameMs = millis();
     }
+    if (s_videoPending) {
+#if (defined(ORIGAMI_VIDEO_HD_TRIAL) && !defined(ORIGAMI_VIDEO_HD_PREVIEW_TRIAL)) || defined(ORIGAMI_VIDEO_CAPTURE_ONLY_TRIAL)
+      return; // No decoding/display traffic during the capture-only benchmark.
+#endif
+#if defined(ORIGAMI_ASYNC_CAMERA_PREVIEW)
+      if (s_previewDecode.active()) {
+        services::camera::PreviewDecode::Frame decoded{};
+        const bool ready=s_previewDecode.acquire(decoded);
+        if (ready) s_cameraPreview.copyDecoded(decoded.pixels);
+        s_previewDecode.release();
+        // Queue the next decode before transferring the completed image, so
+        // CPU work on Core 0 can overlap the existing UI-owned panel transfer.
+        hal::camera::CameraFrame source{};
+        if (s_video.readPreview(&source)) {
+          if (source.dmaStartUs!=s_previewSubmittedUs &&
+              s_previewDecode.submit(source.buf,source.len,source.dmaStartUs))
+            s_previewSubmittedUs=source.dmaStartUs;
+          s_video.releasePreview();
+        }
+        if (ready) {
+          const uint64_t before=esp_timer_get_time();
+          camPresentPhotographer();s_lastFrameMs=millis();
+          const uint32_t elapsed=uint32_t(esp_timer_get_time()-before);
+          ++s_videoPerf.previews;s_videoPerf.previewUs+=elapsed;
+          s_videoPerf.maxPreviewUs=std::max(s_videoPerf.maxPreviewUs,elapsed);
+          if (s_videoPerf.previews%60==0) Serial.printf("[camera-preview-worker] frames=%lu elapsed_ms=%lu decode_us=%lu present_us=%lu age_us=%llu\n",
+              (unsigned long)s_videoPerf.previews,(unsigned long)(millis()-s_videoStartedMs),
+              (unsigned long)decoded.decodeUs,(unsigned long)elapsed,
+              (unsigned long long)(esp_timer_get_time()-decoded.sensorUs));
+        }
+        return;
+      }
+#endif
+      hal::camera::CameraFrame preview{};
+      const uint32_t now=millis();
+#if defined(ORIGAMI_REDUCED_VIDEO_DECODE_TRIAL)
+      constexpr uint32_t previewIntervalMs=33;
+#else
+      const uint32_t previewIntervalMs=camVideoHd()?200:100;
+#endif
+      if (now-s_videoPreviewMs>=previewIntervalMs && s_video.readPreview(&preview)) {
+        const uint64_t started=esp_timer_get_time();
+        if (camRenderFrame(preview)) s_lastFrameMs=now;
+        const uint32_t elapsed=uint32_t(esp_timer_get_time()-started);
+        ++s_videoPerf.previews;s_videoPerf.previewUs+=elapsed;
+        s_videoPerf.maxPreviewUs=std::max(s_videoPerf.maxPreviewUs,elapsed);
+        s_video.releasePreview();s_videoPreviewMs=now;
+      }
+      return; // Acquisition and its timeout now belong to the recording worker.
+    }
     hal::camera::CameraFrame fb;
     if (s_camera.read(&fb)) {
-      if (camRenderJpeg(fb)) s_lastFrameMs = millis();
+      if (camRenderFrame(fb)) s_lastFrameMs=millis();
       s_camera.returnFrame();
     }
     if (s_lastFrameMs && (uint32_t)(millis() - s_lastFrameMs) > 2500u) {
@@ -1030,6 +1414,7 @@ static void camTick() {
 
 void handleRotary(int steps) {
   if (steps == 0) return;
+  if (s_videoPending && s_video.hasAudio()) return; // Retain the microphone I2S route.
   sfx::play(sfx::kSfxAlarmNavigate);
   if (camState == CAM_VIEWFINDER) {
     return;
@@ -1045,7 +1430,7 @@ void handleRotary(int steps) {
     return;
   }
   if (camState == CAM_SETTINGS && s_editMode) {
-    switch (s_settingsSel) {
+    switch (settingsRowAt(s_settingsSel)) {
       case SR_MODE: {
         int v = clampInt((int)s_settings.mode + steps, 0, CM_COUNT - 1);
         s_settings.mode = (CameraMode)v;
@@ -1055,6 +1440,9 @@ void handleRotary(int steps) {
       case SR_AUTOFOCUS:
         if(abs(steps)%2) s_settings.autofocus=!s_settings.autofocus;
         break;
+      case SR_VIDEO:
+        s_shootMode = ((s_shootMode + steps) % kShootModes + kShootModes) % kShootModes;
+        break;
       case SR_CAPTURE: {
         // Allow the user to scroll to any preset. The "(low mem)" tag in the row label warns when
         // the current selection might not fit, and `camCaptureHighRes()` falls back to HD at
@@ -1062,7 +1450,8 @@ void handleRotary(int steps) {
         // made the rotary feel dead at low PSRAM — looked like settings were broken.)
         int v = (int)s_settings.capture + steps;
         if (v < 0) v = 0;
-        if (v > CR_COUNT - 1) v = CR_COUNT - 1;
+        const int maximum=s_shootMode?int(CR_HD):CR_COUNT-1;
+        if (v > maximum) v = maximum;
         s_settings.capture = (CapturePreset)v;
         break;
       }
@@ -1119,14 +1508,16 @@ void handleRotary(int steps) {
 static void camButtonA() {
   switch (camState) {
     case CAM_VIEWFINDER:
+      if (s_video.busy()) { s_video.stop(); s_videoStopping = true; return; }
       NavHandler::instance().pop();
       break;
     case CAM_SETTINGS:
       if (s_editMode) {
-        switch (s_settingsSel) {
+        switch (settingsRowAt(s_settingsSel)) {
           case SR_MODE:       s_settings.mode      = (CameraMode)s_editBackup; break;
           case SR_AUTOFOCUS:  s_settings.autofocus       = (s_editBackup != 0); break;
           case SR_CAPTURE:    s_settings.capture     = (CapturePreset)s_editBackup; break;
+          case SR_VIDEO:      s_shootMode = s_editBackup; break;
           default: break;
         }
         s_settingsSel = clampInt(s_settingsSel, 0, settingsRowCount() - 1);
@@ -1173,7 +1564,7 @@ static void captureTutorialPhoto(){
  if(s_continuousVga&&s_settings.capture==CR_VGA){
   services::camera::Snapshot snapshot;
   if(snapshot.captureVga(s_camera,esp_timer_get_time())==services::camera::Snapshot::Result::Ready){
-   s_cameraStage=2;s_cameraStageAt=millis();s_cameraPulseAt=millis();camDrawVgaJpeg(snapshot.data(),snapshot.size());
+   s_cameraStage=2;s_cameraStageAt=millis();s_cameraPulseAt=millis();camDrawPreview(snapshot.data(),snapshot.size());
    camDrawReviewStatus("Saving...");saved=services::photos::write(photo,snapshot.data(),snapshot.size());
   }
  }else{
@@ -1194,6 +1585,12 @@ static void camButtonB() {
   if(s_tutorialCapture&&camState==CAM_VIEWFINDER){captureTutorialPhoto();return;}
   switch (camState) {
     case CAM_VIEWFINDER: {
+      if (s_video.busy()) { s_video.stop(); s_videoStopping = true; break; }
+      if (s_shootMode) {
+        camBeginVideo();
+        camPresentPhotographer();
+        break;
+      }
       if (s_continuousVga && s_settings.capture == CR_VGA && s_camera.running()) {
         (void)camCaptureContinuousVga();
       } else {
@@ -1203,23 +1600,24 @@ static void camButtonB() {
     }
     case CAM_SETTINGS:
       if (!s_editMode) {
-        if (s_settingsSel == SR_MANUAL) {
+        if (settingsRowAt(s_settingsSel) == SR_MANUAL) {
           showManual();
           return;
         }
         s_editMode = true;
-        switch (s_settingsSel) {
+        switch (settingsRowAt(s_settingsSel)) {
           case SR_MODE:       s_editBackup = (int)s_settings.mode; break;
           case SR_AUTOFOCUS:  s_editBackup = s_settings.autofocus ? 1 : 0; break;
           case SR_CAPTURE:    s_editBackup = (int)s_settings.capture; break;
+          case SR_VIDEO:      s_editBackup = s_shootMode; break;
           default:            s_editBackup = 0; break;
         }
         s_settingsNeedsRedraw = true; hal::display::markAllDirty();
       } else {
-        persistTopLevelSetting(s_settingsSel);
+        persistTopLevelSetting(settingsRowAt(s_settingsSel));
         s_editMode = false;
         s_settingsNeedsRedraw = true; hal::display::markAllDirty();
-        if (s_settingsSel == SR_MODE && s_settings.mode == CM_MANUAL) {
+        if (settingsRowAt(s_settingsSel) == SR_MODE && s_settings.mode == CM_MANUAL) {
           showManual();
         }
       }
@@ -1266,6 +1664,7 @@ void onDraw(TFT_eSprite& canvas) {
 }
 
 void onInput(hal::input::InputEvent ev) {
+  if (camShutterInput(ev)) return;
   using ET = hal::input::EventType;
   if (ui::nav::isBackTap(ev)) {
     camButtonA();
@@ -1274,7 +1673,9 @@ void onInput(hal::input::InputEvent ev) {
     // A press can arrive before the other finger during a back gesture.
     camButtonB();
   } else if (ui::nav::isEnterTap(ev)) {
-    if (camState == CAM_VIEWFINDER) showSettings();
+    if (camState == CAM_VIEWFINDER && s_video.busy()) {
+      s_video.stop(); s_videoStopping = true;
+    } else if (camState == CAM_VIEWFINDER) showSettings();
     else camButtonB();
   } else if (ev.type == ET::Scroll && ev.delta != 0) {
     handleRotary(ev.delta);
@@ -1297,10 +1698,17 @@ static bool requestViewfinder() {
 }
 
 static void resumeCameraWorkflow() {
+  // Root refresh can resume without a preceding cover; finalize before restart.
+  if (s_video.busy()) s_video.close();
   if (app.currentScreen == &kScreenCameraViewfinder) (void)requestViewfinder();
   else if (app.currentScreen == &kScreenCameraSettings) prepareSettingsMode();
   else if (app.currentScreen == &kScreenCameraManual) prepareManualMode();
   else if (app.currentScreen == &kScreenCameraReadme) prepareReadmeMode();
+}
+
+static void coverCameraWorkflow() {
+  if (camState == CAM_VIEWFINDER || s_camera.running()) camStopViewfinder();
+  s_camera.restoreUi(services::camera::Session::Resume::Deferred);
 }
 
 static void enterViewfinderScreen() {
@@ -1441,8 +1849,16 @@ bool copyPreviewForDevelopment(TFT_eSprite& target){return NavHandler::instance(
 #endif
 services::photos::Target takeTutorialPhoto(){auto photo=s_tutorialPhoto;s_tutorialPhoto={};return photo;}
 
-App app = SCENE_APP_CATALOG_LIFECYCLE_HOOKS("Camera", "camera", &kScreenCameraViewfinder, camEnter, resumeCameraWorkflow, camExit,
-                            "src/apps/camera_menu_app.cpp", kScreens, nullptr, nullptr);
+static core::health::RuntimePolicy cameraRuntimePolicy() {
+  return core::health::whileBusy(s_videoPending);
+}
+
+App app = {
+  "Camera", &kScreenCameraViewfinder, nullptr, nullptr, camExit,
+  "camera", "src/apps/camera_menu_app.cpp", kScreens,
+  uint8_t(sizeof(kScreens) / sizeof(kScreens[0])), nullptr, cameraRuntimePolicy,
+  camEnter, resumeCameraWorkflow, nullptr, coverCameraWorkflow
+};
 
 }  // namespace camera_menu
 }  // namespace apps

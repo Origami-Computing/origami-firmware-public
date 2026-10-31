@@ -4,6 +4,10 @@
 namespace ui {
 NativeFramePresentation presentNativeFrame(uint16_t* pixels) {
     NativeFramePresentation result;
+    // UI-owned scratch/brightness preparation uses no panel or bus state.
+    // Let SD workers progress during this full-frame CPU transform. Acquire SPI
+    // before TE so a later SD transfer cannot consume the synchronization edge.
+    uint16_t* output=hal::display::prepareNativeOutput(pixels);
     auto& display=hal::display::directTft();
     hal::display::beginDirectDraw();
     const bool swap=display.getSwapBytes();
@@ -13,7 +17,9 @@ NativeFramePresentation presentNativeFrame(uint16_t* pixels) {
     result.syncMissed=!hal::display::waitForVSync();
     result.syncWaitUs=esp_timer_get_time()-sync;
     display.writecommand(0x21);display.setSwapBytes(false);
-    display.pushImage(0,0,240,280,pixels);
+    const uint64_t transfer=esp_timer_get_time();
+    display.pushImage(0,0,240,280,output ? output : pixels);
+    result.transferUs=esp_timer_get_time()-transfer;
     display.setSwapBytes(swap);display.setRotation(rotation);
     hal::display::endDirectDraw();
     return result;
