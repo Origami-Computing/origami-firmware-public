@@ -87,6 +87,7 @@
 #include "core/secrets.h"
 #include "core/device_id.h"
 #include "services/device_fs.h"
+#include "services/media_delete.h"
 #include "services/net_poll.h"
 #include "core/telemetry.h"
 #include "apps/agent/agent_flow.h"
@@ -349,6 +350,7 @@ static void printHelp() {
   Serial.println("  provision done     leave boot-time provisioning mode");
   Serial.println("  sdput SIZE CRC PATH  upload one binary file to SD");
   Serial.println("  sdget PATH           download a file as CRC-checked base64 chunks");
+  Serial.println("  sddelete PATH        delete one file through guarded media deletion");
   Serial.println("  sdclear PATH         delete and recreate one SD directory");
 }
 
@@ -2104,6 +2106,14 @@ static bool handleSdCommand(const char* rawLine) {
   copyLine(raw, sizeof(raw), rawLine);
   char* line = trimInPlace(raw);
 
+  if (startsWithWord(line,"sddelete")) {
+    line=trimInPlace(line+8);
+    if(!validSdPath(line)){Serial.println("SDDELETE ERR args");return true;}
+    services::media_delete::Result result;
+    const bool ok=services::media_delete::deleteFile(line,&result);
+    Serial.printf("SDDELETE %s removed=%d missing=%d queue=%d path=%s\n",ok?"OK":"ERR",result.removed,result.missing,result.queueRemoved,line);
+    return true;
+  }
   if (startsWithWord(line, "sdclear")) {
     line = trimInPlace(line + 7);
     if (!validSdPath(line)) {

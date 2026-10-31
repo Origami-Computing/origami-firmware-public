@@ -91,6 +91,10 @@ int main(){
  assert(!library.open(true) && library.opening());
  admission=true;assert(library.open(true) && !library.opening() && leases==1);
  library.close();assert(!leases);
+ assert(library.open(false,"/videos/selected-long-gallery-file.avi"));
+ assert(library.count()==1&&!strcmp(library.path(0),"/videos/selected-long-gallery-file.avi"));
+ library.close();assert(!leases&&!allocations);
+ assert(!library.open(false,"/photos/wrong.jpg")&&!leases&&!allocations);
  failAlloc=true;assert(!library.open());failAlloc=false;assert(!leases&&!allocations);
  assert(library.open()&&library.count()==1&&leases==1);assert(!strcmp(library.path(0),"/videos/test.avi"));assert(!*library.path(1));
  assert(!library.select(1));

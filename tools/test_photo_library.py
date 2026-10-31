@@ -11,6 +11,7 @@ with tempfile.TemporaryDirectory() as directory:
 struct Queue {void setUploadPaused(bool);struct Counts {int pending,failed;};Counts counts();bool removeByFilePath(const char*);};
 namespace services {namespace uploads {bool ensureInit();Queue& queue();}}
 ''')
+    write('services/media_delete.h','extern bool videoDeleteOk;namespace services {namespace media_delete {struct Result {int queueRemoved=0;};inline bool deleteFile(const char*,Result*r){r->queueRemoved=1;return videoDeleteOk;}}}')
     write('services/background_network.h', '#include <stdint.h>\nnamespace services {namespace background_network {void requestPeripheralIo();bool peripheralIoReady();bool suspendForPeripheralIo(uint32_t);void resumeAfterPeripheralIo();}}')
     write('hal/hal_wifi.h','namespace hal {namespace wifi {void stop();void scheduleRestore();bool connected();}}')
     write('main.cpp',r'''
@@ -20,6 +21,7 @@ namespace services {namespace uploads {bool ensureInit();Queue& queue();}}
 #include <cstring>
 #include <string>
 std::string trace;bool uploadOk=true,agentOk=true,removeOk=true,connected=true;
+bool videoFile=false,videoDeleteOk=false;
 int removedQueue=0,loads=0,pending=3,failed=1;Queue queue;
 namespace services {namespace uploads {
 bool ensureInit(){trace+='I';return true;}Queue& queue(){return ::queue;}
@@ -41,8 +43,8 @@ void Queue::setUploadPaused(bool paused){assert(!paused);trace+='U';}
 Queue::Counts Queue::counts(){return {pending,failed};}
 bool Queue::removeByFilePath(const char*p){assert(!strcmp(p,"/photos/IMG_00001.jpg"));trace+='q';if(removedQueue==2)return false;++removedQueue;return true;}
 namespace hal {namespace sd {
-PhotoCatalogResult PhotoCatalog::load(){++loads;clear();files_=new PhotoFile[1];strcpy(files_[0].path,"/photos/IMG_00001.jpg");files_[0].modified=123;count_=1;return PhotoCatalogResult::Ok;}
-bool PhotoCatalog::removeAt(size_t i){assert(i<count_);trace+='D';if(!removeOk)return false;clear();return true;}
+PhotoCatalogResult PhotoCatalog::load(bool){++loads;clear();files_=new PhotoFile[1];strcpy(files_[0].path,"/photos/IMG_00001.jpg");files_[0].modified=123;files_[0].video=videoFile;count_=1;return PhotoCatalogResult::Ok;}
+bool PhotoCatalog::removeAt(size_t i,bool removed){assert(removed==videoFile);assert(i<count_);trace+='D';if(!removeOk)return false;clear();return true;}
 void PhotoCatalog::clear(){delete[] files_;files_=nullptr;count_=0;}
 }}
 int main(){using L=services::photos::Library;using B=L::BrowseResult;
@@ -55,6 +57,10 @@ int main(){using L=services::photos::Library;using B=L::BrowseResult;
  trace.clear();int removed=-1;removeOk=false;assert(!lib.removeAt(0,&removed)&&removed==0&&lib.count()==1&&trace=="D");
  removeOk=true;trace.clear();assert(lib.removeAt(0,&removed)&&removed==2&&lib.count()==0&&trace=="Dqqq");
  trace.clear();assert(!lib.removeAt(0,&removed)&&removed==0&&trace.empty());
+ videoFile=true;lib.load();trace.clear();videoDeleteOk=false;
+ assert(!lib.removeAt(0,&removed)&&lib.count()==1&&trace.empty());
+ videoDeleteOk=true;assert(lib.removeAt(0,&removed)&&lib.count()==0&&removed==1&&trace=="D");
+ videoFile=false;
  lib.load();trace.clear();assert(lib.beginSync()==3&&!lib.browsing()&&lib.count()==1);assert(trace=="IUwp");
  auto status=lib.syncStatus();assert(status.pending==3&&status.failed==1&&status.connected);assert(trace=="IUwp");
  // UI polling observes service progress without any worker-control API.

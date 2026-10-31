@@ -32,7 +32,7 @@ This produces a **custom production-policy build**, not an official signed OTA r
 
 ## Firmware
 
-This source targets **v1.0.4**, adding on-device video recording with audio and local playback. Tap B for a photo; hold B for 1.2 seconds to start video, release to keep recording, and tap B again to save. Camera Settings selects VGA or 720p. Clips remain on the SD card; cloud video processing is not enabled by this firmware release. Preview/playback run below the recording frame rate. The MP3 metadata fix, batched analytics, and Public-default migration remain included. See [published releases](https://github.com/Origami-Computing/origami-firmware-public/releases) for available binaries.
+This source targets **v1.0.4**, adding on-device video recording with audio and local playback within Photos. Videos appear alongside photos with previews and duration labels; Back returns to the selected gallery item. Tap B for a photo; hold B for 1.2 seconds to start video, release to keep recording, and tap B again to save. Camera Settings selects VGA or 720p. Clips remain on the SD card; cloud video processing is not enabled by this firmware release. Preview/playback run below the recording frame rate. The MP3 metadata fix, batched analytics, and Public-default migration remain included. See [published releases](https://github.com/Origami-Computing/origami-firmware-public/releases) for available binaries.
 
 Run `python3 tools/test_mp3_metadata.py` and `python3 tools/test_playback_start_admission.py` for the metadata, decoder, seeking and failed-start regression checks.
 

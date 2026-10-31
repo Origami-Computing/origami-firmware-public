@@ -8,7 +8,7 @@
 #include <algorithm>
 
 namespace services { namespace video {
-bool Library::open(bool deferred) {
+bool Library::open(bool deferred,const char* filePath) {
     if (!opening_) close();
     error_="";
     if (!hal::sd::mounted()) { close();error_="Insert SD card"; return false; }
@@ -22,9 +22,11 @@ bool Library::open(bool deferred) {
     // scarce internal decoder memory. Transport is already acknowledged paused.
     radioStopped_=true;
     hal::wifi::stop();
-    paths_=static_cast<char*>(heap_caps_malloc(kFiles*kPath,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+    if(filePath && (strncmp(filePath,"/videos/",8) || strlen(filePath)>=kPath)){close();error_="Video unavailable";return false;}
+    paths_=static_cast<char*>(heap_caps_malloc((filePath?1:kFiles)*kPath,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     if (!paths_) { error_="Not enough memory"; close(); return false; }
-    count_=hal::sd::listFiles("/videos",".avi",paths_,kFiles,kPath);
+    if(filePath){strcpy(paths_,filePath);count_=1;}
+    else count_=hal::sd::listFiles("/videos",".avi",paths_,kFiles,kPath);
     return true;
 }
 const char* Library::path(int index) const {

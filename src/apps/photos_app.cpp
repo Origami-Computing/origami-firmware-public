@@ -1,6 +1,6 @@
 /**
  * @file photos_app.cpp
- * @brief Photos — browse JPEG images saved to /photos on SD card.
+ * @brief Photos — browse JPEG photos and AVI videos together on SD card.
  *
  * The photo-library service scans JPEGs in /photos on enter and owns browsing
  * reservations, sync handoff and local-delete/upload ordering. Camera captures
@@ -13,6 +13,8 @@
  */
 
 #include "apps/photos_app.h"
+#include "apps/videos_app.h"
+#include "services/video_thumbnail.h"
 #include "apps/photos_policy.h"
 
 #include <Arduino.h>
@@ -44,6 +46,9 @@ static policy::Action s_action = policy::Action::Escape;
 static bool        s_deleteFailed = false;
 static const char* s_error = "Cannot read photos";
 static services::photos::Library s_library;
+static services::video::Thumbnail s_thumbnail;
+static int s_thumbnailIndex=-1;
+static char s_resumePath[272]{};
 static bool s_lastRendered = false;
 static uint32_t s_lastPixels = 0;
 static unsigned s_lastNonblack = 0;
@@ -57,7 +62,7 @@ void dumpStatus(Stream& output) {
     const bool viewing = s_state == PH_VIEWING && s_count > 0;
     output.printf("[photos] status active=%d ready=%d index=%d count=%d ok=%d pixels=%08lx nonblack=%u menu=%d action=%s delete_error=%d open_ms=%lu pause_ms=%lu catalog_us=%lu alloc_us=%lu metadata=%lu path=%s\n",
                   NavHandler::instance().top() == &app ? 1 : 0,
-                  viewing && !s_needRender ? 1 : 0, viewing ? s_idx + 1 : 0, s_count,
+                  viewing && !s_needRender && (!s_library[s_idx].video || s_thumbnailIndex==s_idx) ? 1 : 0, viewing ? s_idx + 1 : 0, s_count,
                   s_lastRendered ? 1 : 0, (unsigned long)s_lastPixels, s_lastNonblack,
                   s_actionsOpen ? 1 : 0, s_action == policy::Action::Delete ? "delete" : "esc",
                   s_deleteFailed ? 1 : 0,
@@ -90,6 +95,7 @@ static void loadPhotos() {
     s_idx = 0;
     s_count = 0;
     s_state = PH_ERROR;
+    s_thumbnail.clear();s_thumbnailIndex=-1;
     s_library.clear();
     const uint32_t pauseStarted = millis();
     const bool paused = pauseBrowsingIo();
@@ -105,6 +111,10 @@ static void loadPhotos() {
             case services::photos::Library::LoadResult::NoMemory: s_error = "Not enough memory"; break;
             case services::photos::Library::LoadResult::ReadError: s_error = "Cannot read photos"; break;
         }
+    }
+    if(s_resumePath[0] && !s_browsePending){
+        for(int i=0;i<s_count;++i)if(!strcmp(s_resumePath,s_library[i].path)){s_idx=i;break;}
+        s_resumePath[0]=0;
     }
     Serial.printf("[photos] catalog count=%d state=%d newest=%s\n", s_count, (int)s_state,
                   s_count ? s_library[0].path : "-");
@@ -134,6 +144,7 @@ static void deletePhoto() {
         s_needRender = true;
         return;
     }
+    s_thumbnail.clear();s_thumbnailIndex=-1;
     s_count = (int)s_library.count();
     s_idx = policy::indexAfterRemoval(s_idx, s_count);
     s_state = s_count ? PH_VIEWING : PH_EMPTY;
@@ -187,7 +198,7 @@ static void drawActions(ui::scene::Scene& scene, int16_t W, int16_t H) {
     }
     if (s_deleteFailed) {
         scene.addRect("photos.delete.error.bg", {0, (int16_t)(H - 44), W, 22}, TFT_WHITE, 0, 4);
-        scene.addLabel("photos.delete.error", {0, (int16_t)(H - 44), W, 22}, "Cannot delete photo",
+        scene.addLabel("photos.delete.error", {0, (int16_t)(H - 44), W, 22}, "Cannot delete item",
                        TFT_BLACK, TFT_WHITE, 1, ui::scene::TextAlign::MiddleCenter, 5);
     }
 }
@@ -239,7 +250,7 @@ static void onDraw(TFT_eSprite& canvas) {
     if (s_state == PH_ERROR || s_state == PH_EMPTY) {
         b.clearContent(kUiBg);
         if (s_state == PH_ERROR) b.statusLine("photos.error", s_error, kUiFg);
-        else b.emptyState("photos.empty", "No photos yet.", "");
+        else b.emptyState("photos.empty", "No photos or videos yet.", "");
         scene.render(canvas);
         hal::display::markAllDirty();
         return;
@@ -261,8 +272,11 @@ static void onDraw(TFT_eSprite& canvas) {
 
     // Decode and scale JPEG into canvas — all low-level work in the HAL
     const char* path = s_library[s_idx].path;
-    const bool rendered = hal::display::drawJpegFileScaled(path, 0, kSystemStatusBarH, W, cH - 22);
-    if (!rendered) b.statusLine("photos.read_error", "Cannot open photo", kUiFg);
+    const bool video=s_library[s_idx].video;
+    const bool rendered = video
+        ? s_thumbnailIndex==s_idx && hal::display::drawJpegBufferScaled(s_thumbnail.data(),s_thumbnail.size(),0,kSystemStatusBarH,W,cH-22)
+        : hal::display::drawJpegFileScaled(path, 0, kSystemStatusBarH, W, cH - 22);
+    if (!rendered) b.statusLine("photos.read_error", video && s_thumbnailIndex!=s_idx ? "Loading preview..." : "Cannot open media", kUiFg);
 
     // A sparse canvas fingerprint makes blank/stale gallery renders testable over serial.
     uint32_t pixels = 2166136261u;
@@ -280,7 +294,7 @@ static void onDraw(TFT_eSprite& canvas) {
     s_lastRendered = rendered;
     s_lastPixels = pixels;
     s_lastNonblack = nonblack;
-    if (s_openPending) {
+    if (s_openPending && (!video || s_thumbnailIndex==s_idx)) {
         s_openMs = millis() - s_openStartedMs;
         s_openPending = false;
     }
@@ -298,6 +312,16 @@ static void onDraw(TFT_eSprite& canvas) {
     scene.addRect("photos.footer.bg", {0, (int16_t)(H - 24), (int16_t)W, 24}, kUiBg);
     scene.addLabel("photos.index", {14, (int16_t)(H - 22), (int16_t)(W - 28), 20},
                    footer, kUiFg, kUiBg, 1, ui::scene::TextAlign::MiddleCenter, 2);
+    if(video && !s_actionsOpen){
+        const int x=W/2,y=H/2;
+        scene.addLine("photos.play.top",x-8,y-12,x+12,y,TFT_WHITE,3);
+        scene.addLine("photos.play.bottom",x+12,y,x-8,y+12,TFT_WHITE,3);
+        scene.addLine("photos.play.left",x-8,y+12,x-8,y-12,TFT_WHITE,3);
+        char duration[40];const uint32_t seconds=(s_thumbnail.durationMs()+999)/1000;
+        snprintf(duration,sizeof(duration),"B: PLAY  %lu:%02lu",(unsigned long)(seconds/60),(unsigned long)(seconds%60));
+        scene.addRect("photos.video.badge",{0,int16_t(H-48),W,24},TFT_BLACK,0,2);
+        scene.addLabel("photos.video.duration",{0,int16_t(H-48),W,24},duration,TFT_WHITE,TFT_BLACK,1,ui::scene::TextAlign::MiddleCenter,3);
+    }
     if (s_actionsOpen) drawActions(scene, W, H);
     scene.render(canvas);
 
@@ -309,6 +333,7 @@ static void onDraw(TFT_eSprite& canvas) {
 // ---------------------------------------------------------------------------
 
 static void activateGallery() {
+    s_resumePath[0]=0;
     s_openStartedMs = millis();
     s_openPending = true;
     ui::showAppOpeningSplash("Photos");
@@ -318,9 +343,16 @@ static void activateGallery() {
 static void exitApp() {
     s_browsePending = false;
     s_actionsOpen = false;
+    s_thumbnail.clear();s_thumbnailIndex=-1;
     s_library.close();
     s_count = 0;
 }
+
+static void coverGallery(){
+    if(s_count && s_state==PH_VIEWING)strlcpy(s_resumePath,s_library[s_idx].path,sizeof(s_resumePath));
+    exitApp();
+}
+static void resumeGallery(){loadPhotos();}
 
 // ---------------------------------------------------------------------------
 // Tick / Input
@@ -352,6 +384,11 @@ static void onTick(uint32_t now) {
         if (s_reloadAfterPause) loadPhotos();
         else endSync();
         return;
+    }
+    if(s_state==PH_VIEWING && s_thumbnailIndex!=s_idx){
+        s_thumbnail.clear();
+        if(s_library[s_idx].video)s_thumbnail.load(s_library[s_idx].path);
+        s_thumbnailIndex=s_idx;s_needRender=true;
     }
     if (s_state != PH_SYNCING) return;
     const int pending = s_library.syncStatus().pending;
@@ -395,7 +432,10 @@ static void onInput(hal::input::InputEvent ev) {
         loadPhotos();
         return;
     }
-    if (ev.type == ET::ButtonB_Tap) {      // B = sync to cloud
+    if(ev.type==ET::ButtonB_Tap && s_state==PH_VIEWING && s_library[s_idx].video){
+        (void)apps::videos::openFile(s_library[s_idx].path);return;
+    }
+    if (ev.type == ET::ButtonB_Tap) {      // B = sync to cloud for photos
         if (s_state == PH_SYNCING) { endSync(); return; }  // B again = stop watching
         startSync();
         return;
@@ -451,9 +491,9 @@ static const ::scene::Screen* const kScreens[] = { &kScreenPhotos };
 static core::health::RuntimePolicy runtimePolicy() {
     core::health::RuntimePolicy policy{};policy.reportActivity=s_browsePending;return policy;
 }
-App app = SCENE_APP_CATALOG_LIFECYCLE_HOOKS("Photos", "photos", &kScreenPhotos,
-                            activateGallery, activateGallery, exitApp,
-                            "src/apps/photos_app.cpp", kScreens, nullptr, runtimePolicy);
+App app = {"Photos",&kScreenPhotos,nullptr,nullptr,exitApp,"photos","src/apps/photos_app.cpp",
+    kScreens,uint8_t(sizeof(kScreens)/sizeof(kScreens[0])),nullptr,runtimePolicy,
+    activateGallery,resumeGallery,nullptr,coverGallery};
 
 }  // namespace photos
 }  // namespace apps
