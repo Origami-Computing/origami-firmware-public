@@ -91,17 +91,15 @@ jobs:
               shutil.copyfile(Path(d)/'manifest/latest.json','dist/latest.json')
               # Old clients require a Production manifest. Prepare an internal
               # signed bridge for the same public bytes; do not deploy it here.
-              import importlib.util, json
-              spec=importlib.util.spec_from_file_location('publisher','tools/ota/publish.py')
-              publisher=importlib.util.module_from_spec(spec);spec.loader.exec_module(publisher)
-              payload=publisher.verify_manifest(json.loads(Path('dist/latest.json').read_text()))
-              payload['channel']='production'
-              payload['path']=payload['path'].replace('/releases/public/','/releases/production/',1)
+              import json, sys
+              sys.path.insert(0, 'tools/ota')
+              import publish as publisher
+              from legacy_bridge import payloads
+              bridges=payloads(Path('dist/firmware.bin').read_bytes(),json.loads(Path('dist/latest.json').read_text()))
               Path('bridge').mkdir()
-              Path('bridge/legacy-bridge.json').write_text(json.dumps(publisher.sign_manifest(payload,key),separators=(',',':'))+'\n')
-              payload['channel']='staging'
-              payload['path']=payload['path'].replace('/releases/production/','/releases/staging/',1)
-              Path('bridge/legacy-staging-bridge.json').write_text(json.dumps(publisher.sign_manifest(payload,key),separators=(',',':'))+'\n')
+              for channel,payload in bridges.items():
+                  name='legacy-bridge.json' if channel=='production' else 'legacy-staging-bridge.json'
+                  (Path('bridge')/name).write_text(json.dumps(publisher.sign_manifest(payload,key),separators=(',',':'))+'\n')
           import hashlib
           paths=sorted(p for p in Path('dist').iterdir() if p.name!='SHA256SUMS.txt')
           Path('dist/SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in paths))

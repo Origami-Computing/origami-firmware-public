@@ -1,0 +1,62 @@
+name: Prepare signed legacy recovery metadata
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Already-published stable Public release (vX.Y.Z)'
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  prepare:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Validate recovery contract
+        run: |
+          python3 -m unittest discover -s tests/ota -v
+          python3 - <<'PY'
+          import os,re
+          if not re.fullmatch(r'v\d+\.\d+\.\d+',os.environ['VERSION']):
+              raise SystemExit('Expected a stable Public version')
+          PY
+      - name: Download published Public application and signed manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir public-release
+          gh release download "$VERSION" --dir public-release --pattern firmware.bin --pattern latest.json
+      - name: Verify exact Public bytes and sign compatibility metadata
+        env:
+          OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os,sys,json,tempfile
+          from pathlib import Path
+          sys.path.insert(0,'tools/ota')
+          import publish
+          from legacy_bridge import payloads
+          envelope=json.loads(Path('public-release/latest.json').read_text())
+          if publish.verify_manifest(envelope)['version']!=os.environ['VERSION']:
+              raise SystemExit('Signed version differs from requested release')
+          bridges=payloads(Path('public-release/firmware.bin').read_bytes(),envelope)
+          Path('bridge').mkdir()
+          with tempfile.TemporaryDirectory() as tmp:
+              key=Path(tmp)/'signing.pem'
+              key.write_text(os.environ.pop('OTA_SIGNING_KEY'));key.chmod(0o600)
+              for channel,payload in bridges.items():
+                  name='legacy-bridge.json' if channel=='production' else 'legacy-staging-bridge.json'
+                  (Path('bridge')/name).write_text(json.dumps(publish.sign_manifest(payload,key),separators=(',',':'))+'\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: signed-legacy-recovery-${{ inputs.version }}
+          path: bridge/*.json
+          retention-days: 30

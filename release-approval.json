@@ -1,7 +1,7 @@
 {
   "approved": true,
-  "reviewed_tree_sha256": "d5a15d66e3b210c7ef18d6a6e7dca093ebcb30a35129938874c31cdf16ce8e1f",
-  "approved_by": "Vaibhav Maloo (wireless Public recovery authorized in Codex, 2026-10-31); Codex scoped source and authorization tests; hardware qualification required before publication",
+  "reviewed_tree_sha256": "223d539fb3ebcbc430efc9f9befb765ea5f94126f88607abf340412f32e222b3",
+  "approved_by": "Vaibhav Maloo (wireless Public recovery authorized in Codex, 2026-10-31); Codex reviewed legacy signed-metadata correction and 24 OTA tests; firmware bytes unchanged",
   "source_review_complete": true,
   "license_review_complete": true,
   "security_contact_ready": true,
