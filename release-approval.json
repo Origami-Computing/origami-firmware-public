@@ -1,7 +1,7 @@
 {
   "approved": true,
-  "reviewed_tree_sha256": "38c968aef0ceea7cde85ce9b27960350650cec6dfee5ed5561fd1968e3a5eb0f",
-  "approved_by": "Vaibhav Maloo (video release authorized in Codex, 2026-10-30); Codex integration, security-boundary, license and host-test review",
+  "reviewed_tree_sha256": "d5a15d66e3b210c7ef18d6a6e7dca093ebcb30a35129938874c31cdf16ce8e1f",
+  "approved_by": "Vaibhav Maloo (wireless Public recovery authorized in Codex, 2026-10-31); Codex scoped source and authorization tests; hardware qualification required before publication",
   "source_review_complete": true,
   "license_review_complete": true,
   "security_contact_ready": true,
