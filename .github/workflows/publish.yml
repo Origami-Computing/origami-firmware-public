@@ -56,6 +56,7 @@ jobs:
           python3 tools/test_clock_sync_start.py
           python3 tools/test_typewriter.py c++
           python3 tools/test_lua_security.py
+          python3 tools/test_ota_public_access.py
           python3 tools/test_ota_download_policy.py
           python3 tools/test_ota_download_resume.py
           python3 tools/test_ota_versions.py

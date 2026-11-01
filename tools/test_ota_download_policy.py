@@ -17,15 +17,15 @@ namespace ota_access {enum class Role{Unknown,Production,Developer};Role granted
 bool authenticated=true;bool refreshAccess(){return authenticated && ota_access::role()!=ota_access::Role::Unknown;}
 void setError(const char*){} void abortFlash(){} char s_err[100];
 enum class DownloadState{Running,Idle};std::atomic<DownloadState>s_download{DownloadState::Idle};
-'''+prefix('bool fetchLatestRelease(', '    if (!OTA_BASE_URL')+prefix('bool beginFlash(', '    char prefix[')+r'''
+'''+s[s.index('static bool authorizeRelease('):s.index('bool fetchLatestRelease(')]+prefix('bool fetchLatestRelease(', '    if (!OTA_BASE_URL')+prefix('bool beginFlash(', '    char prefix[')+r'''
 int main(){
  for(auto role:{ota_access::Role::Unknown,ota_access::Role::Production,ota_access::Role::Developer}){
   ota_access::granted=role;
   for(auto channel:{ReleaseChannel::Public,ReleaseChannel::Private,ReleaseChannel::Staging}){
    ReleaseInfo info{};info.channel=channel;
-   const bool allowed=role==ota_access::Role::Developer||(role==ota_access::Role::Production&&channel==ReleaseChannel::Public);
+   const bool allowed=channel==ReleaseChannel::Public||role==ota_access::Role::Developer;
    assert(fetchLatestRelease(channel,&info)==allowed);assert(beginFlash(info)==allowed);
-   authenticated=false;assert(!fetchLatestRelease(channel,&info)&&!beginFlash(info));authenticated=true;
+   authenticated=false;assert(fetchLatestRelease(channel,&info)==(channel==ReleaseChannel::Public));assert(beginFlash(info)==(channel==ReleaseChannel::Public));authenticated=true;
   }
  }
  ReleaseInfo invalid{};invalid.channel=static_cast<ReleaseChannel>(99);

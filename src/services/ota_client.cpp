@@ -296,14 +296,24 @@ static bool decodeHash(const char* text, uint8_t out[32]) {
     return true;
 }
 
-bool fetchLatestRelease(ReleaseChannel channel, ReleaseInfo* out) {
-    if (!out || s_download.load() == DownloadState::Running) return false;
-    if (channel != ReleaseChannel::Public && channel != ReleaseChannel::Staging && channel != ReleaseChannel::Private) return false;
-    s_err[0] = '\0';
+// Public distribution is anonymous, but every manifest and image remains verified.
+// Developer authorization is required for both non-public channels on each request.
+static bool authorizeRelease(ReleaseChannel channel) {
+    if (channel == ReleaseChannel::Public) return true;
+    if (channel != ReleaseChannel::Private && channel != ReleaseChannel::Staging) {
+        setError("Invalid update channel"); return false;
+    }
     if (!refreshAccess()) return false;
-    if (channel != ReleaseChannel::Public && ota_access::role() != ota_access::Role::Developer) {
+    if (ota_access::role() != ota_access::Role::Developer) {
         setError("Developer OTA access required"); return false;
     }
+    return true;
+}
+
+bool fetchLatestRelease(ReleaseChannel channel, ReleaseInfo* out) {
+    if (!out || s_download.load() == DownloadState::Running) return false;
+    s_err[0] = '\0';
+    if (!authorizeRelease(channel)) return false;
     if (!OTA_BASE_URL[0]) { setError("update host not configured"); return false; }
     // Never disable certificate validation to work around an unset clock.
     core::time::service(millis());
@@ -316,9 +326,12 @@ bool fetchLatestRelease(ReleaseChannel channel, ReleaseInfo* out) {
     HTTPClient http;
     configureHttp(http, client);
     if (!http.begin(client, url)) { setError("manifest connect failed"); return false; }
-    char accessKey[ota_access::kKeySize];
-    if (!ota_access::read(accessKey)) { http.end(); setError("Set up OTA access key"); return false; }
-    http.addHeader("Authorization", String("Bearer ") + accessKey);
+    if (channel != ReleaseChannel::Public) {
+        char accessKey[ota_access::kKeySize];
+        if (!ota_access::read(accessKey)) { http.end(); setError("Set up OTA access key"); return false; }
+        http.addHeader("Authorization", String("Bearer ") + accessKey);
+        memset(accessKey, 0, sizeof(accessKey));
+    }
     const int code = http.GET();
     const int length = http.getSize();
     if (code != HTTP_CODE_OK || length <= 0 || length > 4096) {
@@ -407,7 +420,7 @@ static AttemptResult resumeDownload(HTTPClient& http, WiFiClientSecure& client, 
     if (!http.begin(client, s_release.url)) { setError("resume connect failed"); return AttemptResult::Retry; }
     const char* headers[] = {"Content-Range"};
     http.collectHeaders(headers, 1);
-    http.addHeader("Authorization", String("Bearer ") + s_downloadKey);
+    if (s_downloadKey[0]) http.addHeader("Authorization", String("Bearer ") + s_downloadKey);
     char range[48];
     snprintf(range, sizeof(range), "bytes=%d-", written);
     http.addHeader("Range", range);
@@ -435,7 +448,7 @@ static AttemptResult downloadAttempt() {
     HTTPClient http;
     configureHttp(http, client);
     if (!http.begin(client, s_release.url)) { setError("download connect failed"); return AttemptResult::Retry; }
-    http.addHeader("Authorization", String("Bearer ") + s_downloadKey);
+    if (s_downloadKey[0]) http.addHeader("Authorization", String("Bearer ") + s_downloadKey);
     const int code = http.GET();
     if (code != HTTP_CODE_OK) {
         char error[48]; snprintf(error, sizeof(error), "download HTTP %d", code); setError(error);
@@ -544,18 +557,18 @@ static void downloadTask(void*) {
 bool beginFlash(const ReleaseInfo& release) {
     abortFlash();
     s_err[0] = '\0';
-    if (!refreshAccess()) return false;
-    if (release.channel != ReleaseChannel::Public && release.channel != ReleaseChannel::Staging && release.channel != ReleaseChannel::Private) return false;
-    if (release.channel != ReleaseChannel::Public && ota_access::role() != ota_access::Role::Developer) {
-        setError("Developer OTA access required"); return false;
-    }
+    if (!authorizeRelease(release.channel)) return false;
     char prefix[256];
     snprintf(prefix, sizeof(prefix), "%s/releases/%s/%s/%s/", OTA_BASE_URL,
              channelPath(release.channel), OTA_HARDWARE_ID, OTA_LAYOUT_ID);
     if (strncmp(release.url, prefix, strlen(prefix)) || strstr(release.url, "..")) {
         setError("invalid download origin/path"); return false;
     }
-    if (!ota_access::read(s_downloadKey)) { setError("Set up OTA access key"); return false; }
+    // Public images need no enrollment; never reuse a previous developer bearer.
+    memset(s_downloadKey, 0, sizeof(s_downloadKey));
+    if (release.channel != ReleaseChannel::Public && !ota_access::read(s_downloadKey)) {
+        setError("Set up OTA access key"); return false;
+    }
     s_candidate = esp_ota_get_next_update_partition(nullptr);
     if (!s_candidate || release.size <= 0 || (size_t)release.size > s_candidate->size) {
         setError("image does not fit"); return false;

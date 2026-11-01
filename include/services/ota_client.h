@@ -43,7 +43,8 @@ ReleaseChannel releaseChannel();
 bool setReleaseChannel(ReleaseChannel channel);
 const char* releaseChannelName(ReleaseChannel channel);
 
-// Authenticate access and fetch the signed channel manifest from the CDN.
+// Fetch the signed channel manifest. Public needs no access key; Private and
+// Staging authenticate the developer role before making any release request.
 // Blocking (~1 s). Returns false on failure.
 bool fetchLatestRelease(ReleaseChannel channel, ReleaseInfo* out);
 bool isReleaseNewer(ReleaseChannel channel, const char* candidateTag);
