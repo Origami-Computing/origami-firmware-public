@@ -25,3 +25,26 @@ The N16R8 partition layout preserves NVS at `0x9000`, application slots at `0x10
 This is an ownership-level inspection, not a comprehensive runtime/security audit. Embedded artwork, fonts, cloud endpoints and backend protocol implementation remain subject to publication approval.
 
 The OTA owner overrides Arduino's weak `verifyRollbackLater()` startup hook so `initArduino()` cannot accept a pending image before setup. Only `serviceBootHealth()` accepts it after 30 seconds with a responsive UI and healthy setup; an unhealthy setup requests rollback. The SDK integration regression compiles the actual Arduino startup block with this owner.
+
+## Video uploads and widget download memory
+
+Photos offers Upload for videos and tracks active transfers until a verified
+receipt. HTTPS admission waits for synchronized time. UploadQ uses the existing
+retained 12 KiB stack; no Agent allocation or connection-policy change is made.
+Video hashing/payload reads use bounded PSRAM, TLS writes wait briefly for DMA
+headroom, and redundant initial admission/connection setup is avoided. Lost
+final acknowledgments still require independent backend verification.
+
+Widget bodies and manifest parsing use bounded PSRAM. Public finite-length,
+redirect, deadline, path-validation, 16 KiB manifest and 32-widget limits remain.
+The bounded HTTP reader accepts caller-owned body storage and retains its
+existing String behavior. Incomplete scripts are not written and keep the
+manifest pending; successful earlier writes are not rolled back.
+
+Validation: production build, bounded HTTP/String/PSRAM faults, upload
+coordinator/transport/hash tests, Photos upload/policy/counts, clock admission,
+path-security, retained-stack, architecture and credential checks. Related
+pre-integration device candidates measured 82–93 seconds for ~11.5-second HD
+clips with audio, with verified cloud hashes/decoding/indexing and passing Agent
+reconnect/microphone capture/cancel. This public staging port has not received
+separate physical qualification and does not grant public release approval.
