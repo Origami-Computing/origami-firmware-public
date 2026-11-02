@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "esbuild app.mjs --bundle --format=esm --outfile=dist/app.js",
+    "build": "esbuild app.mjs --bundle --format=esm --outfile=../app.js",
     "test": "node --test core.test.mjs"
   },
   "keywords": [],

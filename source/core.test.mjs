@@ -9,6 +9,6 @@ test('corrupt boot checksum fails',()=>{const o=ota();o[28]^=1;assert.throws(()=
 test('blank boot metadata fails',()=>assert.throws(()=>plan(table(),new Uint8Array(8192).fill(255))));
 test('small or overlapping layout fails',()=>{const t=table();new DataView(t.buffer).setUint32(2*32+8,0x1f0000,true);assert.throws(()=>plan(t,ota()));});
 test('unknown partition fails',()=>{const t=table();t[12]=120;assert.throws(()=>plan(t,ota()));});
-test('pinned firmware passes; modified or short image rejected',async()=>{const b=new Uint8Array(readFileSync('dist/firmware.bin'));await firmware(b);b[99]^=1;await assert.rejects(firmware(b));await assert.rejects(firmware(b.slice(0,100)));});
+test('pinned firmware passes; modified or short image rejected',async()=>{const b=new Uint8Array(readFileSync('../firmware.bin'));await firmware(b);b[99]^=1;await assert.rejects(firmware(b));await assert.rejects(firmware(b.slice(0,100)));});
 
 test('custom-apps layout retains same application slot',()=>{const t=table(),d=new DataView(t.buffer);[[1,2,0xc20000,0x3000,'shipping'],[1,130,0xc30000,0x3d0000,'customapps']].forEach((r,j)=>{const p=(j+5)*32;d.setUint16(p,0x50aa,true);t[p+2]=r[0];t[p+3]=r[1];d.setUint32(p+4,r[2],true);d.setUint32(p+8,r[3],true);t.fill(0,p+12,p+32);t.set(new TextEncoder().encode(r[4]),p+12);});assert.deepEqual(plan(t,ota()),{address:0x10000,protectedEnd:0x1000000});});
