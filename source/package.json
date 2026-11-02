@@ -1,0 +1,19 @@
+{
+  "name": "kami-public-recovery",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "build": "esbuild app.mjs --bundle --format=esm --outfile=dist/app.js",
+    "test": "node --test core.test.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "esbuild": "0.28.2",
+    "esptool-js": "0.7.1"
+  },
+  "private": true
+}
