@@ -10389,10 +10389,6 @@ window.addEventListener("beforeunload", (e) => {
   }
 });
 $("connect").onclick = async () => {
-  if (!$("kami").checked) {
-    status("Please confirm this is an Origami / Kami device first.");
-    return;
-  }
   lock(true);
   selected = null;
   $("install").hidden = true;

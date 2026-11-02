@@ -6,7 +6,7 @@ async function protectedHash(){const regions=[[0,0x10000],[0xc10000,selected.pro
 async function close(){try{await transport?.disconnect();}catch{}loader=null;}
 function lock(value){busy=value;$('connect').disabled=value||!!selected;$('install').disabled=value||!selected;}
 window.addEventListener('beforeunload',e=>{if(busy){e.preventDefault();e.returnValue='';}});
-$('connect').onclick=async()=>{if(!$('kami').checked){status('Please confirm this is an Origami / Kami device first.');return;}lock(true);selected=null;$('install').hidden=true;try{
+$('connect').onclick=async()=>{lock(true);selected=null;$('install').hidden=true;try{
  port=await navigator.serial.requestPort({filters:[{usbVendorId:0x303a}]});status('Connecting to your Kami…');
  transport=new Transport(port,true);loader=new ESPLoader({transport,baudrate:460800,terminal:{clean(){},write(){},writeLine(){}}});
  await loader.main();
