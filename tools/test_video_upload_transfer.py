@@ -11,7 +11,8 @@ with tempfile.TemporaryDirectory() as directory:
   f=p/name;f.parent.mkdir(parents=True,exist_ok=True);f.write_text(text)
  write('esp_heap_caps.h','''#pragma once
 #include <stddef.h>
-constexpr int MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
+constexpr int MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2,MALLOC_CAP_DMA=4;
+size_t heap_caps_get_free_size(int);size_t heap_caps_get_largest_free_block(int);
 void* heap_caps_malloc(size_t,int);void heap_caps_free(void*);
 ''')
  write('hal/hal_sd.h','''#pragma once
@@ -29,8 +30,9 @@ bool seekStream(StreamReader*,size_t);void closeStream(StreamReader*);
 #include <stdint.h>
 #include <stddef.h>
 extern std::vector<std::string> replies,sent;
-extern bool connectOk,writeOk,trusted;
+extern bool connectOk,writeOk,trusted,keepConnection;
 extern size_t fragment;
+extern uint32_t replyDelay;
 uint32_t millis();void delay(unsigned);
 class WiFiClientSecure {
  int index=-1;size_t at=0;
@@ -38,9 +40,9 @@ class WiFiClientSecure {
  int setTimeout(unsigned seconds){return seconds==1?0:-1;}
  int connect(const char*,uint16_t,int);
  size_t write(const uint8_t*,size_t);
- int available(){return index>=0&&at<replies[index].size();}
+ int available(){return index>=0&&at<replies[index].size()&&!(index==1&&at==0&&millis()<replyDelay);}
  int read(){return available()?static_cast<unsigned char>(replies[index][at++]):-1;}
- bool connected(){return available();}
+ bool connected(){return index>=0&&(keepConnection||at<replies[index].size());}
  void stop(){index=-1;}
 };
 ''')
@@ -62,17 +64,20 @@ using namespace core::video_upload;
 std::vector<std::string> replies,sent;
 bool connectOk=true,writeOk=true,trusted=false,saveOk=true,loadOk=true,noMemory=false,readOk=true,cancel=false;
 size_t fragment=SIZE_MAX,seeked=0,cancelAfter=SIZE_MAX;int opened=0,allocations=0,saves=0,allocationCalls=0,failAllocation=0;
-uint32_t ticks=0;
+uint32_t replyDelay=0;bool keepConnection=false;int connects=0;
+uint32_t ticks=0;bool pressure=false,permanentPressure=false,cancelPressure=false;
+size_t heap_caps_get_free_size(int){return permanentPressure|| (pressure&&ticks<40)?1000:20000;}
+size_t heap_caps_get_largest_free_block(int){return heap_caps_get_free_size(4);}
 Resume persisted;
 uint32_t millis(){return ticks++;}void delay(unsigned n){ticks+=n;}
 void* heap_caps_malloc(size_t n,int caps){assert(caps==3);++allocationCalls;if(noMemory||allocationCalls==failAllocation)return nullptr;++allocations;return malloc(n);}
 void heap_caps_free(void* ptr){if(ptr){--allocations;free(ptr);}}
 namespace services {namespace tls {void useRootBundle(WiFiClientSecure&){trusted=true;}}}
 int WiFiClientSecure::connect(const char* host,uint16_t port,int timeout){
- assert(trusted&&std::string(host)=="fixture.invalid"&&port==443&&timeout==5000);trusted=false;
+ ++connects;assert(trusted&&std::string(host)=="fixture.invalid"&&port==443&&timeout==5000);trusted=false;
  if(!connectOk)return 0;index=sent.size();assert(size_t(index)<replies.size());sent.emplace_back();at=0;return 1;
 }
-size_t WiFiClientSecure::write(const uint8_t* p,size_t n){assert(n<=1024);if(!writeOk)return 0;n=std::min(n,fragment);sent[index].append((const char*)p,n);return n;}
+size_t WiFiClientSecure::write(const uint8_t* p,size_t n){assert(n<=8192);if(keepConnection&&index>=0&&at==replies[index].size()&&n>=6&&!memcmp(p,"PATCH ",6)){index=sent.size();sent.emplace_back();at=0;}if(!writeOk)return 0;n=std::min(n,fragment);sent[index].append((const char*)p,n);return n;}
 int mbedtls_base64_encode(unsigned char* out,size_t cap,size_t* used,const unsigned char* in,size_t n){
  const char* alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
  *used=4*((n+2)/3);if(cap<=*used)return -1;
@@ -82,7 +87,7 @@ namespace hal {namespace sd {
 bool openStream(const char*,StreamReader* r){r->handle=r;r->size=persisted.media.bytes;++opened;return true;}
 void closeStream(StreamReader* r){if(r->handle){r->handle=nullptr;--opened;}}
 bool seekStream(StreamReader* r,size_t at){r->position=at;seeked=at;return true;}
-size_t readStream(StreamReader* r,uint8_t* out,size_t n){assert(n<=1024);if(!readOk)return 0;for(size_t i=0;i<n;++i)out[i]=uint8_t(r->position+i);r->position+=n;return n;}
+size_t readStream(StreamReader* r,uint8_t* out,size_t n){assert(n<=8192);if(!readOk)return 0;for(size_t i=0;i<n;++i)out[i]=uint8_t(r->position+i);r->position+=n;return n;}
 }}
 namespace services {namespace video_upload {
 bool binding(const core::secrets::BackendConfig& b,char (&out)[65]){
@@ -92,10 +97,10 @@ bool binding(const core::secrets::BackendConfig& b,char (&out)[65]){
 Load load(const char*,Resume& out){if(!loadOk)return Load::Unavailable;out=persisted;return Load::Ready;}
 Save save(const char*,const Resume& r){++saves;assert(sent.size()==1&&sent[0].find("PATCH")==std::string::npos);if(!saveOk)return Save::Unavailable;persisted=r;return Save::Saved;}
 }}
-bool checkpoint(void*){return !cancel&&(sent.size()<2||sent.back().size()<cancelAfter);}
+bool checkpoint(void*){return !(cancelPressure&&ticks>=20)&&!cancel&&(sent.size()<2||sent.back().size()<cancelAfter);}
 std::string head(uint32_t offset){return "HTTP/1.1 200 OK\r\nTus-Resumable: 1.0.0\r\nUpload-Length: "+std::to_string(persisted.media.bytes)+"\r\nUpload-Offset: "+std::to_string(offset)+"\r\n\r\n";}
 std::string ack(uint32_t offset){return "HTTP/1.1 204 No Content\r\nTus-Resumable: 1.0.0\r\nUpload-Offset: "+std::to_string(offset)+"\r\n\r\n";}
-void reset(){sent.clear();replies.clear();ticks=0;seeked=0;saves=0;allocationCalls=0;assert(!opened&&!allocations);}
+void reset(){keepConnection=false;connects=0;sent.clear();replies.clear();ticks=0;seeked=0;saves=0;allocationCalls=0;assert(!opened&&!allocations);}
 int main(){
  Resume r;strcpy(r.media.name,"VID_test.avi");r.media.bytes=kChunkBytes+100;memset(r.media.sha256,'a',64);memset(r.backendBinding,'b',64);
  strcpy(r.session,"11111111-1111-4111-8111-111111111111");strcpy(r.endpoint,"https://fixture.invalid/storage/v1/upload/resumable/sign");persisted=r;
@@ -108,15 +113,23 @@ int main(){
  reset();replies={head(0),ack(kChunkBytes)};assert(run()==Transfer::Progress&&sent.size()==2);
  auto body=sent[1].substr(sent[1].find("\r\n\r\n")+4);assert(body.size()==kChunkBytes);
  for(size_t i=0;i<body.size();++i)assert(uint8_t(body[i])==uint8_t(i));
+ // Transient DMA pressure drains without spending a retry; permanent pressure
+ // defers and cancellation still returns without leaking buffers or SD handles.
+ reset();pressure=true;replies={head(kChunkBytes),ack(kChunkBytes+100)};assert(run()==Transfer::Verify&&ticks>=40);pressure=false;
+ reset();permanentPressure=true;cancelPressure=true;replies={head(0)};assert(run()==Transfer::Cancelled&&ticks<100);cancelPressure=false;
+ reset();permanentPressure=true;replies={head(0)};assert(run()==Transfer::NoMemory&&ticks<1000);permanentPressure=false;
+ reset();failAllocation=2;replies={head(0)};replies.push_back(ack(kChunkBytes));assert(run()==Transfer::NoMemory);failAllocation=0;
+ reset();keepConnection=true;replies={head(kChunkBytes),ack(kChunkBytes+100)};assert(run()==Transfer::Verify&&connects==1);
+ reset();replyDelay=20000;replies={head(kChunkBytes),ack(kChunkBytes+100)};assert(run()==Transfer::Uncertain&&ticks<20000);replyDelay=0;
  // Lost reply: retry uses the provider's offset, never the previous local count.
- reset();replies={head(kChunkBytes),""};assert(run()==Transfer::Retry&&seeked==kChunkBytes);
+ reset();replies={head(kChunkBytes),""};assert(run()==Transfer::Uncertain&&seeked==kChunkBytes);
  reset();replies={head(kChunkBytes+100)};assert(run()==Transfer::Verify&&sent.size()==1);
- reset();fragment=7;replies={head(kChunkBytes),ack(kChunkBytes+100)};assert(run()==Transfer::Progress);fragment=SIZE_MAX;
+ reset();fragment=7;replies={head(kChunkBytes),ack(kChunkBytes+100)};assert(run()==Transfer::Verify);fragment=SIZE_MAX;
  reset();replies={head(kChunkBytes),ack(kChunkBytes+99)};assert(run()==Transfer::Retry);
  reset();replies={head(kChunkBytes+101)};assert(run()==Transfer::Retry&&sent.size()==1);
  reset();replies={head(0),ack(kChunkBytes)};readOk=false;assert(run()==Transfer::Storage);readOk=true;
  reset();replies={head(0),ack(kChunkBytes)};cancelAfter=3000;
- assert(run()==Transfer::Cancelled&&sent[1].size()<5000);cancelAfter=SIZE_MAX;
+ assert(run()==Transfer::Cancelled&&sent[1].size()<9000);cancelAfter=SIZE_MAX;
  reset();++persisted.generation;assert(run()==Transfer::Invalid&&sent.empty());--persisted.generation;
  reset();cancel=true;assert(run()==Transfer::Cancelled&&sent.empty());cancel=false;
  noMemory=true;assert(run()==Transfer::NoMemory);noMemory=false;

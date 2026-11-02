@@ -21,7 +21,7 @@ static constexpr Spec kSpecs[] = {
     // The former 4 KB stack buffer now lives on the heap. 10 KB retains 2 KB
     // more call-depth room than the old overflowing 8 KB layout while leaving
     // a contiguous internal-RAM block for TLS/AES allocations.
-    { "uploadq",      CORE_SVC,   PRIO_BACKGROUND,  10240 },  // Id::UploadQ
+    { "uploadq",      CORE_SVC,   PRIO_BACKGROUND,  12288 },  // Id::UploadQ
     { "kami_ws",      CORE_SVC,   PRIO_NETWORK,      7168 },  // measured minFree 3668B at 8192
     { "qr_scan",      CORE_SVC,   PRIO_SERVICE,      8192 },  // Id::QrScan: 22KB decode scratch moved to PSRAM
     // Decoder input/PCM buffers live in PSRAM/static storage. 3584 B leaves

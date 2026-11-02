@@ -22,6 +22,7 @@
 #include <freertos/task.h>
 #include <stdio.h>
 #include <atomic>
+#include <esp_heap_caps.h>
 
 #include "apps/agent/agent_flow.h"
 #include "services/eyes_asset.h"
@@ -87,6 +88,53 @@ static uint32_t djb2(const char* s, size_t len) {
     return h;
 }
 
+// Download storage is PSRAM; bounded_http retains finite-length, deadline and redirect policy.
+class PsramBody final : public Stream {
+    uint8_t* bytes_;
+    size_t limit_, size_=0;
+public:
+    explicit PsramBody(size_t limit):bytes_(static_cast<uint8_t*>(
+        heap_caps_malloc(limit+1,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT))),limit_(limit) {}
+    ~PsramBody(){heap_caps_free(bytes_);}
+    PsramBody(const PsramBody&)=delete;
+    PsramBody& operator=(const PsramBody&)=delete;
+    int available() override {return 0;}
+    int read() override {return -1;}
+    int peek() override {return -1;}
+    void flush() override {}
+    size_t write(uint8_t b) override {return write(&b,1);}
+    size_t write(const uint8_t* p,size_t n) override {
+        if(!bytes_ || pollPausePending() || n>limit_-size_)return 0;
+        memcpy(bytes_+size_,p,n);size_+=n;bytes_[size_]=0;return n;
+    }
+    PsramBody& operator=(const char*) {size_=0;if(bytes_)bytes_[0]=0;return *this;}
+    bool reserve(unsigned n) {return bytes_ && n<=limit_;}
+    bool concat(const char* p,unsigned n) {return write(reinterpret_cast<const uint8_t*>(p),n)==n;}
+    size_t length() const {return size_;}
+    const char* c_str() const {return data();}
+    bool isEmpty() const {return size_==0;}
+    const char* data() const {return reinterpret_cast<const char*>(bytes_);}
+    size_t size() const {return size_;}
+};
+class ManifestMemory final : public ArduinoJson::Allocator {
+    size_t used_=0;
+    struct alignas(max_align_t) Header {size_t size;};
+public:
+    void* allocate(size_t n) override {
+        if(n>65536-used_)return nullptr;
+        auto* h=static_cast<Header*>(heap_caps_malloc(n+sizeof(Header),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+        if(!h)return nullptr;h->size=n;used_+=n;return h+1;
+    }
+    void deallocate(void* p) override {if(p){auto* h=static_cast<Header*>(p)-1;used_-=h->size;heap_caps_free(h);}}
+    void* reallocate(void* p,size_t n) override {
+        if(!p)return allocate(n);
+        auto* h=static_cast<Header*>(p)-1;
+        if(n<=h->size)return p;
+        void* next=allocate(n);if(!next)return nullptr;
+        memcpy(next,p,h->size);deallocate(p);return next;
+    }
+};
+
 // Fetch the raw manifest payload and return its hash, or 0 on failure.
 static uint32_t fetchManifestHash() {
     if (WiFi.status() != WL_CONNECTED) return 0;
@@ -104,7 +152,7 @@ static uint32_t fetchManifestHash() {
     http.addHeader("X-Api-Key", config.apiKey);
     const int code = http.GET();
     if (code != 200) { http.end(); return 0; }
-    String payload;
+    PsramBody payload(kMaxManifestBytes);
     const bool bodyOk = services::bounded_http::read(http, kMaxManifestBytes, payload);
     http.end();
     if (!bodyOk || payload.isEmpty()) return 0;
@@ -136,7 +184,7 @@ static bool fetchAndWriteWidget(const core::secrets::BackendConfig& config, WiFi
         Serial.printf("[widget-sync] %s: HTTP %d, skipped\n", slug, c);
         return false;
     }
-    String lua;
+    PsramBody lua(kMaxScriptBytes);
     const bool scriptOk = services::bounded_http::read(get, kMaxScriptBytes, lua);
     get.end();
     yieldBetweenRequests();
@@ -168,7 +216,7 @@ static bool fetchAndWriteWidget(const core::secrets::BackendConfig& config, WiFi
     dataGet.begin(transport, base + kManifestPath + "/" + id + "/data.json");
     dataGet.addHeader("X-Api-Key", config.apiKey);
     if (dataGet.GET() == 200) {
-        String json;
+        PsramBody json(kMaxDataBytes);
         const bool dataOk = services::bounded_http::read(dataGet, kMaxDataBytes, json);
         if (dataOk && json.length() > 0 && json.length() <= kMaxDataBytes) {
             char dpath[80];
@@ -279,7 +327,7 @@ int syncFromBackend(char* errOut, size_t errLen) {
         if (errOut) snprintf(errOut, errLen, "manifest HTTP %d", code);
         return -1;
     }
-    String payload;
+    PsramBody payload(kMaxManifestBytes);
     const bool bodyOk = services::bounded_http::read(http, kMaxManifestBytes, payload);
     http.end();
     if (pollPausePending()) {
@@ -287,8 +335,9 @@ int syncFromBackend(char* errOut, size_t errLen) {
         return -1;
     }
 
-    JsonDocument doc;
-    if (!bodyOk || deserializeJson(doc, payload) || !doc.is<JsonArray>() || doc.size() > kMaxWidgets) {
+    ManifestMemory memory;
+    JsonDocument doc(&memory);
+    if (!bodyOk || deserializeJson(doc, payload.data(), payload.size()) || !doc.is<JsonArray>() || doc.size() > kMaxWidgets) {
         setErr(errOut, errLen, "bad manifest JSON");
         return -1;
     }
@@ -306,7 +355,10 @@ int syncFromBackend(char* errOut, size_t errLen) {
         const char* id = w["id"];
         const char* slug = w["slug"];
         if (!id || !slug || !slug[0]) continue;
-        if (fetchAndWriteWidget(config, transport, id, slug)) written++;
+        if (!fetchAndWriteWidget(config, transport, id, slug)) {
+            setErr(errOut,errLen,"incomplete widget sync");return -1;
+        }
+        written++;
     }
     return written;
 }

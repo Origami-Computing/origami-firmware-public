@@ -13,7 +13,9 @@ inline void configure(HTTPClient& http) {
     static const char* headers[] = {"Transfer-Encoding"};
     http.collectHeaders(headers, 1);
 }
-inline bool read(HTTPClient& http, size_t limit, String& out) {
+// Body provides reserve/concat/length and clearing; callers may own PSRAM storage.
+template<class Body>
+inline bool read(HTTPClient& http, size_t limit, Body& out) {
     out = "";
     const int length = http.getSize();
     if (length < 0 || static_cast<size_t>(length) > limit ||

@@ -93,7 +93,7 @@ public:
     };
 
     // One mutex-protected observation; pending excludes active transfers.
-    struct Counts { int total = 0, pending = 0, failed = 0; };
+    struct Counts { int total = 0, pending = 0, failed = 0, active = 0; };
     Counts counts() const;
     int  size()         const { return counts().total; }
     int  pendingCount() const { return counts().pending; }
