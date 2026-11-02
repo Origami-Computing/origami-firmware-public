@@ -11,6 +11,7 @@
 #include <new>
 
 #include "core/secrets.h"
+#include "core/board_time.h"
 #include "core/upload_receipt.h"
 #include "core/watchdog.h"
 #include "hal/hal_bus.h"
@@ -380,6 +381,11 @@ void UploadQueue::tick() {
         return;
     }
     if (m_uploadPaused || WiFi.status() != WL_CONNECTED || !hasRunnableItem()) return;
+    // Boot deliberately clears wall time. Starting TLS before SNTP succeeds
+    // spends retry turns on certificate-date failures and can delay valid media
+    // for a full cooldown. Local plain-HTTP fixtures do not require a clock.
+    if (!core::time::isSynced() &&
+        strncmp(core::secrets::backendConfig().url, "https://", 8) == 0) return;
     startWorker();
 }
 
@@ -1205,6 +1211,7 @@ UploadQueue::Counts UploadQueue::countsUnlocked() const {
     result.total = m_count;
     for (int i = 0; i < m_count; i++) {
         if (m_items[i].status == QSTATUS_PENDING) ++result.pending;
+        if (m_items[i].status == QSTATUS_UPLOADING) ++result.active;
         if (m_items[i].status == QSTATUS_FAILED) ++result.failed;
     }
     return result;

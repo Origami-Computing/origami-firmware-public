@@ -21,7 +21,7 @@ void* heap_caps_malloc(size_t,int);void heap_caps_free(void*);
 using namespace services::video_upload;
 using core::video_upload::State;
 Resume persisted;core::secrets::BackendRequest config;
-bool stopped=false,noMemory=false,saveOk=true,changeDuringRequest=false;
+bool stopped=false,noMemory=false,saveOk=true,changeDuringRequest=false,createUrl=false,cancelAfterCreate=false;
 Load loaded=Load::Ready;Identify identified=Identify::Ready;
 TransferResult transferred{Transfer::Progress,204};int allocations=0,saves=0,hashes=0,transfers=0,tokenClears=0;
 struct Reply {BackendOperation op;BackendOutcome outcome;unsigned code;State state;unsigned generation;};
@@ -46,7 +46,7 @@ BackendResult request(BackendOperation op,const core::secrets::BackendRequest&,c
  return {expected.outcome,expected.code};
 }
 TransferResult transfer(const char*,const char*,Resume& r,const core::video_upload::Response& admission,bool (*check)(void*),void* context){
- assert(check(context)&&admission.hasUpload&&r.session[0]&&r.media.bytes);assert(!strcmp(persisted.endpoint,r.endpoint));++transfers;return transferred;
+ assert(check(context)&&admission.hasUpload&&r.session[0]&&r.media.bytes);assert(!strcmp(persisted.endpoint,r.endpoint));++transfers;if(createUrl&&!r.location[0]){strcpy(r.location,"https://storage.invalid/storage/v1/upload/resumable/sign/new");persisted=r;if(cancelAfterCreate)stopped=true;return {Transfer::Progress,201};}return transferred;
 }
 }}
 bool checkpoint(void*){return !stopped;}
@@ -54,20 +54,27 @@ void reset(bool session=true){
  assert(!allocations);persisted={};config={};strcpy(config.backend.url,"https://backend.invalid");strcpy(config.backend.apiKey,"account");strcpy(config.token,"bearer");config.revision=7;
  strcpy(persisted.media.name,"VID_test.avi");persisted.media.bytes=100;memset(persisted.media.sha256,'a',64);memset(persisted.backendBinding,'b',64);
  if(session){strcpy(persisted.session,"11111111-1111-4111-8111-111111111111");strcpy(persisted.endpoint,"https://storage.invalid/storage/v1/upload/resumable/sign");strcpy(persisted.location,"https://storage.invalid/storage/v1/upload/resumable/sign/old");}
- stopped=noMemory=changeDuringRequest=false;saveOk=true;loaded=Load::Ready;identified=Identify::Ready;
+ stopped=noMemory=changeDuringRequest=createUrl=cancelAfterCreate=false;saveOk=true;loaded=Load::Ready;identified=Identify::Ready;
  transferred={Transfer::Progress,204};at=0;saves=hashes=transfers=tokenClears=0;replies.clear();
 }
 void reply(BackendOperation op,State state=State::Pending,unsigned generation=0,BackendOutcome outcome=BackendOutcome::Reply,unsigned code=200){replies.push_back({op,outcome,code,state,generation});}
 Result run(){auto result=advance("VID_test.avi","/videos/VID_test.avi",checkpoint,nullptr);assert(!allocations&&at==replies.size());return result;}
 int main(){
- reset(false);persisted.media.bytes=0;persisted.media.sha256[0]=0;assert(run().step==Step::Progress&&hashes==1&&saves==1&&persisted.media.bytes);
+ reset(false);persisted.media.bytes=0;persisted.media.sha256[0]=0;reply(BackendOperation::Admit);assert(run().step==Step::Progress&&hashes==1&&saves==2&&persisted.media.bytes&&transfers==1);
  reset(false);persisted.media.bytes=0;persisted.media.sha256[0]=0;saveOk=false;assert(run().step==Step::Deferred&&!persisted.media.bytes);
- reset(false);reply(BackendOperation::Admit);assert(run().step==Step::Progress&&saves==1&&persisted.session[0]&&transfers==0);
+ reset(false);reply(BackendOperation::Admit);assert(run().step==Step::Progress&&saves==1&&persisted.session[0]&&transfers==1);
+ reset(false);createUrl=true;reply(BackendOperation::Admit);reply(BackendOperation::Complete,State::Complete);transferred={Transfer::Verify,204};assert(run().step==Step::Complete&&transfers==2&&persisted.location[0]);
+ reset(false);createUrl=cancelAfterCreate=true;reply(BackendOperation::Admit);assert(run().step==Step::Cancelled&&transfers==1&&persisted.location[0]);
+ reset(false);reply(BackendOperation::Admit);saveOk=false;assert(run().step==Step::Deferred&&!transfers&&!persisted.session[0]);
+ reset(false);reply(BackendOperation::Admit);changeDuringRequest=true;assert(run().step==Step::Cancelled&&!transfers&&!saves);
+ reset(false);reply(BackendOperation::Admit,State::Verifying);assert(run().step==Step::Progress&&!transfers);
  reset(false);reply(BackendOperation::Admit,State::Complete);assert(run().step==Step::Complete&&!transfers);
  reset();reply(BackendOperation::Status,State::Verifying);assert(run().step==Step::Progress&&!transfers&&!saves);
  reset();reply(BackendOperation::Status,State::Complete);assert(run().step==Step::Complete&&!transfers);
  reset();reply(BackendOperation::Status);reply(BackendOperation::Admit);assert(run().step==Step::Progress&&transfers==1&&!hashes);
  reset();reply(BackendOperation::Status);reply(BackendOperation::Admit);reply(BackendOperation::Complete,State::Complete);transferred={Transfer::Verify,200};assert(run().step==Step::Complete&&transfers==1);
+ reset();reply(BackendOperation::Status);reply(BackendOperation::Admit);reply(BackendOperation::Complete,State::Complete);transferred={Transfer::Uncertain,0};assert(run().step==Step::Complete&&transfers==1);
+ reset();reply(BackendOperation::Status);reply(BackendOperation::Admit);reply(BackendOperation::Complete,State::Verifying);transferred={Transfer::Uncertain,0};assert(run().step==Step::Progress);
  reset();reply(BackendOperation::Status);reply(BackendOperation::Admit);reply(BackendOperation::Complete,State::Verifying);transferred={Transfer::Verify,200};assert(run().step==Step::Progress);
  reset();reply(BackendOperation::Status,State::Failed);reply(BackendOperation::Recover,State::Pending,1);assert(run().step==Step::Progress&&persisted.generation==1&&!persisted.location[0]&&!persisted.endpoint[0]);
  // Recovery succeeded remotely, but its reply/save was lost. Status repairs the

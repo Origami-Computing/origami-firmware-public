@@ -80,47 +80,61 @@ Result advance(const char* id,const char* path,bool (*checkpoint)(void*),void* c
         if(identified!=Identify::Ready)return deferred("Video identity unavailable");
         if(!w.ready())return cancelled();
         if(save(id,w.record)!=Save::Saved)return deferred("Video identity not saved");
-        return progress();
     }
     if(!w.backend.token[0])return {Step::Deferred,0,60000,"Device registration required"};
+    bool admitted=false;
+    BackendResult result{BackendOutcome::Invalid,0};
     if(!w.record.session[0]){
-        const auto result=w.call(BackendOperation::Admit);
+        result=w.call(BackendOperation::Admit);
         if(result.outcome!=BackendOutcome::Reply)return backendFailure(w,result);
-        if(w.response.state==State::Complete)return finishReply(w);
+        if(w.response.state==State::Complete||w.response.state==State::Verifying)return finishReply(w);
         if(!w.ready())return cancelled();
         if(!saveResponse(id,w))return deferred("Video session not saved");
-        return progress();
+        admitted=true;
     }
-    auto result=w.call(BackendOperation::Status);
-    if(result.outcome!=BackendOutcome::Reply)return backendFailure(w,result);
-    if(w.response.generation!=w.record.generation){
-        // Recover a lost recovery reply without reusing an old object's URL.
-        if(!w.ready())return cancelled();
-        if(!saveResponse(id,w))return deferred("Video generation not saved");
-        return progress();
-    }
-    if(w.response.state==State::Complete||w.response.state==State::Verifying)return finishReply(w);
-    if(w.response.state==State::Failed){
-        if(w.record.generation>=3)return rejected("Video recovery limit reached");
-        result=w.call(BackendOperation::Recover);
+    // Newly admitted credentials are already current and the identity/session
+    // have been read back from storage. Do not reopen TLS just to renew them.
+    if(!admitted){
+        result=w.call(BackendOperation::Status);
         if(result.outcome!=BackendOutcome::Reply)return backendFailure(w,result);
-        if(w.response.state==State::Complete)return finishReply(w);
-        if(w.response.generation==w.record.generation)return {Step::Retry,0,0,"Video recovery pending"};
-        if(!w.ready())return cancelled();
-        if(!saveResponse(id,w))return deferred("Video recovery not saved");
-        return progress();
+        if(w.response.generation!=w.record.generation){
+            // Recover a lost recovery reply without reusing an old object's URL.
+            if(!w.ready())return cancelled();
+            if(!saveResponse(id,w))return deferred("Video generation not saved");
+            return progress();
+        }
+        if(w.response.state==State::Complete||w.response.state==State::Verifying)return finishReply(w);
+        if(w.response.state==State::Failed){
+            if(w.record.generation>=3)return rejected("Video recovery limit reached");
+            result=w.call(BackendOperation::Recover);
+            if(result.outcome!=BackendOutcome::Reply)return backendFailure(w,result);
+            if(w.response.state==State::Complete)return finishReply(w);
+            if(w.response.generation==w.record.generation)return {Step::Retry,0,0,"Video recovery pending"};
+            if(!w.ready())return cancelled();
+            if(!saveResponse(id,w))return deferred("Video recovery not saved");
+            return progress();
+        }
+        // Renew only scoped credentials, retaining the exact saved session identity.
+        result=w.call(BackendOperation::Admit);
+        if(result.outcome!=BackendOutcome::Reply)return backendFailure(w,result);
+        if(w.response.state==State::Complete||w.response.state==State::Verifying)return finishReply(w);
     }
-    // Renew only scoped credentials, retaining the exact saved session identity.
-    result=w.call(BackendOperation::Admit);
-    if(result.outcome!=BackendOutcome::Reply)return backendFailure(w,result);
-    if(w.response.state==State::Complete||w.response.state==State::Verifying)return finishReply(w);
     if(w.response.state!=State::Pending||!w.response.hasUpload)return {Step::Retry,0,0,"Video credentials unavailable"};
     if(!w.record.endpoint[0]){
         if(!w.ready())return cancelled();
         if(!saveResponse(id,w))return deferred("Video endpoint not saved");
     } else if(strcmp(w.record.endpoint,w.response.endpoint))return rejected("Video storage destination changed");
     if(!w.ready())return cancelled();
-    const auto sent=transfer(id,path,w.record,w.response,Work::check,&w);
+    const bool creating=!w.record.location[0];
+    auto sent=transfer(id,path,w.record,w.response,Work::check,&w);
+    // Empty TUS creation durably saves its URL before returning. Use the same
+    // scoped admission for the first chunk; do not stop/restart the worker and
+    // renew authorization for an object created moments ago. Still one PATCH
+    // per turn, and cancellation/credential revision is checked at the boundary.
+    if(creating&&sent.outcome==Transfer::Progress&&w.record.location[0]){
+        if(!w.ready())return cancelled();
+        sent=transfer(id,path,w.record,w.response,Work::check,&w);
+    }
     if(!w.ready())return cancelled();
     if(sent.outcome==Transfer::Cancelled)return cancelled();
     if(sent.outcome==Transfer::NoMemory)return deferred("Video memory unavailable");
@@ -128,7 +142,7 @@ Result advance(const char* id,const char* path,bool (*checkpoint)(void*),void* c
     if(sent.outcome==Transfer::Invalid)return rejected("Video transfer state invalid");
     if(sent.outcome==Transfer::Progress)return progress();
     const bool expired=sent.httpStatus==404||sent.httpStatus==410;
-    const bool possiblyStored=expired||sent.httpStatus==409||sent.httpStatus==400;
+    const bool possiblyStored=sent.outcome==Transfer::Uncertain||expired||sent.httpStatus==409||sent.httpStatus==400;
     if(sent.outcome!=Transfer::Verify&&!possiblyStored)return {Step::Retry,sent.httpStatus,0,"Video storage retry"};
     // Provider resource expiry/conflict can also mean the object already exists.
     // Ask the backend to verify before allocating another resource URL.

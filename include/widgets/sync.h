@@ -13,6 +13,10 @@ namespace sync {
  * each script body, writing /widgets/<slug>/main.lua. Synchronous — blocks
  * the calling task for the duration of the HTTP round-trips.
  *
+ * Bounded bodies and manifest parsing use PSRAM. Finite Content-Length,
+ * no redirects, path validation, 16 KiB/32-widget manifest limits and full-body
+ * acceptance remain enforced. Failed scripts keep the manifest pending.
+ *
  * Returns the number of widgets written, or -1 on error (errOut filled with
  * a short human-readable reason).
  */
