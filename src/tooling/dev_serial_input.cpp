@@ -70,7 +70,6 @@
 #include "apps/tutorial_app.h"
 #include "apps/safe_area_app.h"
 #include "apps/settings_menu_app.h"
-#include "apps/screen_brightness_test_app.h"
 #include "apps/wifi_setup_app.h"
 #include "apps/app_store_app.h"
 #include "services.h"
@@ -4098,17 +4097,6 @@ static void handleLine(char* line, uint32_t nowMs) {
   if (tooling::handleTlsCommand(line)) return;
   if (strcmp(line,"widget timer-test")==0) {tooling::probeLuaTimer(Serial);return;}
   if (strcmp(line,"widget runtime-test")==0) {tooling::probeLuaRuntime(Serial);return;}
-  if (startsWithWord(line, "brightness pattern")) {
-    bool ok=false;
-    if(strcmp(line,"brightness pattern off")==0) ok=apps::screen_brightness_test::close();
-    else {
-      int target=0,drive=-1,swap=0;char extra=0;
-      if(sscanf(line,"brightness pattern %d %d %d %c",&target,&drive,&swap,&extra)==3 && (swap==0||swap==1))
-        ok=apps::screen_brightness_test::show(target,drive,swap!=0);
-    }
-    Serial.printf("[brightness-pattern] ok=%u\n",ok?1u:0u);
-    return;
-  }
   if (startsWithWord(line, "brightness")) {
     char* argument = trimInPlace(line + strlen("brightness"));
     bool ok = true;
