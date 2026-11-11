@@ -32,7 +32,7 @@ This produces a **custom production-policy build**, not an official signed OTA r
 
 ## Firmware
 
-This source targets **v1.0.6**. It adds a reworked onboarding flow and Wi-Fi setup by sound, an App Store that installs signed native apps by QR or six-digit code, new built-in games, IMU calibration, a clock that survives deep sleep, battery sleep with alarm wake, faster wake to Home, automatic upload of saved recordings, and memory and network recovery fixes. Native app packages load only with a valid publisher signature and matching hashes.
+This source targets **v1.0.6**. It adds a reworked onboarding flow and Wi-Fi setup by sound, an App Store that installs signed native apps by QR or six-digit code, IMU calibration, a clock that survives deep sleep, battery sleep with alarm wake, faster wake to Home, automatic upload of saved recordings, and memory and network recovery fixes. Native app packages load only with a valid publisher signature and matching hashes.
 
 Earlier releases added on-device video recording with audio and local playback within Photos (v1.0.4) and Public updates without an OTA enrollment key (v1.0.5).
 
