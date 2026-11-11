@@ -46,6 +46,7 @@
 #include "services/ota_client.h"
 #include "core/sleep_timer.h"
 #include "core/watchdog.h"
+#include "core/board_time.h"
 #include "services/morning_quote.h"
 #include "core/power_button.h"
 #include "hal/hal_audio.h"
@@ -53,6 +54,9 @@
 #include "hal/hal_camera.h"
 #include "hal/hal_display.h"
 #include "hal/hal_imu.h"
+#include "services/imu_sensor_calibration.h"
+#include "core/board_bringup.h"
+#include "core/clock_retention.h"
 #include "hal/hal_io.h"
 #include "hal/hal_power.h"
 #include "hal/fuel_gauge_workaround.h"
@@ -100,12 +104,14 @@ bool takeUpdatePrompt() {
 // ---------------------------------------------------------------------------
 
 static bool wakeButtonHeld() {
-    return core::power_button::wakeRequested(false,false,hal::io::readButtonC());
+    return core::power_button::wakeRequested(hal::io::readButtonA(),hal::io::readButtonB(),
+                                             hal::io::readButtonC());
 }
 
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 void testUpdatePrompt() { s_updatePrompt.store(true); }
 static uint32_t s_sleepTestWakeAt=0;
+static uint32_t s_shallowTestMs=0;
 void armSleepTestWake(uint32_t delayMs) { s_sleepTestWakeAt=millis()+delayMs; }
 #endif
 static bool sleepWakeRequested() {
@@ -155,13 +161,47 @@ static void waitForPowerSwitchRelease() {
     uint8_t p0 = 0, p1 = 0, p2 = 0;
     (void)hal::io::readExpanderInputs(&p0, &p1, &p2);
     (void)hal::io::buttonInterruptPending();
+    core::board::rememberSleepInputs(p0, p2);
 }
 
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 static uint64_t s_shutdownTestWakeUs = 0;
 #endif
 
-void doPowerSwitchShutdown() {
+// Radios paused and the root closed: switch accessories off and sleep. No return.
+[[noreturn]] static void enterDeepSleep(int64_t wakeEpoch) {
+    services::automation::prepareForBatterySleep();
+    hal::ble::deinit();
+    hal::wifi::powerDown();
+    hal::camera::deinit();
+    hal::audio::deinitMic();
+    hal::sd::end();
+
+    safeOffAccessoryOutputs();
+    waitForPowerSwitchRelease();
+    core::watchdog::unsubscribe();
+
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+    if (s_shutdownTestWakeUs) {
+        const esp_err_t timer = esp_sleep_enable_timer_wakeup(s_shutdownTestWakeUs);
+        Serial.printf("[power-shutdown-test] timer_us=%llu result=%d\n",
+                      (unsigned long long)s_shutdownTestWakeUs, (int)timer);
+    }
+#endif
+    core::board::armDeepSleepWake(wakeEpoch);
+    const esp_err_t ext0 = esp_sleep_enable_ext0_wakeup(GPIO_NUM_1, 0);
+    holdDirectPinsForDeepSleep();
+    Serial.printf("[power-switch] deep sleep now; wake on TCA_INT_N GPIO1 low, ext0=%d\n",
+                  (int)ext0);
+    core::time::prepareForDeepSleep();
+    Serial.flush();
+    delay(100);
+    esp_deep_sleep_start();
+    for (;;) {}
+}
+
+void doPowerSwitchShutdown(int64_t wakeEpoch) {
     static bool s_shuttingDown = false;
     if (s_shuttingDown) return;
     s_shuttingDown = true;
@@ -188,42 +228,33 @@ void doPowerSwitchShutdown() {
         return;
     }
     Serial.println("[power-switch] network quiescent");
-    services::automation::prepareForBatterySleep();
-    hal::ble::deinit();
-    hal::wifi::powerDown();
-    hal::camera::deinit();
-    hal::audio::deinitMic();
-    hal::sd::end();
-
-    safeOffAccessoryOutputs();
-    waitForPowerSwitchRelease();
-    core::watchdog::unsubscribe();
-
-    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-#ifdef ORIGAMI_DEV_SERIAL_INPUT
-    if (s_shutdownTestWakeUs) {
-        const esp_err_t timer = esp_sleep_enable_timer_wakeup(s_shutdownTestWakeUs);
-        Serial.printf("[power-shutdown-test] timer_us=%llu result=%d\n",
-                      (unsigned long long)s_shutdownTestWakeUs, (int)timer);
-    }
-#endif
-    const esp_err_t ext0 = esp_sleep_enable_ext0_wakeup(GPIO_NUM_1, 0);
-    holdDirectPinsForDeepSleep();
-    Serial.printf("[power-switch] deep sleep now; wake on TCA_INT_N GPIO1 low, ext0=%d\n",
-                  (int)ext0);
-    Serial.flush();
-    delay(100);
-    esp_deep_sleep_start();
+    enterDeepSleep(wakeEpoch);
 }
 
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
-void testPowerSwitchShutdown() {
+void testPowerSwitchShutdown(uint32_t wakeSeconds) {
     // USB bench only: real accessory shutdown and deep sleep, with an added
     // temporary RTC timer so verification does not depend on a physical press.
-    s_shutdownTestWakeUs = 8000000ULL;
-    Serial.println("[power-shutdown-test] real shutdown; automatic wake in 8 seconds");
+    if (wakeSeconds < 1u || wakeSeconds > 3600u) wakeSeconds = 8u;
+    s_shutdownTestWakeUs = (uint64_t)wakeSeconds * 1000000ULL;
+    Serial.printf("[power-shutdown-test] real shutdown; automatic wake in %lu seconds epoch=%ld\n",
+                  (unsigned long)wakeSeconds, (long)time(nullptr));
     doPowerSwitchShutdown();
     s_shutdownTestWakeUs = 0; // A future refusal must not arm the next real press.
+}
+#endif
+
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+void testShallowSleep(uint32_t limitMs) {
+    s_shallowTestMs = limitMs;
+    doBatterySleep();
+}
+
+void testScheduledDeepSleep(uint32_t seconds) {
+    const int64_t target = (int64_t)time(nullptr) + seconds;
+    Serial.printf("[power-alarm-test] target_epoch=%lld seconds=%lu\n",
+                  (long long)target, (unsigned long)seconds);
+    doPowerSwitchShutdown(target);
 }
 #endif
 
@@ -258,9 +289,30 @@ bool servicePowerSwitch(uint32_t nowMs) {
     return false;
 }
 
+// Shallow sleep wakes instantly, so recently used devices stay in it; after this
+// long the battery matters more than wake time and it moves on to deep sleep.
+static constexpr uint32_t kShallowSleepMs = 30u * 60u * 1000u;
+
+// Where deep sleep should aim its timer: 0 for nothing scheduled. False while an
+// alarm is too close to aim at or has no valid clock, so polling must ring it.
+static bool deepSleepWakeTarget(int64_t* wakeEpoch) {
+    time_t fire = 0;
+    *wakeEpoch = 0;
+    if (!services::automation::nextScheduledFire(&fire)) return true;
+    if (!services::automation::wallClockSynced()) return false;
+    if (core::time::scheduledWakeStageSeconds((int64_t)fire - (int64_t)time(nullptr)) <= 0) return false;
+    *wakeEpoch = (int64_t)fire;
+    return true;
+}
+
 void doBatterySleep() {
     services::vibration::stopAll();
-    const bool onExt = hal::power::externalPowerPresent(hal::power::read());
+    bool onExt = hal::power::externalPowerPresent(hal::power::read());
+    uint32_t shallowLimitMs = kShallowSleepMs;
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+    const bool shallowTest = s_shallowTestMs != 0;
+    if (shallowTest) { onExt = false; shallowLimitMs = s_shallowTestMs; s_shallowTestMs = 0; }
+#endif
     hal::power::saveFuelWorkaroundBeforeSleep();
     Serial.printf("[services] sleep (timer=%lu s, extPower=%d)\n",
                   (unsigned long)core::sleep_timer::seconds(), (int)onExt);
@@ -334,21 +386,47 @@ void doBatterySleep() {
             }
         } else {
             Serial.println("[services] rev4: no IMU ext0 wake pin — timer/button wake only");
+            // The 150 ms tick can miss a tap; the expander line wakes on the press.
+            (void)esp_sleep_enable_ext0_wakeup(GPIO_NUM_1, 0);
         }
 
+        const uint32_t shallowStartMs = millis();
         for (;;) {
             esp_sleep_enable_timer_wakeup(150ULL * 1000ULL);
             esp_light_sleep_start();
-            if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0) (void)hal::imu::pollWakeUp();
+            const bool expanderWake = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0;
+            if (expanderWake) (void)hal::imu::pollWakeUp();
+            const bool buttonDown = wakeButtonHeld();
+            if (expanderWake) {
+                // Reading every port releases the shared line; otherwise a charger
+                // edge would hold it low and spin this loop.
+                uint8_t p0 = 0, p1 = 0, p2 = 0;
+                (void)hal::io::readExpanderInputs(&p0, &p1, &p2);
+            }
+            if (buttonDown) break;
             hal::power::Status pw = hal::power::read();
-            if (hal::power::externalPowerPresent(pw)) break;
+            bool pluggedIn = hal::power::externalPowerPresent(pw);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+            if (shallowTest) pluggedIn = false;
+#endif
+            if (pluggedIn) break;
             if (sleepWakeRequested()) break;
+            int64_t wakeEpoch = 0;
+            if ((uint32_t)(millis() - shallowStartMs) >= shallowLimitMs &&
+                deepSleepWakeTarget(&wakeEpoch)) {
+                // Straight down with the radios still paused and the screen dark.
+                Serial.printf("[services] shallow sleep -> deep sleep wake_epoch=%lld\n",
+                              (long long)wakeEpoch);
+                NavHandler::instance().shutdown();
+                enterDeepSleep(wakeEpoch);
+            }
         }
     }
 
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
     s_sleepTestWakeAt=0;
 #endif
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_EXT0);
     hal::input::suppressUntilButtonsReleased();
     // Re-arm freeze-detection now that ui_task resumes normal looping.
     core::watchdog::subscribe();
@@ -470,6 +548,7 @@ void init() {
 
     if (hal::imu::init()) {
         Serial.println("IMU OK");
+        services::imu_sensor_calibration::loadAndApply();
         if (hal::imu::enableStepCounter())
             Serial.println("Pedometer ON (LSM6DSL)");
         else

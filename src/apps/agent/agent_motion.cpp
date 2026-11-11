@@ -3,6 +3,9 @@
 #include "apps/agent/agent_render.h"
 #include "apps/agent/agent_emotion.h"
 #include "apps/agent_app.h"
+#include "apps/tutorial_app.h"
+#include "ui/proposals/design_system.h"
+#include "ui/onboarding_scenes.h"
 #include "hal/hal_display.h"
 #include "nav_handler.h"
 #include "ui/agent_transition_motion.h"
@@ -100,7 +103,7 @@ void actor(const ui::agent_motion::Frame& f,bool capturing=false){
 }
 void listening(float alpha,uint32_t now){
     if(alpha<=0)return;
-    Ink ink{alpha};music_view::text(ink,"Listening",68,204,2,0x18c3);
+    Ink ink{alpha};if(apps::tutorial::sessionActive()){ui::design::center(ink,"Listening...",202,18,0x18c3);return;}music_view::text(ink,"Listening",68,204,2,0x18c3);
     for(int i=0;i<3;++i){
         int lift=lroundf(4*fmaxf(0.f,sinf(now*6.2831853f/1200-i*.8f)));
         music_view::text(ink,".",176+i*12,204-lift,2,0x18c3);
@@ -174,7 +177,12 @@ void drawListening(AgentState& s,uint32_t now){
     }else{
         if(previous){free(previous);previous=nullptr;}
         float settle=1-ui::agent_motion::ramp(age,0,280);
-        ui::home_eyes::drawConversationEyes(hal::display::tft(),listeningX*settle,listeningY*settle,now);
+        if(apps::tutorial::sessionActive()){
+            for(int row=0;row<132;row+=8){
+                ui::eye_rig::draw(hal::display::tft(),40,44,200,132,ui::eye_rig::kPresets[0].pose,1,0xffff,88,0,0,false,255,row,std::min(row+8,132),.9f);
+                serviceMicCaptureEarly();
+            }
+        }else ui::home_eyes::drawConversationEyes(hal::display::tft(),listeningX*settle,listeningY*settle,now);
     }
     serviceMicCaptureEarly();listening(f.listening*(listeningFromReply?ui::agent_motion::ramp(age,120,180):1),age);
     // Composite last: eye sprites contain an opaque rectangular background.
@@ -185,6 +193,13 @@ void drawListening(AgentState& s,uint32_t now){
 void startThinking(){thinkingSettled=false;hal::display::setFlushService(nullptr);begin(Kind::Thinking);drawThinking(millis());}
 void drawThinking(uint32_t now){
     uint32_t us=micros();const unsigned age=ageAt(now);
+    if(apps::tutorial::sessionActive()){
+        ui::listening_style::end();
+        hal::display::fillScreen(0xffff);
+        ui::agent_motion::Frame f;f.avatar=f.body=1;actor(f);
+        ui::onboarding_scenes::loading(hal::display::tft(),age,136);
+        finishFrame(us);return;
+    }
     const bool incremental=thinkingSettled && age>=700;
     float out=1-ui::agent_motion::ramp(age,150,550);
     if(kind==Kind::Thinking && ui::listening_style::ready())hal::display::fillScreen(0xffff);
@@ -244,10 +259,11 @@ bool tick(AgentState& s,uint32_t now){
     contentTrimmed=eyesOnly;
     if(kind==Kind::Reply){
         ui::agent_motion::Frame f;
-        f.avatar=ui::agent_motion::ramp(age,0,380);
+        const bool lesson=apps::tutorial::sessionActive();
+        f.avatar=lesson?1:ui::agent_motion::ramp(age,0,380);
         pose=ui::eye_rig::interpolate(ui::eye_rig::kPresets[0].pose,emotion::snapshot(0).pose,f.avatar);
-        f.body=ui::agent_motion::ramp(age,280,140);
-        float amount=ui::agent_motion::ramp(age,380,180);
+        f.body=lesson?1:ui::agent_motion::ramp(age,280,140);
+        float amount=lesson?ui::agent_motion::ramp(age,0,420):ui::agent_motion::ramp(age,380,180);
         Ink ink{amount};if(amount>0)ui::pixel_dialogue::draw(ink,{22,78,236,mix(4,150,amount)},kUiDialogueBorder,kUiDialogueFill);
         actor(f);
         if(age>=560){cancel();render::paintReplyShell(s);s.twLastMs=now;}

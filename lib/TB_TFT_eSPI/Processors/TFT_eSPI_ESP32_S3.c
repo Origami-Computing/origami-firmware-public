@@ -236,6 +236,10 @@ void TFT_eSPI::pushBlock(uint16_t color, uint32_t len){
 //*/
 //*
 void TFT_eSPI::pushBlock(uint16_t color, uint32_t len){
+#ifdef ORIGAMI_DISPLAY_DIMMING
+  _outputStats.solid += len;
+  color = outputColor(color);
+#endif
 
   volatile uint32_t* spi_w = _spi_w;
   uint32_t color32 = (color<<8 | color >>8)<<16 | (color<<8 | color >>8);
@@ -283,6 +287,14 @@ void TFT_eSPI::pushBlock(uint16_t color, uint32_t len){
 ** Description:             Write a sequence of pixels with swapped bytes
 ***************************************************************************************/
 void TFT_eSPI::pushSwapBytePixels(const void* data_in, uint32_t len){
+
+#ifdef ORIGAMI_DISPLAY_DIMMING
+  if (_outputScale && _outputScale->active()) {
+    _outputStats.stream += len;
+    pushScaledPixels(data_in, len, true);
+    return;
+  }
+#endif
 
   uint8_t* data = (uint8_t*)data_in;
   uint32_t color[16];
@@ -371,7 +383,56 @@ void TFT_eSPI::pushSwapBytePixels(const void* data_in, uint32_t len){
 ** Function name:           pushPixels - for ESP32
 ** Description:             Write a sequence of pixels
 ***************************************************************************************/
+#ifdef ORIGAMI_DISPLAY_DIMMING
+// Prepare the next FIFO while SPI shifts the preceding one. Calling the raw
+// writer for every chunk would drain SPI each time and serialize conversion
+// with transfer, allowing the LCD scan to overtake a dimmed frame.
+void TFT_eSPI::pushScaledPixels(const void* data_in, uint32_t len, bool nativeOrder) {
+  const uint8_t* source = static_cast<const uint8_t*>(data_in);
+  uint32_t chunk[16];
+  while (len) {
+    const uint32_t count = len < 32 ? len : 32;
+    for (uint32_t i=0; i<count; i+=2) {
+      uint16_t rgb = nativeOrder ? source[0] | (source[1]<<8)
+                                 : (source[0]<<8) | source[1];
+      uint16_t dimmed = _outputScale->map(rgb);
+      uint32_t pair = uint16_t((dimmed<<8) | (dimmed>>8));
+      source+=2;
+      if (i+1<count) {
+        rgb = nativeOrder ? source[0] | (source[1]<<8)
+                          : (source[0]<<8) | source[1];
+        dimmed = _outputScale->map(rgb);
+        pair |= uint32_t(uint16_t((dimmed<<8) | (dimmed>>8)))<<16;
+        source+=2;
+      }
+      chunk[i/2]=pair;
+    }
+    while (READ_PERI_REG(SPI_CMD_REG(SPI_PORT))&SPI_USR);
+    WRITE_PERI_REG(SPI_MOSI_DLEN_REG(SPI_PORT), (count<<4)-1);
+    for (uint32_t i=0; i<(count+1)/2; ++i)
+      WRITE_PERI_REG(SPI_W0_REG(SPI_PORT)+i*4, chunk[i]);
+#if CONFIG_IDF_TARGET_ESP32S3
+    SET_PERI_REG_MASK(SPI_CMD_REG(SPI_PORT), SPI_UPDATE);
+    while (READ_PERI_REG(SPI_CMD_REG(SPI_PORT))&SPI_UPDATE);
+#endif
+    SET_PERI_REG_MASK(SPI_CMD_REG(SPI_PORT), SPI_USR);
+    len -= count;
+  }
+  while (READ_PERI_REG(SPI_CMD_REG(SPI_PORT))&SPI_USR);
+}
+
+void TFT_eSPI::pushPixels(const void* data_in, uint32_t len) {
+  _outputStats.stream += len;
+  if (_outputScale && _outputScale->active()) {
+    pushScaledPixels(data_in, len, _swapBytes);
+    return;
+  }
+  pushPixelsRaw(data_in, len);
+}
+void TFT_eSPI::pushPixelsRaw(const void* data_in, uint32_t len){
+#else
 void TFT_eSPI::pushPixels(const void* data_in, uint32_t len){
+#endif
 
   if(_swapBytes) {
     pushSwapBytePixels(data_in, len);
@@ -633,6 +694,14 @@ void TFT_eSPI::dmaWait(void)
 void TFT_eSPI::pushPixelsDMA(uint16_t* image, uint32_t len)
 {
   if ((len == 0) || (!DMA_Enabled)) return;
+#ifdef ORIGAMI_DISPLAY_DIMMING
+  if (_outputScale && _outputScale->active()) {
+    dmaWait();
+    ++_outputStats.dmaFallback;
+    pushPixels(image, len);
+    return;
+  }
+#endif
 
   dmaWait();
 
@@ -677,6 +746,16 @@ void TFT_eSPI::pushPixelsDMA(uint16_t* image, uint32_t len)
 void TFT_eSPI::pushImageDMA(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t const* image)
 {
   if ((w == 0) || (h == 0) || (!DMA_Enabled)) return;
+#ifdef ORIGAMI_DISPLAY_DIMMING
+  if (_outputScale && _outputScale->active()) {
+    dmaWait();
+    ++_outputStats.dmaFallback;
+    setAddrWindow(x, y, w, h);
+    _outputStats.stream += w*h;
+    pushScaledPixels(image, w*h, false); // const DMA API is already wire order
+    return;
+  }
+#endif
 
   uint16_t *buffer = (uint16_t*)image;
   uint32_t len = w*h;
@@ -721,6 +800,14 @@ void TFT_eSPI::pushImageDMA(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t
 void TFT_eSPI::pushImageDMA(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t* image, uint16_t* buffer)
 {
   if ((x >= _vpW) || (y >= _vpH) || (!DMA_Enabled)) return;
+#ifdef ORIGAMI_DISPLAY_DIMMING
+  if (_outputScale && _outputScale->active()) {
+    dmaWait();
+    ++_outputStats.dmaFallback;
+    pushImage(x, y, w, h, image); // retain ordinary clipping/swap semantics
+    return;
+  }
+#endif
 
   int32_t dx = 0;
   int32_t dy = 0;

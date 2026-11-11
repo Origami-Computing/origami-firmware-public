@@ -63,14 +63,14 @@ void resetFaults(){failAt=-1;operations=0;snapshot=false;shortWrite=false;}
 void checkRecovery(const Disk& state){disk=state;resetFaults();UploadQueue boot;assert(boot.loadManifestUnlocked());
  assert(boot.m_count==1);assert(boot.m_nextImgId==164||boot.m_nextImgId==165);assert(boot.m_nextAudId==12);
  assert(boot.m_items[0].status==QSTATUS_PENDING);assert(!strcmp(boot.m_items[0].id,"test-pending.jpg"));
- assert(boot.m_items[0].attempts<=1);assert(boot.m_items[0].attemptsThisTurn==0);assert(boot.m_items[0].nextEligibleAt==0);
+ assert(boot.m_items[0].capturedAtUnix==1793649600);assert(boot.m_items[0].attempts<=1);assert(boot.m_items[0].attemptsThisTurn==0);assert(boot.m_items[0].nextEligibleAt==0);
  // A recovered copy must survive the following save too.
  assert(boot.saveManifestUnlocked());UploadQueue second;assert(second.loadManifestUnlocked());assert(second.m_count==1&&second.m_nextImgId==boot.m_nextImgId);
 }
 int main(){
  UploadQueue q;q.m_count=1;q.m_nextImgId=164;q.m_nextAudId=12;auto& item=q.m_items[0];
  strcpy(item.id,"test-pending.jpg");strcpy(item.filePath,"/upload_queue/test-pending.jpg");strcpy(item.type,"image");strcpy(item.mimeType,"image/jpeg");strcpy(item.fileName,item.id);
- item.status=QSTATUS_UPLOADING;disk[item.filePath]="media";assert(q.saveManifestUnlocked());
+ item.capturedAtUnix=1793649600;item.status=QSTATUS_UPLOADING;disk[item.filePath]="media";assert(q.saveManifestUnlocked());
  // Include a prior backup and stale scratch so their cleanup is fault-tested.
  disk[UPLOAD_QUEUE_MANIFEST ".bak"]=R"({"nextImgId":163,"nextAudId":12,"items":[]})";disk[UPLOAD_QUEUE_MANIFEST ".tmp"]="partial";
  Disk initial=disk;q.m_nextImgId=165;item.attempts=1;snapshot=true;operations=0;assert(q.saveManifestUnlocked());
@@ -79,6 +79,9 @@ int main(){
  disk=initial;resetFaults();shortWrite=true;assert(!q.saveManifestUnlocked());Disk shortState=disk;checkRecovery(shortState);
  disk=initial;disk[UPLOAD_QUEUE_MANIFEST ".bak"]=disk[UPLOAD_QUEUE_MANIFEST];disk[UPLOAD_QUEUE_MANIFEST]="{}";disk.erase(UPLOAD_QUEUE_MANIFEST ".tmp");checkRecovery(disk);
  disk=initial;disk[UPLOAD_QUEUE_MANIFEST ".bak"]=disk[UPLOAD_QUEUE_MANIFEST];disk.erase(UPLOAD_QUEUE_MANIFEST);disk[UPLOAD_QUEUE_MANIFEST ".tmp"]="{partial";checkRecovery(disk);
+ disk.clear();resetFaults();
+ disk[UPLOAD_QUEUE_MANIFEST]=R"({"nextImgId":2,"nextAudId":1,"items":[{"id":"old.jpg","path":"/photos/old.jpg","type":"image","mime":"image/jpeg"}]})";
+ UploadQueue legacy;assert(legacy.loadManifestUnlocked()&&legacy.m_items[0].capturedAtUnix==0);
  disk.clear();resetFaults();UploadQueue fresh;assert(fresh.loadManifestUnlocked()&&fresh.m_count==0);
  disk[UPLOAD_QUEUE_MANIFEST]="{}";UploadQueue corrupt;assert(!corrupt.loadManifestUnlocked());assert(disk[UPLOAD_QUEUE_MANIFEST]=="{}");
  disk=initial;resetFaults();UploadQueue reserve;assert(reserve.loadManifestUnlocked());

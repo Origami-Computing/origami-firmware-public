@@ -7,7 +7,7 @@
  * When the Kami agent generates a widget it sends widget frames over the agent
  * WebSocket (widget_v1): widget_loading before generation, widget_ready when the
  * widget is saved, widget_error on failure. services::agent_inbox hands those to
- * the notify* setters here on ui_task; the Lua Widget app + the ui_task main loop
+ * the notify* setters here on ui_task; the Custom Apps app + the ui_task main loop
  * poll the take* getters to drive the UI:
  *
  *   widget_loading -> main loop pushes the Lua app + shows the loading screen
@@ -24,6 +24,7 @@ namespace widgets {
 namespace launch {
 
 // ── Setters — called by the automation action handler ───────────────────────
+// Starts a new build and discards any unconsumed previous completion.
 void notifyLoading(const char* title);
 void notifyReady(const char* id, const char* slug);
 void notifyError(const char* msg);

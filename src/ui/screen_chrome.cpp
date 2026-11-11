@@ -24,6 +24,8 @@ void setSceneChromeBackground(uint16_t color, bool repaintedBar) {
     s_repaintedBar |= repaintedBar;
 }
 
+void invalidateScreenChrome() { s_repaintedBar = true; }
+
 bool takeScreenChromeRepaint() {
     const bool repaint = s_repaintedBar;
     s_repaintedBar = false;

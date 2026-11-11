@@ -60,6 +60,9 @@ public:
      *  fault; the caller must replace the incomplete scene with an error view. */
     bool buildScene(ui::scene::Scene& out, uint32_t now, int16_t w, int16_t h);
 
+    // UI-task host loading failure; preserves the normal fault view and retry.
+    void fail(const char* message) { setFault(message); }
+
     bool        faulted() const { return faulted_; }
     const char* error()   const { return errBuf_; }
 

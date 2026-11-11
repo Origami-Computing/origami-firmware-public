@@ -136,6 +136,16 @@ bool takeUserActivityPulse();
 /** Before entering battery sleep: stay awake if next event soon. */
 bool shouldDeferBatterySleep();
 
+/**
+ * True while anything is scheduled to fire (alarm, timer, recipe). Deep sleep has
+ * no alarm wake, so sleep must stay in the polling loop while this is true.
+ * UI task; does not block.
+ */
+bool hasScheduledFire();
+
+/** Earliest scheduled fire time; false when nothing is scheduled. UI task. */
+bool nextScheduledFire(time_t* out);
+
 /** After each light-sleep iteration: exit sleep loop to serve due automation. */
 bool shouldExitBatterySleepLoop();
 

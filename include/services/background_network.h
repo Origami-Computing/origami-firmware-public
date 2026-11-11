@@ -6,7 +6,8 @@ namespace services { namespace background_network {
 
 // Single HTTP batch across periodic polling, uploads and Settings OTA notices.
 // Nonblocking admission:
-// a busy caller defers work instead of waiting inside TLS and expiring its watchdog.
+// busy or low-internal-memory callers defer instead of competing with foreground
+// TLS/DMA. Memory admission requires 24 KB free and a 12 KB contiguous block.
 // Release before idle/pause acknowledgment. Notice admission precedes worker
 // allocation, with ownership transferred via its atomic state. Not an Agent lock.
 class PeriodicWork {
@@ -15,11 +16,15 @@ public:
     ~PeriodicWork() { release(); }
     PeriodicWork(const PeriodicWork&) = delete;
     PeriodicWork& operator=(const PeriodicWork&) = delete;
-    bool tryEnter();
-    // At a completed HTTP boundary, yield a long batch to a waiting peer.
+    bool tryEnter(bool installWorker=false);
+    static void prioritizeInstall(bool wanted);
+    // At a completed HTTP boundary, yield to a waiting peer or memory pressure.
     // Caller must delay before retrying; never call with live HTTP/SD resources.
-    bool yieldIfContended();
-    static bool hasWaitingPeer();
+    bool yieldIfNeeded();
+    static bool shouldYield();
+    // Memory-only boundary for a reusable HTTP batch: yielding to contention
+    // before each file would repeatedly abandon the same manifest's prefix.
+    static bool hasMemoryReserve();
     void release();
 private:
     bool entered_ = false;

@@ -23,6 +23,18 @@ Session::~Session() {
     releaseBackground();
 }
 
+Session::PrepareResult Session::pollPrepareScan() {
+    if (!claim()) return PrepareResult::CameraBusy;
+    using Result = background_network::PeripheralReservation::Result;
+    auto admission = reservation_.pollAcquire();
+    if (admission == Result::Pending) return PrepareResult::Pending;
+    if (admission != Result::Acquired) {
+        releaseBackground();
+        return PrepareResult::BackgroundBusy;
+    }
+    return agentPause_.pollAcquire() ? PrepareResult::Ready : PrepareResult::Pending;
+}
+
 Session::PrepareResult Session::prepareScan(StageObserver observer) {
     if (!claim()) return PrepareResult::CameraBusy;
     if (observer) observer("before-pause");
@@ -67,10 +79,10 @@ void Session::restoreUi(Resume mode) {
     }
     if (mode == Resume::DeferredWithInputRecovery && inputRecoveryPending_) {
         // Preserve the existing rev-4 recovery after camera SCCB/I2C use.
-        inputRecoveryPending_ = false;
         Wire.end();
         Wire.begin(SDA_PIN, SCL_PIN);
         (void)hal::io::reinitAfterI2CRestart();
+        inputRecoveryPending_ = false;
     }
 }
 

@@ -1,0 +1,20 @@
+{
+  "source": "https://raw.githubusercontent.com/espressif/esp-idf/v4.4.7/components/wpa_supplicant/",
+  "files": {
+    "src/common/sae.c": "413651bf3668d47ec4dc6b3056c6bb64b724e27d7973961b70f2e4ac6631c213",
+    "src/utils/includes.h": "4a88ea754f94715679badd543f32ec811c288e19d1ddd64233b30d55ebe28540",
+    "src/utils/common.h": "4a8f7a8932566d7c99c1bb6f6efcf99a7e28515e7f0adcb04b932801d9550594",
+    "src/utils/const_time.h": "0902bc663f991f48deb787bcc2adf56238248637f6e5bc8ce6acde04a00b3cf1",
+    "src/crypto/crypto.h": "fa2ef1d998a5cfcedd364f165dd9d600b61f024a966699eb6911b9ce384de2e3",
+    "src/crypto/sha256.h": "43172032cf02845ce64c429a0f0ed1d71d3d8a4fb1dc41d757f1423f4916ac7d",
+    "src/crypto/random.h": "dc1637594b3f59112cd196825b750a14803b9d28eca466c9747b6aca6351d42f",
+    "src/crypto/dh_groups.h": "e08a1e8190636bf938a8b53e1a252c709bd17d32d465fd295c4a08972cb4827f",
+    "src/common/ieee802_11_defs.h": "885be2e140a2f30001381fc73ef3eb3d819588b4900e5dc0800ce40f4bed5f33",
+    "src/common/sae.h": "cdec140b892b43e1c481e32174e035fb6ba8680abdccdc0256531b4c36bdd120",
+    "src/common/dragonfly.h": "83608a7cc2d14db1a69d55a207c54815eeb84d8ec00f99fcfcacbf9194703745",
+    "src/utils/list.h": "9f81d0f91a32e35742cf7745ad78f1ef575f4f3893cd7f1f130954ddd51db085",
+    "include/utils/wpa_debug.h": "8691ea053f53b324a2601e4790b58c151872573347cf1b59404fcf75264a2243",
+    "include/utils/wpabuf.h": "a50ae98509d1bfe3ee384063064823f2c44e0350cd25521780870a53db3b9874",
+    "README": "17ccbcf4b17a910795292fb4a95f4742d2ecda37d06fcf20d60ffbd70cfbc609"
+  }
+}

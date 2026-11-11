@@ -10,4 +10,7 @@ uint16_t screenChromeColor(const scene::Screen* screen);
 void beginScreenChrome(const void* screen);
 // Called by full-content clears and scene background rectangles, not text/panels.
 void setSceneChromeBackground(uint16_t color, bool repaintedBar = false);
+// UI-task: the framebuffer status strip was overwritten without changing its
+// background provenance. Request one full repaint by the navigator.
+void invalidateScreenChrome();
 bool takeScreenChromeRepaint();

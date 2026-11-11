@@ -297,7 +297,7 @@ void drainTelemetry() {
   bool usageAccepted[TELEMETRY_BATCH_MAX] = {};
   int sent = 0;
   int i = 0;
-  while (i < n && !stopRequested() && !background_network::PeriodicWork::hasWaitingPeer()) {
+  while (i < n && !stopRequested() && !background_network::PeriodicWork::shouldYield()) {
     core::watchdog::feed();  // each POST can block seconds; keep the WDT happy between them
     if (batch[i].kind == KIND_LOG || batch[i].kind == KIND_VERBOSE) {
       int j = i;
@@ -401,7 +401,7 @@ void lifecycle::run(void*) {
           // A scan arriving during an optional request must not wait through
           // the remaining batch of account/automation/telemetry/file polls.
           if (onboardingRequestPending()) return true;
-          if (!periodic.yieldIfContended()) return false;
+          if (!periodic.yieldIfNeeded()) return false;
           phase("periodic_yield");
           ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(kTickMs));
           return true;

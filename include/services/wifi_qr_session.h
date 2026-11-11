@@ -17,8 +17,12 @@ public:
     Session(const Session&) = delete;
     Session& operator=(const Session&) = delete;
     bool begin(Observer observer);
+    enum class Startup { Pending, Ready, Busy };
+    Startup pollBegin();
+    void cancelPendingBegin();
     Decoder prepareDecoder(Observer observer);
-    bool openCamera();
+    enum class Exposure { SettleBeforePreview, SettleDuringPreview };
+    bool openCamera(Exposure exposure = Exposure::SettleBeforePreview);
     void stopCapture();
     void fail();
     Join join(const core::wifi_qr::Credentials&, uint32_t startedMs);

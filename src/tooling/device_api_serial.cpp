@@ -93,6 +93,9 @@ bool handleDeviceApi(const char* line,Print& output) {
   if(request.operation==Op::TimerStart) {
     if(args.size()!=1 || !args["duration_seconds"].is<uint32_t>())return reject("invalid_argument");
     request.durationSeconds=args["duration_seconds"];
+  } else if(request.operation==Op::HapticPlay) {
+    if(args.size()!=1 || !args["cue"].is<const char*>())return reject("invalid_argument");
+    request.cue=args["cue"];
   } else if(request.operation==Op::VolumeSet) {
     if(args.size()!=1 || !args["value"].is<int>())return reject("invalid_argument");
     request.volume=args["value"];

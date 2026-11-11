@@ -1,0 +1,48 @@
+{
+  "source_commit": "cae54b08a92641a674ec685ca8a1f99f375eb93a",
+  "files": [
+    {
+      "name": "timer",
+      "path": "timer.cpp",
+      "source_path": "src/apps/timer_app.cpp",
+      "source_sha256": "93fa719c4f7f06e9eedf758af302d85ee7e2cc6d857289702c0f1c2fa92d6afe",
+      "markers": [
+        "static const char* soundName(",
+        "static void previewSound("
+      ],
+      "sha256": "16e68a89edbe86d099ae074fc40d4b621a75d8067e799ef05e35d29445741f95"
+    },
+    {
+      "name": "alarm",
+      "path": "alarm.cpp",
+      "source_path": "src/apps/alarm_clock_app.cpp",
+      "source_sha256": "4a6464045d52e7db0433999f339c787e23e386cc90d2acc4d7ecfb35f3dc862d",
+      "markers": [
+        "static const char* soundName(",
+        "static void previewSound("
+      ],
+      "sha256": "16e68a89edbe86d099ae074fc40d4b621a75d8067e799ef05e35d29445741f95"
+    },
+    {
+      "name": "ring",
+      "path": "ring.cpp",
+      "source_path": "src/ui/automation_alert.cpp",
+      "source_sha256": "5f1d5ef5c071c261a98eeae33ba2151358abecd9206a3d2ea4ab84413723cb55",
+      "markers": [
+        "static const SfxDef& ringDef(",
+        "static uint16_t ringGapMs("
+      ],
+      "sha256": "4e3568fed5d9e472ebff06a1ae56c4f5165083e331cee71d0aee10eee696c588"
+    },
+    {
+      "name": "interval",
+      "path": "interval.cpp",
+      "source_path": "src/services/interval_feedback.cpp",
+      "source_sha256": "a92f2d86b2bcea56ba8bd07a91f8801faafe75ba1ed0dbbcb92ceca51c260aed",
+      "markers": [
+        "const SfxDef& definition("
+      ],
+      "sha256": "cf28f101459024964acf9ffa127bf0270c65e7eb0898abaab370c0ea74cba448"
+    }
+  ]
+}

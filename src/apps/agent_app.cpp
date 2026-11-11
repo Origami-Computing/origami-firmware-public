@@ -34,7 +34,6 @@
 #include "sfx/sfx_typewriter.h"
 #include "ui/listening_style.h"
 #include "apps/agent/agent_motion.h"
-#include "apps/settings_menu_app.h"
 #include "nav_handler.h"
 #include "sfx/sfx.h"
 
@@ -93,11 +92,7 @@ bool developmentUi(const char* command) {
     if (strncmp(command,"style ",6)==0) {
         char* end=nullptr; const long index=strtol(command+6,&end,10);
         if(end==command+6 || *end) return false;
-        return ui::listening_style::select(index,false);
-    }
-    if(strcmp(command,"styles")==0 && s.stage==Stage::Eyes) {
-        apps::settings_menu::openAgentStyles();
-        return true;
+        return ui::listening_style::select(index);
     }
     if (strncmp(command,"level ",6)==0 && s.stage==Stage::Recording) {
         char* end = nullptr;
@@ -379,7 +374,11 @@ static const ::scene::Screen* const kScreens[] = {
 static AppPresentation presentationPolicy() {
     AppPresentation p{};
     if (motion::ownsStatusBackground()) p.statusBar=AppPresentation::StatusBar::GlyphOverlay;
-    p.drawOverlay=[](TFT_eSprite&) { if(isRecording()) drawRecordingOverlay(); };
+    // A covered recording retains its stage until resume; cancellation is async.
+    // Its full listening scene must not overwrite the newly mounted app.
+    p.drawOverlay=[](TFT_eSprite&) {
+        if(NavHandler::instance().top()==&app && isRecording()) drawRecordingOverlay();
+    };
     return p;
 }
 static core::health::RuntimePolicy runtimePolicy() {

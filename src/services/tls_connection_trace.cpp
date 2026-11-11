@@ -7,6 +7,8 @@
 #include <mbedtls/net_sockets.h>
 #include <cstring>
 #include <cerrno>
+#include "services/agent_coordination.h"
+#include "core/tls_socket_cleanup.h"
 
 // Opt in for a diagnostic build; ordinary releases must not log every TLS
 // record or add serial I/O to the upload hot path.
@@ -14,8 +16,10 @@
 #define ORIGAMI_TLS_TRACE 0
 #endif
 
-// Observe the pinned SDK boundary without changing certificates, socket ownership
-// or error codes. DNS has already completed when this function is entered.
+// The WebSocket library creates its secure client with the SDK's 120s default.
+// Bound the Agent's handshake at the existing SDK boundary so one stalled peer
+// cannot prevent cancellation, reconnects and widget delivery for two minutes.
+// Certificates, socket ownership and error codes are unchanged. DNS is complete.
 static_assert(ESP_ARDUINO_VERSION == ESP_ARDUINO_VERSION_VAL(2, 0, 17),
               "Revalidate TLS connection tracing on SDK upgrade");
 extern "C" int __real__Z16start_ssl_clientP17sslclient_contextRK9IPAddressjPKciS5_bS5_S5_S5_S5_bPS5_(
@@ -25,6 +29,9 @@ extern "C" int __wrap__Z16start_ssl_clientP17sslclient_contextRK9IPAddressjPKciS
     sslclient_context* c, const IPAddress& ip, uint32_t port, const char* host,
     int timeout, const char* ca, bool bundle, const char* cert, const char* key,
     const char* identity, const char* psk, bool insecure, const char** alpn) {
+  const auto handshakeTimeout = c->handshake_timeout;
+  if (services::agent_coordination::isCurrentWorker() && c->handshake_timeout > 8000)
+    c->handshake_timeout = 8000;
 #if ORIGAMI_TLS_TRACE
   const uint32_t started = millis();
   Serial.printf("[tls-connect] begin task=%s host=%s ms=%lu int=%u largest=%u\n",
@@ -34,6 +41,8 @@ extern "C" int __wrap__Z16start_ssl_clientP17sslclient_contextRK9IPAddressjPKciS
 #endif
   const int result = __real__Z16start_ssl_clientP17sslclient_contextRK9IPAddressjPKciS5_bS5_S5_S5_S5_bPS5_(
       c, ip, port, host, timeout, ca, bundle, cert, key, identity, psk, insecure, alpn);
+  core::tls::rememberSocket(c);
+  c->handshake_timeout = handshakeTimeout;
 #if ORIGAMI_TLS_TRACE
   Serial.printf("[tls-connect] end task=%s result=%d state=%d elapsed=%lu int=%u largest=%u\n",
     pcTaskGetName(nullptr), result, c->ssl_ctx.state, (unsigned long)(millis()-started),

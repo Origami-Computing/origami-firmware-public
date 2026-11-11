@@ -56,7 +56,7 @@ TaskHandle_t xTaskCreateStaticPinnedToCore(TaskFunction_t,const char*,uint32_t b
   assert(stack==audioStack&&tcb==audioTcb&&stack!=firstStack&&tcb!=firstTcb);
   return createFails?nullptr:tcb;
  }
- assert(((bytes==10240||bytes==12288)&&priority==1)||(bytes==4096&&priority==2));
+ assert(((bytes==10240||bytes==12288)&&priority==1)||((bytes==4096||bytes==8192)&&priority==2));
  if(!firstStack){firstStack=stack;firstTcb=tcb;}
  assert(firstStack==stack&&firstTcb==tcb);return createFails?nullptr:tcb;
 }
@@ -86,6 +86,17 @@ int main(){using namespace hal::tasks;
  deleteCurrent(Id::OtaDownload);hook();assert(!spawn(Id::NetPoll,entry));
  pendingCleanup=false;hook();assert(spawn(Id::UploadQ,entry));
  assert(dynamicCalls==0); // OTA reuses retained stack despite 3060-byte largest block.
+ deleteCurrent(Id::UploadQ);pendingCleanup=false;hook();hook();
+ for(unsigned i=0;i<1000;++i){
+  assert(spawn(Id::GgWave,entry));
+  assert(!spawn(Id::UploadQ,entry)&&!spawn(Id::NetPoll,entry)&&!spawn(Id::OtaDownload,entry));
+  deleteCurrent(Id::GgWave);hook();
+  assert(!spawn(Id::NetPoll,entry));
+  pendingCleanup=false;hook();assert(spawn(Id::NetPoll,entry));
+  assert(!spawn(Id::GgWave,entry));
+  deleteCurrent(Id::NetPoll);pendingCleanup=false;hook();hook();
+ }
+ assert(spawn(Id::UploadQ,entry));
  // Camera acquisition can reuse the excluded network workers' stack even
  // with only a 3060-byte heap block, but never before idle retirement cleanup.
  assert(!spawn(Id::VideoCapture,entry));
@@ -107,7 +118,14 @@ int main(){using namespace hal::tasks;
   assert(spawn(i%2?Id::Mp3Play:Id::WavPlay,entry));
  }
  assert(dynamicCalls==0);
- assert(!spawn(Id::QrScan,entry)&&dynamicCalls==1); // Other tasks stay dynamic.
+ // QR scanning shares the camera/network reservation and retained stack.
+ assert(!spawn(Id::QrScan,entry)&&dynamicCalls==0);
+ deleteCurrent(Id::UploadQ);hook();assert(!spawn(Id::QrScan,entry));
+ pendingCleanup=false;hook();assert(spawn(Id::QrScan,entry));
+ assert(!spawn(Id::NetPoll,entry)&&!spawn(Id::VideoCapture,entry));
+ deleteCurrent(Id::QrScan);hook();assert(!spawn(Id::UploadQ,entry));
+ pendingCleanup=false;hook();assert(spawn(Id::UploadQ,entry));
+ assert(!spawn(Id::VideoPreview,entry)&&dynamicCalls==1); // Other tasks stay dynamic.
  puts("PASS fragmented heap, duplicate admission, startup rollback, preempted idle cleanup and 10000 network and 1000 playback shared-stack handoffs");
 }
 ''')

@@ -14,6 +14,7 @@
 #include <WebSocketsClient.h>
 #include <atomic>
 #include <cstring>
+#include <esp_heap_caps.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/portmacro.h>
 #include <freertos/task.h>
@@ -21,6 +22,7 @@
 #include "core/board_time.h"
 #include "core/device_id.h"
 #include "core/secrets.h"
+#include "core/release_policy.h"
 #include "core/telemetry.h"
 #include "hal/hal_tasks.h"
 #include "hal/hal_wifi.h"
@@ -66,6 +68,7 @@ static bool    s_startSent       = false;
 static bool    s_commitSent      = false;
 static uint32_t s_sentSamples    = 0;
 static uint32_t s_commitAtMs     = 0;
+static uint32_t s_startAtMs      = 0; // Audio lock: last successful start frame.
 static bool    s_transportLost   = false;
 static uint32_t         s_lastTransportWaitLogMs = 0;
 // millis() when the socket last became connected — used to require a stable link
@@ -357,6 +360,24 @@ void disconnectAfterWriteFailure(const char* frame) {
     handleSessionDrop();
 }
 
+// Both authenticated ready and this turn's listening acknowledgment gate audio.
+// Missing either must not strand a take until the full pre-commit deadline.
+// Called only by the socket worker after pumping incoming frames.
+void expireUnreadySocket(uint32_t nowMs) {
+    portENTER_CRITICAL(&s_audioMux);
+    const bool awaitingReady = !s_serverReady &&
+        uint32_t(nowMs - s_wsConnectedSinceMs) >= cfg::agent::kReadyTimeoutMs;
+    const bool awaitingStart = services::agent_coordination::isSessionActive() &&
+        s_startSent && !s_listening && !s_commitSent &&
+        uint32_t(nowMs - s_startAtMs) >= cfg::agent::kReadyTimeoutMs;
+    const bool expired = s_socketConnected && (awaitingReady || awaitingStart);
+    portEXIT_CRITICAL(&s_audioMux);
+    if (!expired) return;
+    LOGW("agent", "WS acknowledgment timeout");
+    s_socket.disconnect();
+    handleSessionDrop();
+}
+
 void sendStartFrame(uint32_t epoch) {
     char json[192];
     snprintf(json, sizeof(json),
@@ -364,7 +385,10 @@ void sendStartFrame(uint32_t epoch) {
              cfg::agent::kSessionId, cfg::agent::kPlatform);
     if (s_socket.sendTXT(json)) {
         portENTER_CRITICAL(&s_audioMux);
-        if (epoch == s_turnEpoch && services::agent_coordination::isSessionActive()) s_startSent = true;
+        if (epoch == s_turnEpoch && services::agent_coordination::isSessionActive()) {
+            s_startSent = true;
+            s_startAtMs = millis();
+        }
         portEXIT_CRITICAL(&s_audioMux);
         LOGD("agent", "WS start");
     } else {
@@ -579,13 +603,11 @@ void configureSocket() {
     s_socket.onEvent(socketEvent);
     s_socket.setExtraHeaders(s_wsHeaders);
     s_socket.setReconnectInterval(1200);
-    // Keepalive tuned for this backend, which (a) closes idle connections after
-    // ~18s and (b) doesn't send pong replies. So: ping every 8s — frequent enough
-    // to keep the server's idle timer reset (the pre-warmed socket and the post-
-    // commit "thinking" wait both stay alive) — but tolerate a huge number of
-    // missing pongs so the client never tears the healthy connection down itself.
-    // (3rd arg is uint8_t; 255 = effectively "never self-disconnect on pong loss".)
-    s_socket.enableHeartbeat(8000, 3000, 255);
+    // The deployed Node ws server automatically answers protocol pings. Retire
+    // an unresponsive idle connection instead of carrying it into the next take.
+    // Two missed replies tolerate one transient delay; active-take replay still
+    // follows handleSessionDrop's pre/post-commit rules.
+    s_socket.enableHeartbeat(8000, 3000, 2);
     if (s_wsSecure) s_socket.beginSslWithBundle(s_wsHost, s_wsPort, s_wsPath, services::tls::rootBundle());
     else s_socket.begin(s_wsHost, s_wsPort, s_wsPath);
     Serial.printf("[agent] WS target %s://%s:%u%s auth=api-key device=%s\n",
@@ -623,6 +645,14 @@ void pumpAudio() {
         const bool stopped = epoch != s_turnEpoch || s_sendCancel || s_transportLost;
         portEXIT_CRITICAL(&s_audioMux);
         if (stopped || services::agent_coordination::suspendRequested()) return;
+        // A reconnect can leave seconds of PCM to replay. Socket writes can
+        // enqueue faster than Wi-Fi drains them, consuming the internal buffers
+        // needed by hardware AES even though the PCM/TLS storage is in PSRAM.
+        // Keep the take queued and service receive/cancel work until buffers
+        // drain; another failed TLS write would rewind and repeat the flood.
+        const auto memory = core::memory::snapshot();
+        if (memory.dramFree < 12u * 1024u ||
+            heap_caps_get_largest_free_block(MALLOC_CAP_DMA) < 4u * 1024u) return;
         const uint32_t count = peekAudioFrame(epoch, s_wsFrame, maxSamplesPerFrame);
         if (count == 0) break;
         const uint8_t* bytes = reinterpret_cast<const uint8_t*>(s_wsFrame);
@@ -802,6 +832,7 @@ void kamiSendTask(void*) {
         s_socket.loop();
         const uint32_t loopMs=millis()-loopAt;
         if(loopMs>=250) LOGI("agent-io", "up=%lu socket_ms=%lu", (unsigned long)millis(), (unsigned long)loopMs);
+        expireUnreadySocket(millis());
         sendHelloIfPending();
         if (s_socketConnected) agent_delivery::pump(sendTextRequest);
         turn = turnSnapshot();
@@ -901,9 +932,16 @@ static void reconfigure() {
     s_reconfigureRequest.store(true);
 }
 
+bool selectServerMode(core::secrets::ServerMode mode) {
+    if (core::secrets::serverMode() == mode) return true;
+    if (!core::secrets::setServerMode(mode)) return false;
+    reconfigure();
+    return true;
+}
+
 void selectBackendMode(bool dev) {
-    if (core::secrets::isDevMode() == dev) return;
-    if (core::secrets::setDevMode(dev)) reconfigure();
+    selectServerMode(dev ? core::secrets::ServerMode::Dev :
+        core::release_policy::stagingBuild ? core::secrets::ServerMode::Staging : core::secrets::ServerMode::Prod);
 }
 
 bool setBackendUrl(const char* url) {

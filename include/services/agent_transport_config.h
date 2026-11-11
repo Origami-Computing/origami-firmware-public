@@ -9,6 +9,9 @@ constexpr uint32_t kAudioFrameBytes = 1024;
 /** Yield to WebSocket receive/control work after at most 128 ms of PCM. */
 constexpr uint32_t kAudioFramesPerPump = 4;
 
+/** Reconnect if authenticated ready or the turn start acknowledgment never arrives. */
+constexpr uint32_t kReadyTimeoutMs = 8000;
+
 /** Maximum time from commit until a completed agent response. */
 constexpr uint32_t kResponseTimeoutMs = 90000;
 

@@ -4,13 +4,25 @@
 #include <SPI.h>
 #include <LSM6DSLSensor.h>
 
+#include "core/imu_sensor_calibration.h"
+
 namespace hal {
 namespace imu {
 
 bool init();
 bool isReady();
+/** Accel in mg, gyro in mdps, with the installed sensor correction applied
+ * (gyro bias, accel offset/scale). readGyroFifo applies the gyro bias too. */
 bool readAxes(int32_t accel[3], int32_t gyro[3]);
 bool readAcceleration(int32_t accel[3]);
+/** Uncorrected readings, for the calibration procedure itself. */
+bool readRawAxes(int32_t accel[3], int32_t gyro[3]);
+
+/** Install the sensor correction used by the reads above (copied; nullptr
+ * restores identity). Owned by services::imu_sensor_calibration. Safe to call
+ * from any task; reads see either the old or the new correction. */
+void setCorrection(const core::imu_sensor_calibration::Correction* correction);
+core::imu_sensor_calibration::Correction correction();
 
 /** Power the gyroscope for an active motion consumer. Calls are reference
  * counted; every successful acquire must be paired with releaseGyroscope(). */

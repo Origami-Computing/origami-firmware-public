@@ -17,6 +17,7 @@ with tempfile.TemporaryDirectory() as directory:
     write('freertos/FreeRTOS.h', '#pragma once\n#define pdMS_TO_TICKS(x) (x)')
     write('freertos/task.h', '#pragma once\n#include <stdint.h>\nvoid vTaskDelay(uint32_t);')
     write('hal/hal_sd.h', 'namespace hal {namespace sd {inline bool mounted(){return true;}}}')
+    write('core/memory.h', '#pragma once\n#include <cstddef>\nnamespace core {namespace memory {struct Snapshot {size_t dramFree,dramLargest;};extern Snapshot available;inline Snapshot snapshot(){return available;}}}')
     write('core/watchdog.h', 'namespace core {namespace watchdog {void feed();}}')
     write('services/net_poll.h', '#include <stdint.h>\nnamespace services {namespace net_poll {bool onboardingRegistrationPriority();void requestStop();bool running();bool stop(uint32_t);bool start();void requestStart();bool startRequested();}}')
     write('services/uploads.h', '#pragma once\n#include <stdint.h>\nstruct UploadQueue {void requestStopForVoice();bool stopWorkerForVoice(uint32_t);bool resumeWorker();bool workerRunning();};\nnamespace services {namespace uploads {UploadQueue* readyQueue();UploadQueue& queue();bool ensureInit();}}')
@@ -30,6 +31,8 @@ namespace services {namespace firmware_update {extern bool noticeActive;}}
 #include "Arduino.h"
 #include <cassert>
 #include "hal/audio_retirement.h"
+#include "core/memory.h"
+namespace core {namespace memory {Snapshot available{65536,32768};}}
 #include <functional>
 #include <memory>
 #include <string>
@@ -88,6 +91,15 @@ namespace services {void svcTask(void*){}
 ''' + bootstrap + r'''
 }
 int main(){
+ { PeriodicWork owner,waiter;
+   core::memory::available={24575,12288};assert(!owner.tryEnter());
+   core::memory::available={24576,12287};assert(!owner.tryEnter());
+   core::memory::available={24576,12288};assert(owner.tryEnter());
+   core::memory::available={20000,8000};assert(PeriodicWork::shouldYield());
+   assert(owner.tryEnter()); // ownership is not revoked during a request
+   assert(owner.yieldIfNeeded());assert(!waiter.tryEnter());
+   core::memory::available={65536,32768};assert(waiter.tryEnter());
+ }
  {RadioPause pause;assert(pause.acquire(30)==Result::Acquired);
   starts=requests=0;
   assert(services::startBackgroundTasks());
@@ -101,11 +113,12 @@ int main(){
 
  assert(kamiVoiceNetworkReady());onboardingPriority=true;assert(!kamiVoiceNetworkReady());onboardingPriority=false;assert(kamiVoiceNetworkReady());
  { PeriodicWork first,second;assert(first.tryEnter());assert(first.tryEnter());assert(!second.tryEnter());first.release();assert(second.tryEnter()); }
- { PeriodicWork after;assert(after.tryEnter());after.yieldIfContended(); }
+ { PeriodicWork after;assert(after.tryEnter());after.yieldIfNeeded(); }
  { PeriodicWork owner,waiter;assert(owner.tryEnter());assert(!waiter.tryEnter());
-   assert(PeriodicWork::hasWaitingPeer());assert(owner.yieldIfContended());
-   assert(!PeriodicWork::hasWaitingPeer());assert(waiter.tryEnter());
-   assert(!waiter.yieldIfContended()); }
+   assert(PeriodicWork::hasMemoryReserve()); // contention must not starve an in-flight manifest
+   assert(PeriodicWork::shouldYield());assert(owner.yieldIfNeeded());
+   assert(!PeriodicWork::shouldYield());assert(waiter.tryEnter());
+   assert(!waiter.yieldIfNeeded()); }
 
  {services::firmware_update::noticeActive=true;RadioPause denied;
  assert(denied.acquire(30)==Result::ServiceBusy && trace.empty());

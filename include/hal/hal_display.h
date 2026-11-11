@@ -25,8 +25,19 @@ static constexpr uint16_t COLOR_HEADER  = 0x1082;
 
 bool init();
 
-// UI-task borrowed native output; Public currently uses unscaled display output.
+// Output-only software dimming. Boot/UI-task setter; internally serializes with
+// SPI transfers. No framebuffer/source mutation or change to backlight power.
+// The caller owns validation/persistence; HAL accepts the full [0,100] range.
+void setBrightness(unsigned percent);
+unsigned brightness();
+uint16_t brightnessColor(uint16_t rgb565);
+// UI-task only, before taking SPI: borrow existing portrait scratch until the
+// next flush or preparation. Brightness updates and scratch writes share this
+// UI owner; this CPU-only transform does not access the panel. Native input is
+// 240x280 wire-order RGB565 and stays unchanged.
+// Returns nullptr if scratch is unavailable (use ordinary scaled output then).
 uint16_t* prepareNativeOutput(uint16_t* pixels);
+
 /**
  * Force a real controller reset on the reworked rev-4 board (J5.4 -> GPIO45).
  * Holds hardware reset and SPI low while cycling panel power, then TFT_eSPI
@@ -81,7 +92,7 @@ void setFlushService(void (*service)());
 
 /** UI-task counters for completed framebuffer transfers; direct-panel work is excluded.
  * Unsigned deltas handle wrap. Read on the UI task alongside flush(). */
-struct FlushStats { uint32_t frames, pixels, elapsedUs; };
+struct FlushStats { uint32_t frames, pixels, elapsedUs, transferUs, lastTransferUs; };
 FlushStats flushStats();
 
 /** Microseconds taken by the last flush() call. */

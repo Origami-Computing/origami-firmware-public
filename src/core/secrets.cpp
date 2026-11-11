@@ -25,6 +25,7 @@ constexpr char kKeyWifiPass[] = "wifi_pass";
 constexpr char kKeyBackend[]  = "backend_url";
 constexpr char kKeyApi[]      = "api_key";
 constexpr char kKeyDevToken[] = "dev_token";  // per-device telemetry bearer token
+constexpr char kKeyServerMode[] = "server_mode";
 constexpr char kKeyDevMode[]  = "dev_mode";
 constexpr char kKeyBackendDev[] = "backend_dev";
 constexpr char kKeyWifiLastOk[] = "wifi_last_ok";
@@ -47,7 +48,11 @@ char g_apiKey[192]     = {0};
 std::atomic<uint32_t> g_apiKeyRevision{0};
 char g_deviceToken[192] = {0};  // empty until the device registers
 char g_backendDev[192] = {0};   // dev URL (local IP)
-bool g_devMode         = false; // default to prod
+ServerMode g_serverMode = release_policy::stagingBuild ? ServerMode::Staging : ServerMode::Prod;
+const char* serverUrl(ServerMode mode) {
+  return mode == ServerMode::Dev ? g_backendDev :
+         mode == ServerMode::Staging ? KAMI_STAGING_API_URL : KAMI_PRODUCTION_API_URL;
+}
 
 bool g_loaded = false;
 
@@ -146,7 +151,7 @@ void init() {
   g_wifiLastOk[0] = '\0';
   copyClamped(g_backendDev,  sizeof(g_backendDev),  BACKEND_URL);
   copyClamped(g_backendUrl,  sizeof(g_backendUrl),  BACKEND_URL_PROD);
-  g_devMode = false;
+  g_serverMode = release_policy::stagingBuild ? ServerMode::Staging : ServerMode::Prod;
   g_deviceToken[0] = '\0';
   copyClamped(g_apiKey,      sizeof(g_apiKey),      AUTH_TOKEN);
 
@@ -212,31 +217,27 @@ void init() {
   // Per-device token has no compile-time default — empty means "not yet registered".
   (void)readStringFromNvs(p, kKeyDevToken, g_deviceToken, sizeof(g_deviceToken));
 
-  if (p.isKey(kKeyDevMode)) {
-    g_devMode = p.getBool(kKeyDevMode, false);
+  // Read the old boolean only when no explicit selection has been saved.
+  if (p.getBool(kKeyDevMode, false)) g_serverMode = ServerMode::Dev;
+  char savedMode[12] = {};
+  if (readStringFromNvs(p, kKeyServerMode, savedMode, sizeof(savedMode))) {
+    if (!strcmp(savedMode, "Prod")) g_serverMode = ServerMode::Prod;
+    else if (!strcmp(savedMode, "Staging")) g_serverMode = ServerMode::Staging;
+    else if (!strcmp(savedMode, "Dev")) g_serverMode = ServerMode::Dev;
   }
-
-  if (release_policy::productionOnly) {
-    // A staging registration token must never be sent to the production API.
-    // Clear the old token before persisting production mode. A failed write
-    // keeps the migration retryable; RAM still fails closed on this boot.
-    if (g_devMode) {
+  if (release_policy::productionOnly ||
+      (!release_policy::stagingBuild && g_serverMode == ServerMode::Staging)) {
+    // Never reuse another environment's registration token on production.
+    if (g_serverMode != ServerMode::Prod) {
       g_deviceToken[0] = '\0';
       if (p.remove(kKeyDevToken) || !p.isKey(kKeyDevToken)) {
-        if (!p.putBool(kKeyDevMode, false))
+        if (p.putString(kKeyServerMode, "Prod") == 0)
           Serial.println("[secrets] production migration: mode persistence failed");
-      } else {
-        Serial.println("[secrets] production migration: token removal failed");
-      }
+      } else Serial.println("[secrets] production migration: token removal failed");
     }
-    g_devMode = false;
+    g_serverMode = ServerMode::Prod;
   }
-
-  if (g_devMode) {
-    copyClamped(g_backendUrl, sizeof(g_backendUrl), g_backendDev);
-  } else {
-    copyClamped(g_backendUrl, sizeof(g_backendUrl), BACKEND_URL_PROD);
-  }
+  copyClamped(g_backendUrl, sizeof(g_backendUrl), serverUrl(g_serverMode));
 
   (void)readStringFromNvs(p, kKeyWifiLastOk, g_wifiLastOk, sizeof(g_wifiLastOk));
 
@@ -261,7 +262,7 @@ void init() {
 
   Serial.printf("[secrets] init: %d STA cred(s) loaded; primary='%s' last_ok='%s' backend=%s (dev=%d) api=%s (dev_url=%d api=%d)\n",
                 g_wifiCount, g_wifiSsid[0], g_wifiLastOk,
-                g_backendUrl, g_devMode, g_apiKey[0] ? "<set>" : "<empty>",
+                g_backendUrl, g_serverMode == ServerMode::Dev, g_apiKey[0] ? "<set>" : "<empty>",
                 ovDev, ovApi);
   g_loaded = true;
 }
@@ -292,7 +293,7 @@ bool factoryReset() {
                 release_policy::productionOnly ? BACKEND_URL_PROD : BACKEND_URL);
     copyClamped(g_apiKey,      sizeof(g_apiKey),      AUTH_TOKEN);
     g_deviceToken[0] = '\0';  // re-register on next boot (device_id is stable, so backend re-issues)
-    g_devMode = !release_policy::productionOnly;
+    g_serverMode = release_policy::productionOnly ? ServerMode::Prod : ServerMode::Dev;
     ++g_backendRevision;
   }
   Serial.println("[secrets] factoryReset: cleared NVS, restored compile-time defaults");
@@ -504,32 +505,39 @@ bool setDeviceToken(const char* token) {
   return writeDeviceToken(token);
 }
 
-bool isDevMode() { BackendGuard guard; return g_devMode; }
+ServerMode serverMode() { BackendGuard guard; return g_serverMode; }
+const char* serverModeName(ServerMode mode) {
+  switch (mode) {
+    case ServerMode::Prod: return "Prod";
+    case ServerMode::Staging: return "Staging";
+    case ServerMode::Dev: return "Dev";
+  }
+  return "Invalid";
+}
 
-bool setDevMode(bool dev) {
-  if (release_policy::productionOnly && dev) return false;
+bool setServerMode(ServerMode mode) {
+  if (mode != ServerMode::Prod && mode != ServerMode::Staging && mode != ServerMode::Dev) return false;
+  if (release_policy::productionOnly && mode != ServerMode::Prod) return false;
+  if (!release_policy::stagingBuild && mode == ServerMode::Staging) return false;
   BackendWriteGuard writeGuard;
-  const bool changed = isDevMode() != dev;
+  const char* url = serverUrl(mode);
+  bool changed;
+  { BackendGuard guard; changed = g_serverMode != mode || strcmp(g_backendUrl, url) != 0; }
   if (changed && !writeDeviceToken("")) return false;
-  Preferences p;
-  if (!p.begin(kNs, false)) return false;
-  p.putBool(kKeyDevMode, dev);
-  p.end();
-
-  char published[sizeof(g_backendUrl)];
+  if (!writeStringToNvs(kKeyServerMode, serverModeName(mode))) return false;
   {
     BackendGuard guard;
-    if (changed || strcmp(g_backendUrl, dev ? g_backendDev : BACKEND_URL_PROD) != 0) ++g_backendRevision;
-    g_devMode = dev;
-    if (dev) {
-      copyClamped(g_backendUrl, sizeof(g_backendUrl), g_backendDev);
-    } else {
-      copyClamped(g_backendUrl, sizeof(g_backendUrl), BACKEND_URL_PROD);
-    }
-    memcpy(published, g_backendUrl, sizeof(published));
+    g_serverMode = mode;
+    copyClamped(g_backendUrl, sizeof(g_backendUrl), url);
+    if (changed) ++g_backendRevision;
   }
-  Serial.printf("[secrets] setDevMode: %s -> %s\n", dev ? "DEV" : "PROD", published);
+  Serial.printf("[secrets] server mode: %s\n", serverModeName(mode));
   return true;
+}
+bool isDevMode() { return serverMode() == ServerMode::Dev; }
+bool setDevMode(bool dev) {
+  return setServerMode(dev ? ServerMode::Dev :
+      release_policy::stagingBuild ? ServerMode::Staging : ServerMode::Prod);
 }
 
 }  // namespace secrets

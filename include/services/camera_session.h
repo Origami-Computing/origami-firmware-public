@@ -29,7 +29,7 @@ public:
         Session* session_ = nullptr;
         bool frameHeld_ = false;
     };
-    enum class PrepareResult { Ready, BackgroundBusy, AgentBusy, CameraBusy };
+    enum class PrepareResult { Ready, BackgroundBusy, AgentBusy, CameraBusy, Pending };
     enum class StillResult { Ready, BackgroundBusy, AgentBusy, InitFailed, WarmupFailed, CameraBusy };
     enum class Resume { Immediate, Deferred, DeferredWithInputRecovery };
     using StageObserver = void (*)(const char*);
@@ -62,9 +62,11 @@ public:
     bool restartPreview(int frameSize, const hal::camera::Tuning& tuning,
                         uint32_t settleMs, bool (&prepareConsumer)(), int jpegQuality = -1, int pixelFormat = -1);
     // QR's existing Wi-Fi manager stops the radios after this reservation.
+    PrepareResult pollPrepareScan();
     PrepareResult prepareScan(StageObserver observer = nullptr);
     void releaseBackground();
     // Photography owns radio restoration; QR delegates it to the Wi-Fi manager.
+    // Rejected/unstarted sessions do not restore radios or reset the input bus.
     void restoreUi(Resume mode);
     bool backgroundHeld() const { return reservation_.held(); }
     bool transportHeld() const { return agentPause_.held(); }

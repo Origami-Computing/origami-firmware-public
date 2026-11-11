@@ -1,0 +1,53 @@
+#pragma once
+// Canonical onboarding copy. Kami Screen Studio edits these native constants.
+namespace ui { namespace onboarding_copy {
+static constexpr const char* welcome_title = "Hi, I'm Kami!";
+static constexpr const char* welcome_prompt_1 = "Press any button to";
+static constexpr const char* welcome_prompt_2 = "learn controls";
+static constexpr const char* press_a = "Press A";
+static constexpr const char* press_b = "Press B";
+static constexpr const char* spin_c = "Spin C";
+static constexpr const char* press_c = "Press C";
+static constexpr const char* select_title_1 = "Scroll and press C";
+static constexpr const char* select_title_2 = "to select";
+static constexpr const char* select_continue = "Select me to continue";
+static constexpr const char* interest_title = "I want to...";
+static constexpr const char* interest_build = "Build cool projects";
+static constexpr const char* interest_document = "Document my life";
+static constexpr const char* interest_both = "Both please!";
+static constexpr const char* interest_restart = "Return to start";
+static constexpr const char* wifi_question_1 = "Would you like to";
+static constexpr const char* wifi_question_2 = "join Wi-Fi?";
+static constexpr const char* wifi_join = "Join Wi-Fi";
+static constexpr const char* wifi_skip = "Skip Wi-Fi Setup";
+static constexpr const char* login_title = "Login Page";
+static constexpr const char* wifi_page_title = "Wi-Fi Page";
+static constexpr const char* qr_title = "Scan Me";
+static constexpr const char* projects_title = "Projects Page";
+static constexpr const char* build_intro_1 = "To build a project,";
+static constexpr const char* build_intro_2 = "follow the next link to";
+static constexpr const char* build_intro_3 = "the projects page.";
+static constexpr const char* build_done_1 = "Download your project";
+static constexpr const char* build_done_2 = "to your device";
+static constexpr const char* build_done_3 = "and test!";
+static constexpr const char* copy_prompt = "Copy prompt";
+static constexpr const char* build_setup = "Copy the setup prompt";
+static constexpr const char* build_prompt = "Copy the build prompt";
+static constexpr const char* coding_agent = "into your coding agent";
+static constexpr const char* connect_device = "Connect your device";
+static constexpr const char* connect_computer = "to your computer";
+static constexpr const char* try_again = "Try again";
+static constexpr const char* try_qr = "Try with QR";
+static constexpr const char* try_audio = "Try with Audio";
+static constexpr const char* listening = "Listening...";
+static constexpr const char* receiving = "Receiving...";
+static constexpr const char* listening_paused = "Listening paused";
+static constexpr const char* listen_instruction = "Play the Wi-Fi setup sound near Kami.";
+static constexpr const char* listen_switch = "Press C to try QR";
+static constexpr const char* scanner_title = "Hold still over QR";
+static constexpr const char* scanner_switch = "Press C to try audio";
+static constexpr const char* nav_congrats = "Congrats, you're all done!";
+static constexpr const char* nav_reminder = "Need a reminder? Open Menu > Settings > Redo Tutorial.";
+static constexpr const char* nav_talk = "Hold A+B together while speaking to talk to me.";
+static constexpr const char* nav_wheel = "Rotate the scroll wheel\nto open my menu";
+}}

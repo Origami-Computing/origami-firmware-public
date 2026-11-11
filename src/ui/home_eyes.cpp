@@ -189,6 +189,7 @@ static float closure(uint32_t now) {
   blinkFrame=kami_expression::blink(age,hold);
   return blinkFrame.squash;
 }
+void skipAnimationCaches(){cacheAttempted=wakeCacheAttempted=true;}
 bool beginSession(TFT_eSPI& t){
   prepareMotionCache(t);prepareWakeCache(t);
   if(!loaded){loaded=true;frozen=false;offsetX=offsetY=0;setEmotion("neutral",true);resetShellBlink();

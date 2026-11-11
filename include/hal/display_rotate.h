@@ -4,8 +4,11 @@
 namespace hal { namespace display {
 // Both buffers live in PSRAM. Tile the transpose so dirty-window strides
 // (especially 128 pixels) cannot evict every destination cache line per row.
+// Transform logical RGB565 after byte-order conversion, while the tile is hot.
+// This avoids rereading/writing the complete PSRAM output for brightness.
+template<class Transform>
 inline void rotateRect(const uint16_t* src,uint16_t* dst,int width,
-                       int firstX,int lastX,int firstY,int lastY) {
+                       int firstX,int lastX,int firstY,int lastY,Transform transform) {
   const int stride=lastY-firstY;
   for(int y0=firstY;y0<lastY;y0+=16) {
     const int y1=y0+16<lastY?y0+16:lastY;
@@ -15,11 +18,15 @@ inline void rotateRect(const uint16_t* src,uint16_t* dst,int width,
         uint16_t* out=dst+(lastX-1-x)*stride+y0-firstY;
         for(int y=y0;y<y1;++y) {
           const uint16_t px=src[y*width+x];
-          *out++=(uint16_t)((px>>8)|(px<<8));
+          *out++=transform((uint16_t)((px>>8)|(px<<8)));
         }
       }
     }
   }
+}
+inline void rotateRect(const uint16_t* src,uint16_t* dst,int width,
+                       int firstX,int lastX,int firstY,int lastY) {
+  rotateRect(src,dst,width,firstX,lastX,firstY,lastY,[](uint16_t pixel){return pixel;});
 }
 inline void rotateWindow(const uint16_t* src,uint16_t* dst,int width,int firstY,int lastY) {
   rotateRect(src,dst,width,0,width,firstY,lastY);

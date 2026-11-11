@@ -15,7 +15,7 @@ enum class Operation {
     VolumeSet,
     NavigationState,
     NavigationOpen,
-    NavigationHome
+    NavigationHome, HapticPlay, HapticStop
 };
 struct Descriptor {
     Operation operation;
@@ -35,6 +35,7 @@ struct Request {
     uint32_t durationSeconds = 0, expectedRevision = 0;
     bool checkRevision = false;
     int volume = 0;
+    const char *cue = nullptr; // Borrowed for execute only.
     const char *route = nullptr; // Borrowed for execute only; never retained.
 };
 enum class Error {

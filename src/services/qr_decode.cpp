@@ -400,7 +400,7 @@ static void workerTask(void*) {
 #endif
   s_workerBusy = false;
   s_worker = nullptr;
-  vTaskDelete(nullptr);
+  hal::tasks::deleteCurrent(hal::tasks::Id::QrScan);
 }
 
 }  // namespace

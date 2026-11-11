@@ -16,36 +16,69 @@ struct Work {
     Resume saved;
     core::video_upload::detail::Url url;
     char scratch[1024],location[512];
+    uint32_t sentBytes=0,sendMs=0,connectMs=0,pressureMs=0;
+    bool memoryBlocked=false;
     bool (*checkpoint)(void*);void* context;
     uint32_t started=0,lastRead=0,readIdleMs=15000;bool cancelled=false;
     Work(bool (*check)(void*),void* user):checkpoint(check),context(user){started=millis();}
-    ~Work(){client.stop();hal::sd::closeStream(&reader);}
+    ~Work(){
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+        Serial.printf("[video-net] bytes=%lu totalMs=%lu connectMs=%lu sendMs=%lu pressureMs=%lu dmaFree=%u dmaLargest=%u\n",
+            (unsigned long)sentBytes,(unsigned long)(millis()-started),(unsigned long)connectMs,
+            (unsigned long)sendMs,(unsigned long)pressureMs,
+            (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA),
+            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DMA));
+#endif
+        client.stop();hal::sd::closeStream(&reader);
+    }
+    // The pinned S3 AES driver needs transient DMA scratch (up to two 1600 B
+    // buffers plus descriptors) for PSRAM TLS records. Let queued Wi-Fi TX
+    // drain before encryption instead of exhausting that same internal heap.
+    // No retained allocation, global TLS change, or Agent budget change.
+    bool encryptionReady(){
+        const uint32_t began=millis();
+        while(heap_caps_get_free_size(MALLOC_CAP_DMA)<6144 ||
+              heap_caps_get_largest_free_block(MALLOC_CAP_DMA)<2048){
+            if(!ready())return false;
+            if(uint32_t(millis()-began)>=500){memoryBlocked=true;return false;}
+            delay(2);pressureMs+=2;
+        }
+        return ready();
+    }
     bool ready(){if(!checkpoint(context)){cancelled=true;return false;}return uint32_t(millis()-started)<180000u;}
     bool send(const void* bytes,size_t length){
         const auto* p=static_cast<const uint8_t*>(bytes);
         while(length){
-            if(!ready())return false;
-            const size_t amount=length>1024?1024:length;
+            if(!encryptionReady())return false;
+            const size_t amount=length>8192?8192:length;
+            const uint32_t began=millis();
             const size_t sent=client.write(p,amount);
+            sendMs+=millis()-began;sentBytes+=sent;
             if(!sent||sent>amount)return false;
             p+=sent;length-=sent;
         }
         return true;
     }
     bool text(const char* value){return send(value,strlen(value));}
-    bool beginRequest(const char* target,const char* method){
-        client.stop();reply=TusReply{};
+    bool beginRequest(const char* target,const char* method,bool keepAlive=false,bool reuse=false){
+        // Reuse is only requested for PATCH immediately after HEAD on the exact
+        // same saved storage URL. HEAD has no body to drain. Other requests close.
+        const bool connectedAlready=reuse&&client.connected();
+        if(!connectedAlready)client.stop();reply=TusReply{};
         if(!core::video_upload::detail::url(target,url)||!ready())return false;
         services::tls::useRootBundle(client);
-        if(!client.connect(url.host,url.port,5000)||!ready())return false;
+        const uint32_t began=millis();
+        const bool connected=connectedAlready||client.connect(url.host,url.port,5000);
+        connectMs+=millis()-began;
+        if(!connected||!ready())return false;
         // Pinned WiFiClientSecure uses seconds here, not Stream milliseconds.
         // Its TLS write retry budget remains the 5-second connect timeout.
         if(client.setTimeout(1)<0)return false;
-        const int n=snprintf(scratch,sizeof(scratch),"%s %s HTTP/1.1\r\nHost: %s:%u\r\nConnection: close\r\n",method,url.path,url.host,unsigned(url.port));
+        const int n=snprintf(scratch,sizeof(scratch),"%s %s HTTP/1.1\r\nHost: %s:%u\r\nConnection: %s\r\n",method,url.path,url.host,unsigned(url.port),keepAlive?"keep-alive":"close");
         return n>0&&size_t(n)<sizeof(scratch)&&send(scratch,n);
     }
-    bool begin(const char* target,const char* method,const char* token){
-        return beginRequest(target,method)&&text("Tus-Resumable: 1.0.0\r\nx-signature: ")&&text(token)&&text("\r\n");
+    bool begin(const char* target,const char* method,const char* token,bool keepAlive=false,bool reuse=false){
+        return beginRequest(target,method,keepAlive,reuse)&&text("Tus-Resumable: 1.0.0\r\nx-signature: ")&&text(token)&&text("\r\n");
     }
     int readByte(){
         while(ready()){
@@ -125,8 +158,9 @@ BackendResult request(BackendOperation operation,const core::secrets::BackendReq
     }
     Owned owned(checkpoint,context);if(!owned.value)return {BackendOutcome::NoMemory,0};
     Work& w=*owned.value;
-    if(operation==BackendOperation::Complete)w.readIdleMs=100000;
-    auto failure=[&](){return BackendResult{w.cancelled?BackendOutcome::Cancelled:BackendOutcome::Retry,w.reply.status};};
+    // Admission can verify an already-stored object after a lost final reply.
+    if(operation==BackendOperation::Complete || operation==BackendOperation::Admit)w.readIdleMs=100000;
+    auto failure=[&](){return BackendResult{w.cancelled?BackendOutcome::Cancelled:w.memoryBlocked?BackendOutcome::NoMemory:BackendOutcome::Retry,w.reply.status};};
     const size_t baseLength=strlen(backend.backend.url);
     const bool slash=backend.backend.url[baseLength-1]=='/';
     const int urlLength=snprintf(w.location,sizeof(w.location),"%.*s/api/device/video/uploads%s%s%s",
@@ -185,7 +219,7 @@ TransferResult transfer(const char* id,const char* path,Resume& record,const cor
        strcmp(w.saved.media.sha256,record.media.sha256)||strcmp(w.saved.backendBinding,record.backendBinding)||
        strcmp(w.saved.session,record.session)||w.saved.generation!=record.generation||
        strcmp(w.saved.endpoint,record.endpoint)||strcmp(w.saved.location,record.location))return {Transfer::Invalid,0};
-    auto failure=[&](){return TransferResult{w.cancelled?Transfer::Cancelled:Transfer::Retry,w.reply.status};};
+    auto failure=[&](){return TransferResult{w.cancelled?Transfer::Cancelled:w.memoryBlocked?Transfer::NoMemory:Transfer::Retry,w.reply.status};};
     if(!core::video_upload::detail::url(record.endpoint,w.url)||strcmp(w.url.path,"/storage/v1/upload/resumable/sign"))return {Transfer::Invalid,0};
     if(record.location[0]&&!resumeLocation(record.endpoint,record.location,w.location,sizeof(w.location)))return {Transfer::Invalid,0};
     if(!w.ready())return failure();
@@ -203,25 +237,42 @@ TransferResult transfer(const char* id,const char* path,Resume& record,const cor
         if(save(id,record)!=Save::Saved){record.location[0]=0;return {Transfer::Storage,w.reply.status};}
         return {Transfer::Progress,w.reply.status};
     }
-    if(!w.begin(record.location,"HEAD",admission.token)||!w.text("\r\n")||!w.response())return failure();
+    if(!w.begin(record.location,"HEAD",admission.token,true)||!w.text("\r\n")||!w.response())return failure();
     uint32_t offset=0;
     if(!resumeOffset(w.reply,record.media.bytes,offset))return failure();
     if(!w.ready())return failure();
     if(offset==record.media.bytes)return {Transfer::Verify,w.reply.status};
     const uint32_t remaining=record.media.bytes-offset,chunk=remaining<kChunkBytes?remaining:kChunkBytes;
     if(!hal::sd::seekStream(&w.reader,offset))return {Transfer::Storage,w.reply.status};
-    if(!w.begin(record.location,"PATCH",admission.token))return failure();
+    if(!w.begin(record.location,"PATCH",admission.token,false,true))return failure();
     const int n=snprintf(w.scratch,sizeof(w.scratch),"Upload-Offset: %lu\r\nContent-Length: %lu\r\nContent-Type: application/offset+octet-stream\r\n\r\n",(unsigned long)offset,(unsigned long)chunk);
     if(n<0||size_t(n)>=sizeof(w.scratch)||!w.send(w.scratch,n))return failure();
+    // Larger SD reads amortize FAT/SPI overhead; PSRAM only, scoped to this
+    // PATCH and released before yielding the network reservation.
+    struct Payload {
+        uint8_t* data=static_cast<uint8_t*>(heap_caps_malloc(8192,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
+        ~Payload(){heap_caps_free(data);}
+    } payload;
+    if(!payload.data)return {Transfer::NoMemory,w.reply.status};
     uint32_t sent=0;
     while(sent<chunk){
         if(!w.ready())return failure();
-        const size_t wanted=chunk-sent<sizeof(w.scratch)?chunk-sent:sizeof(w.scratch);
-        const size_t got=hal::sd::readStream(&w.reader,reinterpret_cast<uint8_t*>(w.scratch),wanted);
+        const size_t wanted=chunk-sent<8192?chunk-sent:8192;
+        const size_t got=hal::sd::readStream(&w.reader,payload.data,wanted);
         if(!got||got>wanted)return {Transfer::Storage,w.reply.status};
-        if(!w.send(w.scratch,got))return failure();sent+=got;
+        if(!w.send(payload.data,got))return failure();sent+=got;
     }
-    if(!w.response()||!acceptedChunk(w.reply,record.media.bytes,offset,chunk))return failure();
-    return {Transfer::Progress,w.reply.status};
+    // Storage may finalize the object before acknowledging the last PATCH.
+    // Keep cancellation live while allowing that bounded provider operation.
+    const bool final=offset+chunk==record.media.bytes;
+    if(final)w.readIdleMs=5000;
+    if(!w.response()){
+        // A missing acknowledgment is ambiguous, not evidence of missing data.
+        // The backend must independently check the original and issue a receipt.
+        if(final&&!w.cancelled)return {Transfer::Uncertain,w.reply.status};
+        return failure();
+    }
+    if(!acceptedChunk(w.reply,record.media.bytes,offset,chunk))return failure();
+    return {offset+chunk==record.media.bytes?Transfer::Verify:Transfer::Progress,w.reply.status};
 }
 } }

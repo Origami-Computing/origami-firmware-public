@@ -183,7 +183,7 @@ Identify identify(const char* path,Resume& record,bool (*checkpoint)(void*),void
     struct HashWork {
         hal::sd::StreamReader reader;
         mbedtls_sha256_context hash;
-        uint8_t buffer[1024],digest[32];
+        uint8_t buffer[8192],digest[32];
         HashWork(){mbedtls_sha256_init(&hash);}
         ~HashWork(){hal::sd::closeStream(&reader);mbedtls_sha256_free(&hash);}
     };

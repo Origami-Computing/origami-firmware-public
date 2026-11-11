@@ -1,3 +1,4 @@
+#include "services/ggwave_receiver.h"
 #include "hal/hal_encoder_trace.h"
 #if defined(KAMI_GAMES) && KAMI_GAMES
 #include "apps/tennis_app.h"
@@ -6,13 +7,17 @@
 #endif
 #include "tooling/device_api_serial.h"
 #include "tooling/lua_runtime_probe.h"
+#include "tooling/imu_calibration_commands.h"
 #include "sfx/alarm_catalog.h"
 #include "hal/audio_retirement.h"
 #include "tooling/dev_serial_input.h"
+#include "tooling/custom_app_commands.h"
+#include "hal/app_storage.h"
 
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 
 #include <esp_sleep.h>
+#include <esp_timer.h>
 #include <esp_system.h>
 #include <esp_ota_ops.h>
 #include <mbedtls/sha256.h>
@@ -47,6 +52,7 @@
 #include "control/shipping.h"
 #include "services/alarms.h"
 #include "core/store.h"
+#include "core/board_time.h"
 #ifdef MENU_APP
 #include "apps/camera_menu_app.h"
 #include "apps/doodle_jump_app.h"
@@ -64,7 +70,9 @@
 #include "apps/tutorial_app.h"
 #include "apps/safe_area_app.h"
 #include "apps/settings_menu_app.h"
+#include "apps/screen_brightness_test_app.h"
 #include "apps/wifi_setup_app.h"
+#include "apps/app_store_app.h"
 #include "services.h"
 #include "ui/home_eyes.h"
 #include "services/morning_quote.h"
@@ -104,6 +112,7 @@
 #include "hal/hal_bus.h"
 #include "hal/hal_camera.h"
 #include "hal/hal_display.h"
+#include "services/screen_brightness.h"
 #include "hal/hal_input.h"
 #include "core/rotary_decoder.h"
 #include "hal/hal_io.h"
@@ -115,6 +124,7 @@
 #include "services/qr_decode.h"
 #include "services/wifi_qr_session.h"
 #include "hal/hal_wifi.h"
+#include "hal/hal_ble.h"
 #include "nav_handler.h"
 #include "services.h"
 #include "sfx/sfx.h"
@@ -238,6 +248,8 @@ static void printHelp() {
   Serial.println("  display status     show control readbacks, TE level/edge count");
 #ifdef MENU_APP
   Serial.println("  display stats      field repaint and canvas transfer counters");
+  Serial.println("  brightness [5..100|save|restore]  software dimming/status (set is temporary)");
+  Serial.println("  brightness pattern TARGET DRIVE SWAP | off  optical reference; DRIVE=-1 uses production curve");
 #endif
   Serial.println("  display recover    cold-cycle panel rail and reinitialize");
 #ifdef MENU_APP
@@ -273,6 +285,10 @@ static void printHelp() {
   Serial.println("  mic status|cancel  show or stop command-driven recording");
   Serial.println("  imu test           sample accelerometer and gyroscope ranges");
   Serial.println("  imu int test       verify IMU INT1 through the IO expander");
+  Serial.println("  imu cal            capture this still orientation, solve + save sensor calibration");
+  Serial.println("  imu cal pose|save|reset  multi-orientation capture (up to 6 faces), then save");
+  Serial.println("  imu cal status|clear|cancel  show / delete stored calibration / abort");
+  Serial.println("  imu stream [S] [raw]  corrected (or raw) samples for S seconds + mean/sd");
   Serial.println("  vibration test     run vibration motor for one second");
   Serial.println("  input status       show physical buttons and rotary GPIO state");
   Serial.println("  ee inputs          sample all EE checklist inputs for 8 seconds");
@@ -305,12 +321,20 @@ static void printHelp() {
   Serial.println("  doodle sign +/-1   flip Doodle roll steering direction");
   Serial.println("  doodle save        persist current Doodle tuning across reboot");
   Serial.println("  doodle defaults    restore default Doodle controls");
+  Serial.println("  doodle test tilt DEG  offset measured roll -40..40 until exit");
   Serial.println("  display red|green|blue|white|black  direct panel fill");
   Serial.println("  tls probe HOST PORT verify a TLS handshake without application data");
   Serial.println("  widget stats       observe Lua draws and framebuffer transfers");
   Serial.println("  scene              dump current scene nodes");
   Serial.println("  power boot         report deep-sleep reset and RTC timer wake");
-  Serial.println("  power shutdown-test  REAL accessory shutdown/deep sleep; USB wake in 8 seconds");
+  Serial.println("  power shutdown-test [S]  REAL accessory shutdown/deep sleep; USB timer wake in S (1..3600, default 8) seconds");
+  Serial.println("  power restart      software reset (esp_restart) to check retained state");
+  Serial.println("  power shallow-test MS battery sleep on USB; deep sleep after MS (1000..3600000)");
+  Serial.println("  alarm slot H M | alarm slot-off H M  dev: add or disable a saved test alarm");
+  Serial.println("  power alarm-test S real shutdown with the staged alarm wake aimed S (1..86400) seconds ahead");
+  Serial.println("  time status        wall clock, source (unset/retained/network), last sync, SNTP hold");
+  Serial.println("  time lightsleep-test S  dev: S (5..1800) s of 150 ms light-sleep cycles like battery sleep");
+  Serial.println("  time sntp hold|release  dev: keep SNTP off across sleep/soft reset to measure RTC-only time");
   Serial.println("  power self-test    check C click/hold and wake policy");
   Serial.println("  pomodoro open|status|test N  inspect / shorten running interval to 1..10s");
   Serial.println("  power test-wake MS arm a temporary USB sleep test wake (3000..15000)");
@@ -337,6 +361,7 @@ static void printHelp() {
   Serial.println("  backend mode dev|prod  same as Settings > Server");
   Serial.println("  api status         show API key state");
   Serial.println("  api set KEY        persist API key");
+  Serial.println("  api clear          clear account key and device token");
   Serial.println("  ota auth status    show OTA credential state");
   Serial.println("  ota auth set TOKEN persist OTA access key (64 hex)");
   Serial.println("  ota auth clear     remove persisted OTA token");
@@ -348,6 +373,7 @@ static void printHelp() {
   Serial.println("  queue clear        clear live upload queue + persisted manifest");
   Serial.println("  provision begin    enter boot-time provisioning mode");
   Serial.println("  provision done     leave boot-time provisioning mode");
+  Serial.println("  apps ACTION SESSION ... persistent Lua package installer (tools/custom_apps.py)");
   Serial.println("  sdput SIZE CRC PATH  upload one binary file to SD");
   Serial.println("  sdget PATH           download a file as CRC-checked base64 chunks");
   Serial.println("  sddelete PATH        delete one file through guarded media deletion");
@@ -2068,7 +2094,7 @@ static bool startSdUpload(const char* path, uint32_t size, uint32_t crc) {
     Serial.println("SDPUT ERR no_sd");
     return true;
   }
-  if (!validSdPath(path) || size == 0) {
+  if (!validSdPath(path) || hal::app_storage::protectedSdPath(path) || size == 0) {
     Serial.println("SDPUT ERR args");
     return true;
   }
@@ -2108,7 +2134,7 @@ static bool handleSdCommand(const char* rawLine) {
 
   if (startsWithWord(line,"sddelete")) {
     line=trimInPlace(line+8);
-    if(!validSdPath(line)){Serial.println("SDDELETE ERR args");return true;}
+    if(!validSdPath(line)||hal::app_storage::protectedSdPath(line)){Serial.println("SDDELETE ERR args");return true;}
     services::media_delete::Result result;
     const bool ok=services::media_delete::deleteFile(line,&result);
     Serial.printf("SDDELETE %s removed=%d missing=%d queue=%d path=%s\n",ok?"OK":"ERR",result.removed,result.missing,result.queueRemoved,line);
@@ -2116,7 +2142,7 @@ static bool handleSdCommand(const char* rawLine) {
   }
   if (startsWithWord(line, "sdclear")) {
     line = trimInPlace(line + 7);
-    if (!validSdPath(line)) {
+    if (!validSdPath(line) || hal::app_storage::protectedSdPath(line)) {
       Serial.println("SDCLEAR ERR args");
       return true;
     }
@@ -2306,6 +2332,7 @@ static bool handleWifiCommand(const char* rawLine) {
     return true;
   }
   if (strcasecmp(cmd, "qrstatus") == 0) {
+    apps::wifi_setup::printStatus();
     auto& session = services::wifi_qr::Session::instance();
     Serial.printf("[wifi-dev] cleanup pending=%u ioHeld=%u agentHeld=%u\n",
                   session.closing(), session.backgroundHeld(), session.transportHeld());
@@ -2422,7 +2449,7 @@ static bool handleBackendCommand(const char* rawLine) {
 }
 
 static void printApiUsage() {
-  Serial.println("[api-dev] usage: api status | fingerprint | set KEY");
+  Serial.println("[api-dev] usage: api status | fingerprint | set KEY | clear");
 }
 
 static bool handleApiCommand(const char* rawLine) {
@@ -2442,6 +2469,12 @@ static bool handleApiCommand(const char* rawLine) {
     return true;
   }
 
+  if (strcasecmp(cmd, "clear") == 0) {
+    const bool ok = core::secrets::setApiKey("");
+    Serial.printf("[api-dev] clear ok=%u len=%u\n", ok ? 1 : 0,
+                  (unsigned)strlen(core::secrets::backendConfig().apiKey));
+    return true;
+  }
   if (strcasecmp(cmd, "fingerprint") == 0) {
     const auto config=core::secrets::backendConfig();const char* key=config.apiKey;
     uint8_t digest[32];
@@ -2941,6 +2974,17 @@ static bool handleDoodleCommand(char* line) {
     Serial.println("[doodle] test fall requested");
     return true;
   }
+  if (strncmp(line, "doodle test tilt ", 17) == 0) {
+    char* end = nullptr;
+    const float offset = strtof(line + 17, &end);
+    if (end == line + 17 || *end != '\0' || !(offset >= -40.0f && offset <= 40.0f)) {
+      Serial.println("[doodle] ERR tilt_range -40..40");
+      return true;
+    }
+    apps::doodle_jump::testTilt(offset);
+    Serial.printf("[doodle] test tilt offset=%.1f\n", offset);
+    return true;
+  }
   if (strcmp(line, "doodle test clipping") == 0) {
     apps::doodle_jump::testClipping();
     return true;
@@ -3080,9 +3124,19 @@ static void handleLine(char* line, uint32_t nowMs) {
   if(!strcmp(line,"net retry-test")){services::net_poll::printRegistrationRetryCheck(Serial);return;}
   if(!strcmp(line,"net status")){services::net_poll::printStatus(Serial);return;}
 #ifdef MENU_APP
+  if (!strncmp(line,"store code ",11)) {
+    Serial.printf("[store] code=%s\n",apps::app_store::submitStoreCode(line+11)?"accepted":"rejected");return;
+  }
+  if (!strcmp(line,"store status")) { Serial.printf("[store] %s\n",apps::app_store::installDiagnostic());return; }
   if (strcmp(line, "tutorial restart") == 0) {
     Serial.printf("[tutorial] restart=%s\n", apps::tutorial::restartForTesting() ? "ok" : "failed");
     return;
+  }
+  if (strncmp(line,"tutorial preview ",17)==0){
+    unsigned page=0,ms=0,selection=0;int used=0;
+    const bool parsed=sscanf(line+17,"%u %u %u %n",&page,&ms,&selection,&used)==3;
+    const bool ok=parsed&&apps::tutorial::debugPreview(page,ms,selection,line+17+used);
+    Serial.printf("[tutorial] preview=%s\n",ok?"ok":"failed");return;
   }
   if (strncmp(line, "tutorial seek ", 14) == 0) {
     unsigned page=0,ms=0;
@@ -3137,6 +3191,14 @@ static void handleLine(char* line, uint32_t nowMs) {
   if (handleProvisionCommand(raw)) return;
   if (tooling::vibration_commands::handleCommand(raw,
       services::automation::wantsInputCapture() || apps::pomodoro::isAlerting())) return;
+  if (strncmp(raw,"apps ",5)==0) {
+    // Protocol receipts/hex exports must not use the lossy 5 ms log budget.
+    // Match the existing bounded SD/scene diagnostic transfer convention.
+    Serial.setTxTimeoutMs(100);
+    tooling::handleCustomAppCommand(raw,Serial);
+    Serial.setTxTimeoutMs(5);
+    return;
+  }
   if (handleSdCommand(raw)) return;
   if (handleSceneCommand(raw)) return;
   if (handlePreviewCommand(raw)) return;
@@ -3149,6 +3211,7 @@ static void handleLine(char* line, uint32_t nowMs) {
 
   lowerTrim(line);
   if (!line[0]) return;
+  if (tooling::imu_calibration_commands::handleCommand(line, nowMs)) return;
   if (ui::home_eyes::handleDebugCommand(line)) return;
 #ifdef MENU_APP
   if (apps::safe_area::handleCommand(line)) return;
@@ -3177,6 +3240,18 @@ static void handleLine(char* line, uint32_t nowMs) {
   if (strcmp(line, "morning stop") == 0) {
     services::automation::dismissActiveAlert();
     Serial.println("[morning-studio] OK stopped");
+    return;
+  }
+  if (strcmp(line, "ggwave status") == 0) {
+    const auto s = services::ggwave_receiver::snapshot();
+    // Wi-Fi diagnostics report progress only, never credential payloads.
+    Serial.printf("[ggwave] status listening=%u receiving=%u messages=%lu samples=%lu peak=%u failures=%lu text=\n",
+        s.listening, s.receiving, (unsigned long)s.messages, (unsigned long)s.samples,
+        s.peak, (unsigned long)s.failures);
+    Serial.printf("[ggwave] signal starts=%lu clipped=%lu max_decode_us=%lu low_db=%.1f mid_db=%.1f high_db=%.1f protocol=%d\n",
+        (unsigned long)s.starts, (unsigned long)s.clipped, (unsigned long)s.maxDecodeUs,
+        s.lowDb, s.midDb, s.highDb, s.protocol);
+    if (!s.listening) Serial.printf("[ggwave] error=%s\n", services::ggwave_receiver::error());
     return;
   }
   if (strcmp(line, "morning open") == 0) {
@@ -3351,6 +3426,30 @@ static void handleLine(char* line, uint32_t nowMs) {
     Serial.setTxTimeoutMs(5);
 #endif
     return;
+  }
+  {
+    // Bench-only: drive the saved-alarm path, as the Alarm app does. Takes a
+    // disabled slot or the next free one, so it never replaces a real alarm.
+    int hour = 0, minute = 0;
+    const bool off = sscanf(line, "alarm slot-off %d %d", &hour, &minute) == 2;
+    if (off || sscanf(line, "alarm slot %d %d", &hour, &minute) == 2) {
+      const auto& saved = services::alarms::snapshot();
+      int index = -1;
+      for (int i = 0; i < saved.count && index < 0; ++i) {
+        const auto& slot = saved.alarms[i];
+        if (off ? slot.enabled && slot.hour == hour && slot.minute == minute : !slot.enabled) index = i;
+      }
+      if (index < 0 && !off) index = saved.count;
+      services::alarms::Alarm alarm = index >= 0 && index < saved.count ? saved.alarms[index]
+                                                                        : services::alarms::Alarm{};
+      alarm.enabled = !off;
+      alarm.hour = (uint8_t)hour;
+      alarm.minute = (uint8_t)minute;
+      const bool ok = index >= 0 && services::alarms::save((uint8_t)index, alarm);
+      Serial.printf("[alarm-slot] saved=%u slot=%d enabled=%u %02d:%02d\n", ok ? 1u : 0u, index,
+                    alarm.enabled ? 1u : 0u, hour, minute);
+      return;
+    }
   }
   if (strcmp(line, "alarm test") == 0 || strncmp(line, "alarm test ", 11) == 0) {
     const int sound = !strcmp(line,"alarm test") ? 3 : atoi(line+11);
@@ -3543,8 +3642,84 @@ static void handleLine(char* line, uint32_t nowMs) {
         esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER);
     return;
   }
-  if (strcmp(line, "power shutdown-test") == 0) {
-    services::testPowerSwitchShutdown();
+  if (strcmp(line, "power shutdown-test") == 0 || strncmp(line, "power shutdown-test ", 20) == 0) {
+    const unsigned long seconds = line[19] ? strtoul(line + 20, nullptr, 10) : 8ul;
+    services::testPowerSwitchShutdown((uint32_t)seconds);
+    return;
+  }
+  if (strncmp(line, "power shallow-test ", 19) == 0) {
+    const unsigned long ms = strtoul(line + 19, nullptr, 10);
+    if (ms < 1000 || ms > 3600000) { Serial.println("[power-shallow-test] usage 1000..3600000"); return; }
+    services::testShallowSleep((uint32_t)ms);
+    return;
+  }
+  if (strncmp(line, "power alarm-test ", 17) == 0) {
+    const unsigned long seconds = strtoul(line + 17, nullptr, 10);
+    if (seconds < 1 || seconds > 86400) { Serial.println("[power-alarm-test] usage 1..86400"); return; }
+    services::testScheduledDeepSleep((uint32_t)seconds);
+    return;
+  }
+  if (strcmp(line, "power restart") == 0) {
+    Serial.printf("[power-restart] esp_restart epoch=%ld\n", (long)time(nullptr));
+    Serial.flush();
+    delay(50);
+    esp_restart();
+  }
+  if (strcmp(line, "time status") == 0) {
+    struct timeval tv{};
+    gettimeofday(&tv, nullptr);
+    struct tm local{};
+    char stamp[32] = "-";
+    const time_t now = tv.tv_sec;
+    if (localtime_r(&now, &local)) strftime(stamp, sizeof(stamp), "%Y-%m-%d %H:%M:%S %Z", &local);
+    char hhmm[8];
+    core::time::formatClockHHMM(hhmm, sizeof(hhmm));
+    Serial.printf("[time-status] epoch=%ld.%06ld local=\"%s\" bar=\"%s\" source=%s synced=%u "
+                  "last_sync=%lld sleep_ppm=%ld sntp_hold=%u wifi=%u reset=%d uptime_ms=%lu\n",
+                  (long)tv.tv_sec, (long)tv.tv_usec, stamp,
+                  hhmm, core::time::sourceName(core::time::source()),
+                  core::time::isSynced() ? 1u : 0u,
+                  (long long)core::time::lastNetworkSyncEpoch(),
+                  (long)core::time::sleepDriftPpm(),
+                  core::time::devSntpHold() ? 1u : 0u, hal::wifi::connected() ? 1u : 0u,
+                  (int)esp_reset_reason(), (unsigned long)millis());
+    return;
+  }
+  if (strncmp(line, "time lightsleep-test ", 21) == 0) {
+    // Same radio teardown and 150 ms timer cycle as battery sleep, so the RC
+    // compensation of system time in light sleep can be compared with the host.
+    const unsigned long seconds = strtoul(line + 21, nullptr, 10);
+    if (seconds < 5 || seconds > 1800) { Serial.println("[time-lightsleep] usage 5..1800"); return; }
+    Serial.printf("[time-lightsleep] start s=%lu epoch=%ld\n", seconds, (long)time(nullptr));
+    Serial.flush();
+    hal::ble::deinit();
+    hal::wifi::stop();
+    core::watchdog::unsubscribe();
+    const int64_t until = esp_timer_get_time() + (int64_t)seconds * 1000000LL;
+    uint32_t cycles = 0;
+    while (esp_timer_get_time() < until) {
+      esp_sleep_enable_timer_wakeup(150ULL * 1000ULL);
+      esp_light_sleep_start();
+      ++cycles;
+    }
+    core::watchdog::subscribe();
+    core::watchdog::feed();
+    hal::wifi::restore();
+    hal::ble::restoreAfterSleep();
+    Serial.printf("[time-lightsleep] done cycles=%lu epoch=%ld\n", (unsigned long)cycles,
+                  (long)time(nullptr));
+    return;
+  }
+  if (strncmp(line, "time sleep-ppm ", 15) == 0) {
+    const long ppm = strtol(line + 15, nullptr, 10);
+    Serial.printf("[time-status] sleep_ppm set=%u value=%ld (RTC record + NVS)\n",
+                  core::time::setSleepDriftPpmForTest((int32_t)ppm) ? 1u : 0u, ppm);
+    return;
+  }
+  if (strcmp(line, "time sntp hold") == 0 || strcmp(line, "time sntp release") == 0) {
+    core::time::setDevSntpHold(line[10] == 'h');
+    Serial.printf("[time-status] sntp_hold=%u (applies from next boot/wake if SNTP already ran)\n",
+                  core::time::devSntpHold() ? 1u : 0u);
     return;
   }
   if (strcmp(line,"power self-test")==0) {
@@ -3570,8 +3745,8 @@ static void handleLine(char* line, uint32_t nowMs) {
     check(g.update(true,uint32_t(0xffffff00u+core::power_button::kHoldMs-1))==Action::None);
     check(g.update(true,uint32_t(0xffffff00u+core::power_button::kHoldMs))==Action::Sleep);
     for(unsigned mask=0;mask<8;++mask)
-      check(core::power_button::wakeRequested(mask&1,mask&2,mask&4)==bool(mask&4));
-    Serial.printf("[power-test] pass=%u fail=%u hold_ms=%lu wake=C\n",pass,fail,(unsigned long)core::power_button::kHoldMs);
+      check(core::power_button::wakeRequested(mask&1,mask&2,mask&4)==(mask!=0));
+    Serial.printf("[power-test] pass=%u fail=%u hold_ms=%lu wake=ABC\n",pass,fail,(unsigned long)core::power_button::kHoldMs);
     return;
   }
   if(strncmp(line,"power test-wake ",16)==0) {
@@ -3923,6 +4098,43 @@ static void handleLine(char* line, uint32_t nowMs) {
   if (tooling::handleTlsCommand(line)) return;
   if (strcmp(line,"widget timer-test")==0) {tooling::probeLuaTimer(Serial);return;}
   if (strcmp(line,"widget runtime-test")==0) {tooling::probeLuaRuntime(Serial);return;}
+  if (startsWithWord(line, "brightness pattern")) {
+    bool ok=false;
+    if(strcmp(line,"brightness pattern off")==0) ok=apps::screen_brightness_test::close();
+    else {
+      int target=0,drive=-1,swap=0;char extra=0;
+      if(sscanf(line,"brightness pattern %d %d %d %c",&target,&drive,&swap,&extra)==3 && (swap==0||swap==1))
+        ok=apps::screen_brightness_test::show(target,drive,swap!=0);
+    }
+    Serial.printf("[brightness-pattern] ok=%u\n",ok?1u:0u);
+    return;
+  }
+  if (startsWithWord(line, "brightness")) {
+    char* argument = trimInPlace(line + strlen("brightness"));
+    bool ok = true;
+    if (strcmp(argument, "save") == 0) ok = services::screen_brightness::save();
+    else if (strcmp(argument, "restore") == 0) services::screen_brightness::discard();
+    else if (argument[0]) {
+      char* end = nullptr;
+      const long value = strtol(argument, &end, 10);
+      ok = end != argument && *end == '\0' && value >= services::screen_brightness::kMinimum && value <= 100;
+      if (ok) services::screen_brightness::set(value);
+    }
+    NavHandler::instance().invalidateChrome();
+    hal::display::markAllDirty();
+    const auto pixels = hal::display::directTft().outputStats();
+    const auto flush = hal::display::flushStats();
+    Serial.printf("[brightness] ok=%u percent=%d saved=%d output=%u white=0x%04X red=0x%04X green=0x%04X blue=0x%04X optimized=%u solid=%lu stream=%lu single=%lu dma_fallback=%lu frames=%lu pixels=%lu flush_us=%lu last_us=%lu transfer_us=%lu last_transfer_us=%lu\n",
+        ok ? 1u : 0u, services::screen_brightness::percent(), services::screen_brightness::savedPercent(),
+        hal::display::brightness(), hal::display::brightnessColor(0xFFFF),
+        hal::display::brightnessColor(0xF800), hal::display::brightnessColor(0x07E0),
+        hal::display::brightnessColor(0x001F), hal::display::isOptimizedRender() ? 1u : 0u,
+        (unsigned long)pixels.solid, (unsigned long)pixels.stream, (unsigned long)pixels.single,
+        (unsigned long)pixels.dmaFallback, (unsigned long)flush.frames, (unsigned long)flush.pixels,
+        (unsigned long)flush.elapsedUs, (unsigned long)hal::display::lastFlushUs(),
+        (unsigned long)flush.transferUs, (unsigned long)flush.lastTransferUs);
+    return;
+  }
   if (strcmp(line, "display stats") == 0) {
     const auto p=NavHandler::instance().chrome().paintStats();
     const auto f=hal::display::flushStats();
@@ -4052,6 +4264,7 @@ void begin() {
 }
 
 void service(uint32_t nowMs) {
+  tooling::serviceCustomAppCommands(nowMs);
   auto& access=services::manufacturing_access::session();
   if(access.active()&&!hal::power::externalPowerPresent(hal::power::read())){
     access.close();s_tail=s_head;
@@ -4060,6 +4273,7 @@ void service(uint32_t nowMs) {
   }
   pumpOtaProbe(nowMs);
   pumpMicTuneRecording(nowMs);
+  tooling::imu_calibration_commands::service(nowMs);
   pumpSdDownload();
   readSerial(nowMs);
   // Repeat cumulative progress while waiting for the host. A lost USB status

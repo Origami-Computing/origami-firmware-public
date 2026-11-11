@@ -5,54 +5,46 @@
 
 namespace services { namespace onboarding_progress {
 namespace {
-constexpr uint32_t kTag = 0x4B050000;
+constexpr uint32_t kTag = 0x4B070000;
 constexpr const char* kNamespace = "onboarding";
-constexpr const char* kKey = "guide_v5";
+constexpr const char* kKey = "guide_v7";
 uint32_t s_saved = 0;
 }
 Progress load() {
-    Progress progress;
-    Preferences prefs;
-    if (!prefs.begin(kNamespace, true)) return progress;
-    uint32_t word = prefs.getUInt(kKey, 0);
-    const uint32_t previous = prefs.getUInt("guide_v4", 0), oldWord = prefs.getUInt("guide_v3", 0);
-    if (!word && (previous & 0xFFFFFE00u) == 0x4B040000u) {
-        word = kTag | (previous & 0x1FFu);
-        if (!(previous & 0x100u) && (previous & 255u) >= 21) word = kTag | 24u;
-    }
-    progress.offered = prefs.getBool("offered", false) || word != 0 || oldWord != 0;
-    prefs.end(); s_saved = word;
-    if ((word & 0xFFFFFE00u) == kTag && (word & 255) <= 34) {
-        progress.completed = (word & 0x100) != 0; progress.page = word & 255;
-        if (progress.page >= 29 && progress.page <= 31) progress.page = 29;
-        if (progress.page == 34) progress.page = 22;
-        if (progress.page >= 12 && progress.page <= 15) progress.page = 9;
-        if (progress.page == 19 || progress.page == 20) progress.page = 18;
-        if (progress.page == 26 || progress.page == 27) progress.page = 25;
-        if (progress.page == 28) progress.page = 9;
-        if (progress.page == 23) progress.page = 22;
-    } else {
-        progress.completed = oldWord && !legacy::shouldOffer(legacy::decode(oldWord));
+    Progress progress; Preferences prefs;
+    if (!prefs.begin(kNamespace,true)) return progress;
+    const uint32_t word=prefs.getUInt(kKey,0);
+    const uint32_t v6=prefs.getUInt("guide_v6",0);
+    const uint32_t old=prefs.getUInt("guide_v5",0),v4=prefs.getUInt("guide_v4",0),v3=prefs.getUInt("guide_v3",0);
+    progress.offered=prefs.getBool("offered",false)||word||v6||old||v4||v3;
+    prefs.end();s_saved=word;
+    if((word&0xFFFF8000u)==kTag && (word&255u)<=141 && (word&255u)!=44){
+      progress.page=word&255;progress.completed=word&0x100;
+      progress.interest=(word>>9)&3; if(progress.interest>2)progress.interest=0;
+      progress.account=word&0x800;progress.joinWifi=word&0x1000;progress.setupPublished=word&0x2000;progress.connected=word&0x4000;
+    }else{
+      // Old incomplete routes restart with the new controls; completed users stay done.
+      progress.completed=(((v6&0xffffe000u)==0x4b060000u)&&(v6&0x100))||(((old&0xfffffe00u)==0x4b050000u)&&(old&0x100))||(((v4&0xfffffe00u)==0x4b040000u)&&(v4&0x100))||(v3&&!legacy::shouldOffer(legacy::decode(v3)));
     }
     return progress;
 }
 bool markOffered() { return core::store::putBool(kNamespace, "offered", true); }
-bool save(unsigned page, bool completed) {
-    if(page>34)return false;
-    if(page==34)page=22;
-    if (page >= 29 && page <= 31) page = 29;
-    if (page == 12) page = 9;
-    if (page == 19) page = 18;
-    if (page == 23) page = 22;
-    if (page == 26 || page == 27) page = 25;
-    const uint32_t word = kTag | (completed ? 0x100u : 0u) | page;
-    if (word == s_saved) return true;
-    if (!core::store::putU32(kNamespace, kKey, word)) return false;
-    s_saved = word;
-    return true;
+bool save(unsigned page,bool completed,unsigned interest,bool account,bool joinWifi,bool setupPublished,bool connected) {
+    if(page>141||page==44||interest>2)return false;
+    if(page==12)page=setupPublished||account&&interest?40:41;
+    if(page==19||page==20)page=18;
+    if(page==23)page=22;
+    if(page==27)page=25;
+    if(page==30||page==31||page==43)page=40;
+    if(page>=129&&page<=134)page=128;
+    if(page==124)page=123;
+    const uint32_t word=kTag|(completed?0x100u:0u)|(interest<<9)|(account?0x800u:0u)|(joinWifi?0x1000u:0u)|(setupPublished?0x2000u:0u)|(connected?0x4000u:0u)|page;
+    if(word==s_saved)return true;
+    if(!core::store::putU32(kNamespace,kKey,word))return false;
+    s_saved=word;return true;
 }
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
-bool resetForDevelopment() { return core::store::putU32(kNamespace, kKey, 0) && core::store::putU32(kNamespace, "guide_v4", 0) && core::store::putU32(kNamespace, "guide_v3", 0) && core::store::putBool(kNamespace, "offered", false); }
+bool resetForDevelopment() { return core::store::putU32(kNamespace, kKey, 0) && core::store::putU32(kNamespace, "guide_v6", 0) && core::store::putU32(kNamespace, "guide_v5", 0) && core::store::putU32(kNamespace, "guide_v4", 0) && core::store::putU32(kNamespace, "guide_v3", 0) && core::store::putBool(kNamespace, "offered", false); }
 uint32_t savedRecordForDevelopment() { return s_saved; }
 #endif
 }} // namespace services::onboarding_progress

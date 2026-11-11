@@ -424,12 +424,27 @@ int16_t tch_spi_freq;// Touch controller read/write SPI frequency
 typedef uint16_t (*getColorCallback)(uint16_t x, uint16_t y);
 
 // Class functions and variables
+#ifdef ORIGAMI_DISPLAY_DIMMING
+#include "PixelScale565.h"
+#endif
+
 class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has access to protected members
 
  //--------------------------------------- public ------------------------------------//
  public:
 
   TFT_eSPI(int16_t _W = TFT_WIDTH, int16_t _H = TFT_HEIGHT);
+#ifdef ORIGAMI_DISPLAY_DIMMING
+  // Physical S3 display only. Sprites inherit a null transform and keep their
+  // original colors. Caller serializes changes with display transfers.
+  struct OutputStats { uint32_t solid=0, stream=0, single=0, dmaFallback=0; };
+  void setOutputScale(const PixelScale565* scale) { _outputScale=scale; }
+  OutputStats outputStats() const { return _outputStats; }
+  uint16_t outputColor(uint16_t color) const {
+    return _outputScale && _outputScale->active() ? _outputScale->map(color) : color;
+  }
+#endif
+
 
   // init() and begin() are equivalent, begin() included for backwards compatibility
   // Sketch defined tab colour option is for ST7735 displays only
@@ -605,6 +620,10 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
 
            // These are used to render images or sprites stored in RAM arrays (used by Sprite class for 16bpp Sprites)
   virtual void pushImage(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t *data);
+#ifdef ORIGAMI_DISPLAY_DIMMING
+  // Borrow pixels already transformed to output brightness. Caller owns SPI.
+  void pushImageOutput(int32_t x,int32_t y,int32_t w,int32_t h,uint16_t* data);
+#endif
   void     pushImage(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t *data, uint16_t transparent);
 
            // These are used to render images stored in FLASH (PROGMEM)
@@ -939,6 +958,13 @@ class TFT_eSPI : public Print { friend class TFT_eSprite; // Sprite class has ac
   bool     isDigits;   // adjust bounding box for numbers to reduce visual jiggling
   bool     textwrapX, textwrapY;  // If set, 'wrap' text at right and optionally bottom edge of display
   bool     _swapBytes; // Swap the byte order for TFT pushImage()
+#ifdef ORIGAMI_DISPLAY_DIMMING
+  const PixelScale565* _outputScale = nullptr;
+  OutputStats _outputStats;
+  void pushPixelsRaw(const void* data, uint32_t len);
+  void pushScaledPixels(const void* data, uint32_t len, bool nativeOrder);
+#endif
+
 
   bool     _booted;    // init() or begin() has already run once
 

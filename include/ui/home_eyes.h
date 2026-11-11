@@ -132,6 +132,12 @@ bool drawFrameToPanel(TFT_eSPI& tft, int frameIndex, int x, int y, int w, int h,
 
 // Session initialization is allocation-free and does not access SD.
 bool beginSession(TFT_eSPI& tft);
+/**
+ * Skip the animation caches for this boot so the first eye frame is not held
+ * behind about 5 s of pre-rendering; painters render live instead. Call on the UI
+ * task before the first beginSession(). There is no way back within a boot.
+ */
+void skipAnimationCaches();
 /** Compatibility alias: the new rig has no separate single-frame cache. */
 bool beginSessionSingleFrame(TFT_eSPI& tft);
 /** Compatibility alias: all poses are available immediately. */

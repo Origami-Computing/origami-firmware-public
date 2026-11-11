@@ -24,6 +24,7 @@
 #include "apps/pomodoro_app.h"
 #include "apps/pong_app.h"
 #include "apps/settings_menu_app.h"
+#include "apps/custom_apps_settings_app.h"
 #include "apps/steps_app.h"
 #include "apps/timer_app.h"
 #include "apps/tutorial_app.h"
@@ -117,7 +118,7 @@ static const InputBinding kSettingsMainInputs[] = {
 };
 
 static const InputBinding kSettingsWifiMenuInputs[] = {
-    {"rotary", "select QR setup or saved networks", "self"},
+    {"rotary", "select QR setup, audio setup, connection help or saved networks", "self"},
     {"C tap", "open selected setup app or saved networks", "self-or-child"},
     {"A tap / A+B", "return to Settings main", "settings:main"},
 };
@@ -128,10 +129,10 @@ static const InputBinding kSettingsSoundMenuInputs[] = {
     {"A tap / A+B", "return to Settings main", "settings:main"},
 };
 
-static const InputBinding kSettingsAgentUiInputs[] = {
-    {"rotary", "browse Agent UI styles with border preview", "self"},
-    {"C tap", "save highlighted style and return home", "self-or-pop"},
-    {"A tap / A+B", "return without changing style", "settings:main"},
+static const InputBinding kSettingsBrightnessInputs[] = {
+    {"rotary", "preview brightness by -5 per step, clamped to 5..100", "self"},
+    {"C tap", "save brightness and return; stay on save failure", "self-or-child"},
+    {"A tap / A+B", "save and return; after save failure discard draft and return", "settings:main"},
 };
 
 static const InputBinding kSettingsMusicInputs[] = {
@@ -456,7 +457,7 @@ static const ScreenHints kSettingsHints[] = {
     HINTS("main", "scene-screen", "src/apps/settings_menu_app.cpp", kSettingsMainInputs),
     HINTS("wifi-menu", "scene-screen", "src/apps/settings_menu_app.cpp", kSettingsWifiMenuInputs),
     HINTS("sound-menu", "scene-screen", "src/apps/settings_menu_app.cpp", kSettingsSoundMenuInputs),
-    HINTS("agent-style", "scene-screen/custom-preview", "src/apps/settings_menu_app.cpp", kSettingsAgentUiInputs),
+    HINTS("brightness", "scene-screen", "src/apps/settings_menu_app.cpp", kSettingsBrightnessInputs),
     HINTS("music", "scene-screen", "src/apps/settings_menu_app.cpp", kSettingsMusicInputs),
     HINTS("sfx-volume", "scene-screen", "src/apps/settings_menu_app.cpp", kSettingsVolumeInputs),
     HINTS("wifi", "scene-screen", "src/apps/settings_menu_app.cpp", kSettingsWifiInputs),
@@ -567,6 +568,7 @@ static const ScreenHints kOtaHints[] = {
 #undef HINTS
 
 static const AppInfo kApps[] = {
+    {&apps::custom_apps_settings::app, nullptr, 0},
 #if defined(KAMI_GAMES) && KAMI_GAMES
     {&apps::tennis::app, nullptr, 0},
     {&apps::bowling::app, nullptr, 0},

@@ -36,7 +36,8 @@ struct {std::vector<std::string> deleted;void remove(const char* p){deleted.empl
 class UploadQueue {public:
 '''+block(header,'    enum class UploadResultKind')+';\n'+block(header,'    struct UploadResult {')+';\n'+r'''
  QueueItem m_items[20]{};int m_count=0,m_mutex=0;
- bool m_uploadPaused=false,m_resetAfterFlight=false;
+ bool m_uploadPaused=false,m_resetAfterFlight=false,m_deliveryConfirmed=false;
+ char m_deliveryPath[96]{};
  uint32_t m_nextNetworkRetryAt=0;
  char m_forcedItemId[24]{},m_inFlightId[24]{},m_inFlightPath[96]{},m_lastStatus[64]{};
  int requests=0,saves=0;std::function<void()> duringUpload;
@@ -61,8 +62,8 @@ using Kind=UploadQueue::UploadResultKind;
   if(kind==Kind::GlobalDeferral){assert(q.m_nextNetworkRetryAt==now+5000);assert(!q.processOnePending()&&q.requests==1);}
  }
  for(int code:{200,201,204})for(bool owned:{false,true}){
-  SD.deleted.clear();UploadQueue q;q.add("a",owned);q.result={Kind::HttpResponse,code,true,0};
-  assert(q.processOnePending()&&q.m_count==0);assert(SD.deleted.size()==(owned?1:0));
+  SD.deleted.clear();UploadQueue q;q.add("a",owned);strcpy(q.m_deliveryPath,"a");q.result={Kind::HttpResponse,code,true,0};
+  assert(q.processOnePending()&&q.m_count==0&&q.m_deliveryConfirmed);assert(SD.deleted.size()==(owned?1:0));
  }
  SD.deleted.clear();
  // Chunk/session progress cannot delete media or consume the failure budget.

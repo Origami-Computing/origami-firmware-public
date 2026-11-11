@@ -46,6 +46,19 @@ bool Session::begin(Observer observer) {
     id_ = hal::wifi::requestQrScan();
     return true;
 }
+Session::Startup Session::pollBegin() {
+    pollCleanup();
+    if (closing_ || id_) return Startup::Busy;
+    using Result = camera::Session::PrepareResult;
+    const auto admission = camera_.pollPrepareScan();
+    if (admission == Result::Pending) return Startup::Pending;
+    if (admission != Result::Ready) return Startup::Busy;
+    id_ = hal::wifi::requestQrScan();
+    return Startup::Ready;
+}
+void Session::cancelPendingBegin() {
+    if (!id_ && !closing_) camera_.releaseBackground();
+}
 Session::Decoder Session::prepareDecoder(Observer observer) {
     const auto status = hal::wifi::qrStatus();
     if (status.id != id_) return Decoder::Waiting;
@@ -60,13 +73,14 @@ Session::Decoder Session::prepareDecoder(Observer observer) {
     if (observer) observer("worker-ready-before-camera");
     return Decoder::Ready;
 }
-bool Session::openCamera() {
+bool Session::openCamera(Exposure exposure) {
     if (!camera_.start(FRAMESIZE_VGA, PIXFORMAT_JPEG, &s_tuning)) {
         LOGE("camera-qr", "scanner camera init failed");
         return false;
     }
-    // Preserve the OV5640 exposure convergence interval before the first frame.
-    camera_.settle(1000);
+    // Camera startup already verifies a usable frame. During live preview the
+    // sensor continues adjusting exposure and the decoder retries each frame.
+    if (exposure == Exposure::SettleBeforePreview) camera_.settle(1000);
     return true;
 }
 const char* Session::decoderError() const {

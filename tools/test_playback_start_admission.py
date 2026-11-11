@@ -43,7 +43,7 @@ struct Base{
  Worker worker_;Ring ring_;Codec codec_;Progress progress_,outputProgress_;File file_;
  struct Avi{} avi_;unsigned aviChunkEnd_=0,aviSamplesRead_=0,outputSampleRemainder_=0;
  std::atomic<bool> streamFailed_{false};
- void* inBuf_=(void*)1;int16_t decodeBuf_[4]{};
+ void* inBuf_=(void*)1;int16_t decodeBuf_[4]{};const int16_t* memoryPcm_=nullptr;
  std::atomic<bool> playing_{false};bool fileOpen_=false,backgroundIoPaused_=true,usageTrackActive_=false;
  char currentPath_[128]{};unsigned fileSize_=0,audioStart_=0,lastGoodFilePos_=0,decodeNoProgressCount_=0,detectedRate_=0,estBitrate_=0;
  unsigned dataStart_=0,dataEnd_=0,bytesPerFrame_=0;bool wantsNext_=false;

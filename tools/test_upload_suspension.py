@@ -10,6 +10,7 @@ with tempfile.TemporaryDirectory() as directory:
     write('Arduino.h', '#pragma once\n#include <stdint.h>\n#include "upload_queue.h"\nuint32_t millis();')
     write('freertos/FreeRTOS.h', '#pragma once\n#define pdMS_TO_TICKS(x) (x)')
     write('freertos/task.h', '#pragma once\n#include <stdint.h>\nusing TaskHandle_t=void*;\nTaskHandle_t xTaskGetCurrentTaskHandle();\nvoid vTaskDelay(uint32_t);')
+    write('core/memory.h', '#pragma once\n#include <cstddef>\nnamespace core {namespace memory {struct Snapshot {size_t dramFree,dramLargest;};inline Snapshot snapshot(){return {65536,32768};}}}')
     write('core/watchdog.h', 'namespace core {namespace watchdog {void feed();}}')
     write('upload_queue.h',r'''#pragma once
 #include <stdint.h>
@@ -213,7 +214,11 @@ int main(int argc,char** argv){using namespace services::uploads;using namespace
  resumeAfterMusicAudio();resumeAfterRadioPause();serviceTick();assert(trace.empty());
  resumeAfterAlertAudio();assert(!audioPriorityActive()&&trace=="WU");trace.clear();
  resumeAfterAlertAudio();assert(trace.empty());
- {PeriodicWork periodic;assert(periodic.tryEnter());}
+ {PeriodicWork periodic;assert(periodic.tryEnter());
+  PeriodicWork::prioritizeInstall(true);assert(periodic.yieldIfNeeded());
+  assert(!periodic.tryEnter());assert(!acquireUploadNetwork(30));
+  assert(periodic.tryEnter(true));periodic.release();PeriodicWork::prioritizeInstall(false);
+  assert(periodic.tryEnter());}
  mounted=true;assert(!suspendForMusicAudio().uploadsReady);assert(trace=="u");trace.clear();stopOk=true;
  netOk=false;auto pending=suspendForMusicAudio();assert(pending.uploadsReady&&pending.poller==AudioSuspension::Poller::StopPending);trace.clear();
  resumeAfterMusicAudio();assert(trace=="U");trace.clear();serviceTick();assert(trace=="N");trace.clear();

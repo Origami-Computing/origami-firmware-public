@@ -75,6 +75,15 @@ class FileWriteCB : public NimBLECharacteristicCallbacks {
   FileWrite kind_;
 };
 
+// NimBLE characteristics borrow their callbacks; they do not delete them on
+// deinit(true). These stateless handlers outlive every radio session, avoiding
+// four leaked allocations on every camera/offline-BLE round trip.
+static ServerCB s_serverCallbacks;
+static NotifyWriteCB s_notifyCallbacks;
+static FileWriteCB s_beginCallbacks(FileWrite::Begin);
+static FileWriteCB s_dataCallbacks(FileWrite::Data);
+static FileWriteCB s_endCallbacks(FileWrite::End);
+
 // ---- main-loop processing ----
 
 void processNotification(NotificationHandler onNotification) {
@@ -124,28 +133,28 @@ bool init(const char* device_name) {
   NimBLEDevice::setMTU(256);
 
   s_server = NimBLEDevice::createServer();
-  s_server->setCallbacks(new ServerCB());
+  s_server->setCallbacks(&s_serverCallbacks, false);
 
   // notification service
   NimBLEService* notifSvc = s_server->createService(BLE_SVC_NOTIFY_UUID);
   NimBLECharacteristic* notifWr = notifSvc->createCharacteristic(
       BLE_CHR_NOTIFY_WRITE, NIMBLE_PROPERTY::WRITE);
-  notifWr->setCallbacks(new NotifyWriteCB());
+  notifWr->setCallbacks(&s_notifyCallbacks);
 
   // file transfer service
   NimBLEService* fileSvc = s_server->createService(BLE_SVC_FILE_UUID);
 
   NimBLECharacteristic* fBegin = fileSvc->createCharacteristic(
       BLE_CHR_FILE_BEGIN, NIMBLE_PROPERTY::WRITE);
-  fBegin->setCallbacks(new FileWriteCB(FileWrite::Begin));
+  fBegin->setCallbacks(&s_beginCallbacks);
 
   NimBLECharacteristic* fData = fileSvc->createCharacteristic(
       BLE_CHR_FILE_DATA, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
-  fData->setCallbacks(new FileWriteCB(FileWrite::Data));
+  fData->setCallbacks(&s_dataCallbacks);
 
   NimBLECharacteristic* fEnd = fileSvc->createCharacteristic(
       BLE_CHR_FILE_END, NIMBLE_PROPERTY::WRITE);
-  fEnd->setCallbacks(new FileWriteCB(FileWrite::End));
+  fEnd->setCallbacks(&s_endCallbacks);
 
   s_server->start();
 

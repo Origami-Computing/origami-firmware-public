@@ -45,7 +45,7 @@ void ack(int n){queue.erase(queue.begin(),queue.begin()+n);}
 struct Stats {unsigned long queued,droppedVerbose,droppedDurable;};
 Stats stats(){return {queue.size(),0,0};}
 }}
-namespace background_network {struct PeriodicWork {static bool hasWaitingPeer(){return waiting;}};}
+namespace background_network {struct PeriodicWork {static bool shouldYield(){return waiting;}};}
 bool stopRequested(){return stopped;}
 bool receiptMatches=true, logFailure=false;
 unsigned esp_random(){return 12345;}

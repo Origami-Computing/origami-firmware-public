@@ -1,4 +1,5 @@
 #pragma once
+#include "ui/onboarding_copy.h"
 // Approved Onboarding Studio composition, shared by the device and host preview.
 #include <string>
 #include "ui/onboarding_intro_view.h"
@@ -21,15 +22,15 @@ inline const char* copy(unsigned p){
  case 5:return "This is my C wheel. Press it to continue.";
  case 6:return "You can also rotate the C wheel. Give it a try to continue.";
  case 7:return "Now lets connect me to your account";
- case 9:return "When you're ready press B to scan the WiFi QR code and connect your account.";
+ case 9:return "Use the scroll wheel to select how you'd like to connect.";
  case 17:return "Great! Now I'll show you how to navigate on this device.";
  case 18:return "To open my menu rotate the scroll wheel";
- case 21:return "Congrats, you're all done!";
- case 22:case 34:return "Remember if youre every confused, you can always return to this tutorial in Menu > Settings > Redo Tutorial";
+ case 21:return ui::onboarding_copy::nav_congrats;
+ case 22:case 34:return ui::onboarding_copy::nav_reminder;
  case 32:return "Follow the onboarding instructions on web, until you've entered your wifi information";
  case 33:return "This is my home screen. Here you can talk to me, record audio, take photos, or open my menu";
  case 24:return "Great, there's one last thing.";
- case 25:return "While speaking hold A+B down together to talk to me";
+ case 25:return ui::onboarding_copy::nav_talk;
  case 29:return "Great! Now press B to open the camera.";
  default:return onboarding_wifi::copy(p);
  }
@@ -99,7 +100,7 @@ inline unsigned wheelFrame(unsigned ms){return (ms%2600)*kWheelFrames/2600;}
 inline float wheelAngle(unsigned frame){return float(frame)*6.2831853f/kWheelFrames;}
 template<class C>void wheelText(C& c,unsigned ms){
  struct Shift{C& c;void fillRect(int x,int y,int w,int h,uint16_t ink){c.fillRect(x,y+39,w,h,ink);}} shifted{c};
- draftText(shifted,"To open my menu\nrotate the scroll wheel",ms<450?0:(ms-450)/56,0,120,true);
+ draftText(shifted,ui::onboarding_copy::nav_wheel,ms<450?0:(ms-450)/56,0,120,true);
 }
 template<class C> void navigation(C& c,unsigned page,unsigned ms,unsigned selection,unsigned menu=0,bool practiced=false,const char* app="Camera"){
  c.fillRect(0,0,280,240,kUiBg);

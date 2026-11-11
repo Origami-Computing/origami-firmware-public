@@ -18,12 +18,14 @@
 namespace widgets {
 
 // Namespace accessors implemented in their own TUs.
+const api::Namespace &httpNamespace();
 const api::Namespace &transitNamespace();
 const api::Namespace &drawNamespace(); // api_draw.cpp
 const api::Namespace &sysNamespace();  // api_sys.cpp
 const api::Namespace &deviceNamespace();
 const api::Namespace &timerNamespace();
 const api::Namespace &capabilitiesNamespace();
+const api::Namespace &hapticsNamespace();
 const api::Namespace &soundNamespace(); // api_sound.cpp
 
 namespace {
@@ -67,8 +69,8 @@ namespace {
 // Fixed built-ins, enumerated once: no capacity limit or silently dropped entry.
 const Namespace *const *builtins(size_t &count) {
     static const Namespace *const list[] = {
-        &kRootNamespace,    &drawNamespace(),  &sysNamespace(),         &soundNamespace(),
-        &deviceNamespace(), &timerNamespace(), &capabilitiesNamespace(), &transitNamespace()};
+        &hapticsNamespace(), &kRootNamespace,    &drawNamespace(),  &sysNamespace(),         &soundNamespace(),
+        &deviceNamespace(), &timerNamespace(), &capabilitiesNamespace(), &transitNamespace(), &httpNamespace()};
     count = sizeof(list) / sizeof(list[0]);
     return list;
 }

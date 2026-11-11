@@ -1,0 +1,46 @@
+[
+  {
+    "file": "completion.cpp",
+    "revision": "f9902cb3f70f615e9c2710f32f5c76a8c14a150f",
+    "source": "src/apps/agent/agent_flow.cpp",
+    "functions": [
+      "void finalizeSend()"
+    ],
+    "sha256": "18b5cf43bf6f5fea7bbacc8f33042f0ce573196ad2d25653fbc7a18628dd3d50"
+  },
+  {
+    "file": "reply.cpp",
+    "revision": "f9902cb3f70f615e9c2710f32f5c76a8c14a150f",
+    "source": "src/apps/agent/screen_reply.cpp",
+    "functions": [
+      "void onTick("
+    ],
+    "sha256": "4deaec4bdd0c6ddb00c8321e8ddc950f5131e79689e8f92d395f0c6203050775"
+  },
+  {
+    "file": "thinking.cpp",
+    "revision": "41abde4d7448f974672ec4bb95aeb3475148b8ba",
+    "source": "src/apps/agent/screen_thinking.cpp",
+    "functions": [
+      "void onTick("
+    ],
+    "sha256": "083e1776a816a3907452453d0592acbb28d0680340fe89b55d49223ef76b382e"
+  },
+  {
+    "file": "transport.cpp",
+    "revision": "b6e6b261690efbf48100dbb1aac9d4bd9fe16184",
+    "source": "src/services/agent_transport.cpp",
+    "functions": [
+      "bool ensureStarted()",
+      "void bindVoiceCallbacks(const VoiceCallbacks& callbacks)"
+    ],
+    "sha256": "4bcb8628ab5bde3bd3aaa881a632c568f1b1d28fdf0aa4c1c1c83798c59c4bc7"
+  },
+  {
+    "file": "home_join.cpp",
+    "revision": "b6e6b261690efbf48100dbb1aac9d4bd9fe16184",
+    "source": "src/apps/agent_app.cpp",
+    "selection": "offline join block before flow::ensureTransport in prepareHome",
+    "sha256": "86bc90dfc001ccec2973a3f9c5b23d6e987d8129fffbf8d80408cbc85198572d"
+  }
+]
