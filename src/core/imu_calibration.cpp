@@ -10,7 +10,10 @@ namespace imu_calibration {
 namespace {
 
 static constexpr uint32_t kProfileMagic = 0x494D5543u;  // IMUC
-static constexpr uint16_t kProfileVersion = 1;
+// v2: gyroBias/neutralAccel are measured from hal::imu readings that already
+// include the persisted sensor correction (core/imu_sensor_calibration.h).
+// A v1 profile holds the raw zero-rate bias and would subtract it twice.
+static constexpr uint16_t kProfileVersion = 2;
 static constexpr float kPi = 3.14159265358979323846f;
 
 uint32_t checksum(const Profile& source) {

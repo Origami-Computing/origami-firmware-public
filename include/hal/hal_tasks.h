@@ -67,6 +67,7 @@ enum class Id : uint8_t {
 
     Haptic, // Retained 1 ms motor modulation worker, asleep between effects
 
+    GgWave, // Audio data receiver, active only while its view is visible
 
     VideoWrite, // Camera JPEG queue -> SD AVI; only while recording/finalizing
     VideoRead,  // SD AVI -> bounded JPEG queue; decoded/presented on UI

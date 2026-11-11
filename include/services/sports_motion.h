@@ -18,7 +18,8 @@ namespace motion_input {
 
 struct Sample {
   uint32_t ms;       // when it was measured (the newest is ~now; 1/104 s apart)
-  float dps[3];      // device-frame angular rate, degrees/second, NOT bias-corrected
+  float dps[3];      // device-frame angular rate, degrees/second; the stored sensor calibration
+                     // (hal::imu) is applied, the live bias() estimate is NOT subtracted
 };
 
 bool open();                       // gyro lease + FIFO + buffer; false if the IMU is missing

@@ -12,6 +12,7 @@ bool sessionActive();
 bool navigationLessonActive();
 bool navigationPracticed();
 void noteNavigation();
+void noteNavigationBack();
 // UI-task return from a menu/app practice chord, preserving tutorial ownership.
 bool returnFromNavigation();
 // Explicit user replay: open the first lesson without clearing saved settings.
@@ -23,6 +24,8 @@ void beginWifiSetup();
 bool restartForTesting();
 void printStatus();
 bool debugSeek(unsigned page,unsigned ms);
+// Frozen shared-painter diagnostics only; no service outcomes or account mutation.
+bool debugPreview(unsigned page,unsigned ms,unsigned selection,const char* detail);
 void debugPlay();
 #endif
 }} // namespace apps::tutorial

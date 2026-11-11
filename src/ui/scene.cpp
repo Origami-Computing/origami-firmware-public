@@ -4,6 +4,10 @@
 #include "ui/focused_label.h"
 
 #include <Arduino.h>
+#ifdef ESP32
+#include <esp_heap_caps.h>
+#include <new>
+#endif
 #include <stdio.h>
 #include <string.h>
 
@@ -34,7 +38,21 @@ struct RuntimeOverride {
     char value[160] = {};
 };
 
+// The editor table is not used by normal rendering. Keep its 6.8 KiB
+// out of internal RAM reserved for the camera, Wi-Fi and TLS.
+#ifdef ESP32
+static RuntimeOverride* s_overrides=nullptr;
+static bool ensureOverrides() {
+    if(s_overrides)return true;
+    auto* mem=static_cast<RuntimeOverride*>(heap_caps_malloc_prefer(sizeof(RuntimeOverride)*kMaxOverrides,2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT,MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT));
+    if(!mem)return false;
+    for(unsigned i=0;i<kMaxOverrides;++i)new(mem+i) RuntimeOverride{};
+    s_overrides=mem;return true;
+}
+#else
 static RuntimeOverride s_overrides[kMaxOverrides];
+static bool ensureOverrides(){return true;}
+#endif
 static Scene* s_currentScene = nullptr;
 
 static void copyText(char* dst, size_t cap, const char* src) {
@@ -133,6 +151,7 @@ static void applyOverride(Node& node, const char* property, const char* value) {
 
 static Node nodeWithOverrides(const Node& source) {
     Node node = source;
+    if(!s_overrides)return node;
     for (uint8_t i = 0; i < kMaxOverrides; i++) {
         const RuntimeOverride& ov = s_overrides[i];
         if (!ov.active) continue;
@@ -637,6 +656,7 @@ void dumpCurrentScene(Print& out) {
 bool setOverrideFromText(const char* nodeId, const char* property, const char* value) {
     if (!nodeId || !nodeId[0] || !property || !property[0] || !value) return false;
 
+    if(!ensureOverrides())return false;
     int freeIdx = -1;
     for (uint8_t i = 0; i < kMaxOverrides; i++) {
         RuntimeOverride& ov = s_overrides[i];
@@ -657,7 +677,7 @@ bool setOverrideFromText(const char* nodeId, const char* property, const char* v
 }
 
 bool clearOverride(const char* nodeId, const char* property) {
-    if (!nodeId || !property) return false;
+    if (!s_overrides || !nodeId || !property) return false;
     for (uint8_t i = 0; i < kMaxOverrides; i++) {
         RuntimeOverride& ov = s_overrides[i];
         if (ov.active && strcmp(ov.nodeId, nodeId) == 0 && strcmp(ov.property, property) == 0) {
@@ -669,10 +689,12 @@ bool clearOverride(const char* nodeId, const char* property) {
 }
 
 void clearOverrides() {
+    if(!s_overrides)return;
     for (uint8_t i = 0; i < kMaxOverrides; i++) s_overrides[i].active = false;
 }
 
 uint8_t overrideCount() {
+    if(!s_overrides)return 0;
     uint8_t n = 0;
     for (uint8_t i = 0; i < kMaxOverrides; i++) {
         if (s_overrides[i].active) n++;

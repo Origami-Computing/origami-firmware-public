@@ -7,6 +7,7 @@
 #include "services/agent_coordination.h"
 #include "services/net_poll.h"
 #include "core/watchdog.h"
+#include "core/memory.h"
 #include "widgets/sync.h"
 #include <Arduino.h>
 #include <atomic>
@@ -14,6 +15,13 @@
 #include <freertos/task.h>
 
 namespace services { namespace background_network {
+bool PeriodicWork::hasMemoryReserve() {
+    // TLS uses PSRAM, but lwIP packets, DMA and foreground capture need internal
+    // memory. Measured staging churn reached <8 KB free / <1 KB contiguous.
+    // Defer optional HTTP before consuming the foreground/reconnect reserve.
+    const auto memory = core::memory::snapshot();
+    return memory.dramFree >= 24u * 1024u && memory.dramLargest >= 12u * 1024u;
+}
 namespace {
 std::atomic<bool> periodicOwned{false}, periodicContended{false};
 ServicePause s_peripheralPause;
@@ -39,22 +47,27 @@ void resumeAudioIfIdle() {
 }
 }
 
-bool PeriodicWork::tryEnter() {
+static std::atomic<bool> installWaiting{false};
+void PeriodicWork::prioritizeInstall(bool wanted) { installWaiting.store(wanted); }
+bool PeriodicWork::tryEnter(bool installWorker) {
+    if(!installWorker && installWaiting.load())return false;
     if (entered_) return true;
-    if (audioPriorityActive() || pauseOwner.load()) return false;
+    if (audioPriorityActive() || !hasMemoryReserve() || pauseOwner.load()) return false;
     bool idle = false;
     entered_ = periodicOwned.compare_exchange_strong(idle, true);
     // Close the check/acquire race with a foreground request. Admission must
     // be rechecked before the caller allocates a worker or starts HTTP.
-    if (entered_ && (audioPriorityActive() || pauseOwner.load())) {
+    if (entered_ && (audioPriorityActive() || !hasMemoryReserve() || pauseOwner.load())) {
         release();return false;
     }
     if (!entered_) periodicContended.store(true);
     return entered_;
 }
-bool PeriodicWork::hasWaitingPeer() { return periodicContended.load(); }
-bool PeriodicWork::yieldIfContended() {
-    if (!entered_ || !periodicContended.exchange(false)) return false;
+bool PeriodicWork::shouldYield() { return installWaiting.load() || periodicContended.load() || !hasMemoryReserve(); }
+bool PeriodicWork::yieldIfNeeded() {
+    if (!entered_) return false;
+    const bool contended = periodicContended.exchange(false);
+    if (!installWaiting.load() && !contended && hasMemoryReserve()) return false;
     release();
     return true;
 }
@@ -173,7 +186,7 @@ const char* resultName(RadioPause::Result result) {
 
 bool acquireUploadNetwork(uint32_t timeoutMs) {
   struct Guard { Guard(){uploadAcquiring.store(true);} ~Guard(){uploadAcquiring.store(false);} } guard;
-  if(audioPriorityActive()) return false;
+  if(audioPriorityActive() || installWaiting.load()) return false;
   if (services::agent_coordination::isSessionActive()) return false;
   if (!uploadAgentPause.acquire(timeoutMs)) return false;
 
@@ -282,28 +295,30 @@ void resumeAfterMusicAudio() {
 
 bool suspendForPeripheralIo(uint32_t timeoutMs) {
   if (hal::audio::retirementPending()) return false;
-  if (!uploads::ensureInit()) return false;
   if (s_peripheralHolders) {
     if (s_peripheralPending) return false;
     ++s_peripheralHolders; return true;
   }
   if (s_peripheralPause.acquire(timeoutMs) != background_network::ServicePause::Result::Acquired)
     return false;
-  if (!uploads::queue().stopWorkerForVoice(timeoutMs)) {
+  // Admission is closed before observing queue readiness. No SD-backed queue
+  // needs initialization merely to reserve a camera/radio preview.
+  auto* queue = uploads::readyQueue();
+  if (queue && !queue->stopWorkerForVoice(timeoutMs)) {
     s_peripheralPause.release();
     return false;
   }
   // Let one in-flight 5-second HTTP request finish and release its resources.
   if (!services::net_poll::stop(timeoutMs + 2000u)) {
     services::net_poll::requestStart();
-    (void)uploads::queue().resumeWorker();
+    if (queue) (void)queue->resumeWorker();
     Serial.println("[queue] Peripheral I/O pause timed out stopping net_poll");
     s_peripheralPause.release();
     return false;
   }
   if (!widgets::sync::suspendPolling(timeoutMs)) {
     services::net_poll::requestStart();
-    (void)uploads::queue().resumeWorker();
+    if (queue) (void)queue->resumeWorker();
     Serial.println("[queue] Peripheral I/O pause timed out stopping widget_poll");
     s_peripheralPause.release();
     return false;

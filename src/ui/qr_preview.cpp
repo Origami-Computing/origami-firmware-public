@@ -1,6 +1,7 @@
 #include "ui/qr_preview.h"
 #include "ui/qr_scanner_view.h"
 #include "ui/native_frame.h"
+#include "ui/screen_chrome.h"
 #include "services/qr_decode.h"
 #include "hal/hal_display.h"
 #include <Arduino.h>
@@ -31,7 +32,14 @@ struct Canvas {
 };
 }
 QrPreview::~QrPreview() { close(); }
-void QrPreview::close() { heap_caps_free(portrait_); portrait_=nullptr; }
+void QrPreview::close() {
+    if (!portrait_) return;
+    heap_caps_free(portrait_);
+    portrait_=nullptr;
+    // JPEG composition overwrites the whole canvas, including the cached bar.
+    // Dirty display bands alone do not make unchanged clock glyphs repaint.
+    invalidateScreenChrome();
+}
 bool QrPreview::render(const uint8_t* jpeg,size_t length) {
     const bool buildGray=!services::qr::scanBusy();
     if (!portrait_) portrait_=static_cast<uint16_t*>(heap_caps_malloc(280u*240u*2,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
@@ -46,7 +54,7 @@ bool QrPreview::render(const uint8_t* jpeg,size_t length) {
         return false;
     }
     auto& frame=hal::display::canvas();
-    Canvas canvas{frame}; qr_scanner_view::overlay(canvas);
+    Canvas canvas{frame}; if(appLesson_)qr_scanner_view::appOverlay(canvas);else qr_scanner_view::overlay(canvas);
     const auto* pixels=static_cast<const uint16_t*>(frame.getPointer());
     for (int x=0;x<280;++x) for (int y=0;y<240;++y)
         portrait_[(279-x)*240+y]=pixels[y*280+x];

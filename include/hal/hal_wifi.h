@@ -108,7 +108,8 @@ uint8_t getAPClientCount(); // Get number of connected clients
 // Scanning (STA mode)
 bool scan(wifi_ap_record_t* results, uint16_t* count, uint16_t maxResults);
 
-// Stop WiFi temporarily (remembers state for restore)
+// Suspend WiFi and offline provisioning BLE (remembers state for restore).
+// BLE reconciliation resumes after restore(), never during camera ownership.
 void stop();
 
 /**

@@ -54,15 +54,26 @@ void doBatterySleep();
 void testUpdatePrompt();
 /** Bounded USB regression escape hatch; does not alter saved sleep settings. */
 void armSleepTestWake(uint32_t delayMs);
-/** Real USB accessory/deep-sleep probe with a temporary eight-second RTC wake.
- * No persisted wake/sleep settings change; production SW1 retains GPIO wake. */
-void testPowerSwitchShutdown();
+/** Real USB accessory/deep-sleep probe with a temporary RTC timer wake after
+ * `wakeSeconds` (1..3600; out of range -> 8). No persisted wake/sleep settings
+ * change; production SW1 retains GPIO wake. */
+void testPowerSwitchShutdown(uint32_t wakeSeconds = 8u);
 #endif
 
 /** Poll/debounce rev4 SW1 / PWRSW. Returns true if shutdown handling took over. */
 bool servicePowerSwitch(uint32_t nowMs);
 
 /** Controlled SW1 shutdown: quiesce software, switch accessories off, then deep sleep. */
-void doPowerSwitchShutdown();
+/**
+ * Controlled accessory shutdown into deep sleep. `wakeEpoch` aims the timer at a
+ * scheduled alarm; 0 (the power switch) leaves C as the only wake.
+ */
+void doPowerSwitchShutdown(int64_t wakeEpoch = 0);
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+/** Bench test of the scheduled wake: real shutdown aimed `seconds` from now. */
+void testScheduledDeepSleep(uint32_t seconds);
+/** Bench test of battery sleep on USB power, moving to deep sleep after `limitMs`. */
+void testShallowSleep(uint32_t limitMs);
+#endif
 
 }  // namespace services

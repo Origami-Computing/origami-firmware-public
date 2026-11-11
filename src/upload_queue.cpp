@@ -1,3 +1,4 @@
+#include <time.h>
 #include "upload_queue.h"
 
 #include <ArduinoJson.h>
@@ -11,6 +12,7 @@
 #include <new>
 
 #include "core/secrets.h"
+#include "core/board_time.h"
 #include "core/upload_receipt.h"
 #include "core/watchdog.h"
 #include "hal/hal_bus.h"
@@ -185,6 +187,7 @@ bool UploadQueue::loadManifestFileUnlocked(const char* path) {
         strlcpy(it.mimeType, obj["mime"] | "",   sizeof(it.mimeType));
         strlcpy(it.fileName, obj["name"] | "",   sizeof(it.fileName));
         it.createdAt     = obj["created"] | (uint32_t)0;
+        it.capturedAtUnix = obj["capturedAtUnix"] | (uint32_t)0;
         it.attempts      = obj["attempts"] | (uint8_t)0;
         // millis()-based state cannot survive reboot. Every boot starts a new
         // turn, but the lifetime attempt count and queue order remain durable.
@@ -240,6 +243,7 @@ bool UploadQueue::saveManifestUnlocked() {
         obj["mime"]        = it.mimeType;
         obj["name"]        = it.fileName;
         obj["created"]     = it.createdAt;
+        obj["capturedAtUnix"] = it.capturedAtUnix;
         obj["attempts"]    = it.attempts;
         obj["status"]      = (int)it.status;
         obj["deleteAfterUpload"] = it.deleteAfterUpload;
@@ -304,7 +308,7 @@ uint32_t UploadQueue::generatePath(const char* prefix, const char* ext,
 // ---------------------------------------------------------------------------
 
 bool UploadQueue::enqueue(const char* type, const char* filePath,
-                          const char* mimeType, bool deleteAfterUpload) {
+                          const char* mimeType, bool deleteAfterUpload, uint32_t capturedAtUnix) {
     if(!type||!filePath||!mimeType)return false;
     if(!strcmp(type,"video")){
         if(deleteAfterUpload||strcmp(mimeType,"video/x-msvideo"))return false;
@@ -346,6 +350,7 @@ bool UploadQueue::enqueue(const char* type, const char* filePath,
         strlcpy(it.mimeType, mimeType, sizeof(it.mimeType));
         strlcpy(it.fileName, fname,    sizeof(it.fileName));
         it.createdAt     = millis();
+        it.capturedAtUnix = capturedAtUnix;
         it.attempts      = 0;
         it.lastAttemptAt = 0;
         it.nextEligibleAt = 0;
@@ -380,6 +385,11 @@ void UploadQueue::tick() {
         return;
     }
     if (m_uploadPaused || WiFi.status() != WL_CONNECTED || !hasRunnableItem()) return;
+    // Boot deliberately clears wall time. Starting TLS before SNTP succeeds
+    // spends retry turns on certificate-date failures and can delay valid media
+    // for a full cooldown. Local plain-HTTP fixtures do not require a clock.
+    if (!core::time::isSynced() &&
+        strncmp(core::secrets::backendConfig().url, "https://", 8) == 0) return;
     startWorker();
 }
 
@@ -576,6 +586,7 @@ bool UploadQueue::processOnePending() {
             result.httpCode >= 200 && result.httpCode < 300) {
             Serial.printf("[queue] %s uploaded OK (%d)\n", live->id, result.httpCode);
             snprintf(m_lastStatus, sizeof(m_lastStatus), "%s uploaded OK", live->id);
+            if (!strcmp(m_deliveryPath,live->filePath)) m_deliveryConfirmed=true;
             deleteFileIfOwnedUnlocked(*live);
             removeItemAtUnlocked(liveIdx);
             saveManifestUnlocked();
@@ -697,6 +708,20 @@ UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
         "Content-Type: %s\r\n\r\n",
         boundary, item.fileName, item.mimeType);
 
+    // Capture time is immutable queue metadata, independent of upload/retry time.
+    char capturePart[160] = {};
+    if (!strcmp(item.type, "image") && item.capturedAtUnix) {
+        const time_t captured = static_cast<time_t>(item.capturedAtUnix);
+        struct tm utc{};
+        char iso[24] = {};
+        if (gmtime_r(&captured, &utc) &&
+            strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%SZ", &utc)) {
+            snprintf(capturePart, sizeof(capturePart),
+                "--%s\r\nContent-Disposition: form-data; name=\"capturedAt\"\r\n\r\n%s\r\n",
+                boundary, iso);
+        }
+    }
+
     // Postamble: platform + sessionId + optional upload intent fields.
     char postamble[384];
     int postambleLen;
@@ -721,8 +746,9 @@ UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
             "--%s\r\n"
             "Content-Disposition: form-data; name=\"sessionId\"\r\n\r\n"
             "origami-device\r\n"
+            "%s"
             "--%s--\r\n",
-            boundary, boundary, boundary);
+            boundary, boundary, capturePart, boundary);
     }
 
     size_t contentLength = (size_t)preambleLen + fileSize + (size_t)postambleLen;
@@ -1205,6 +1231,7 @@ UploadQueue::Counts UploadQueue::countsUnlocked() const {
     result.total = m_count;
     for (int i = 0; i < m_count; i++) {
         if (m_items[i].status == QSTATUS_PENDING) ++result.pending;
+        if (m_items[i].status == QSTATUS_UPLOADING) ++result.active;
         if (m_items[i].status == QSTATUS_FAILED) ++result.failed;
     }
     return result;
@@ -1597,3 +1624,13 @@ UploadQueue::FileMutation::FileMutation(UploadQueue& queue,const char* path,bool
     if(result_==MutationResult::Ready)queue_=&queue;
 }
 UploadQueue::FileMutation::~FileMutation(){if(queue_)queue_->endFileMutation();}
+
+void UploadQueue::watchDelivery(const char* path) {
+    MutexGuard g(m_mutex);
+    strlcpy(m_deliveryPath,path?path:"",sizeof(m_deliveryPath));
+    m_deliveryConfirmed=false;
+}
+bool UploadQueue::deliveryConfirmed(const char* path) const {
+    MutexGuard g(m_mutex);
+    return path && path[0] && m_deliveryConfirmed && !strcmp(path,m_deliveryPath);
+}

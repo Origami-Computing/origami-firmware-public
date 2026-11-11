@@ -5,6 +5,8 @@
  */
 
 #include <Arduino.h>
+#include <esp_sleep.h>
+#include <esp_system.h>
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -28,6 +30,7 @@
 #include "scene/node.h"
 #include "scene/screen.h"
 #include "sfx/audio_group.h"
+#include "sfx/sfx.h"
 #include "sfx/sfx_lib.h"
 #include "core/memory.h"
 #include "ui/color.h"
@@ -48,6 +51,7 @@ struct BootState {
     uint32_t phaseStartMs = 0;
     bool     logoReady    = false;
     bool     eyesReady    = false;
+    bool     fastWake = false;  // Deep-sleep wake: straight to Home, no animation.
     bool     bodySoundPlayed = false;
     bool     logoSoundPlayed = false;
     uint32_t signalLastFrameMs = 0;
@@ -816,6 +820,12 @@ static void signalBootOnEnter() {
     s = BootState{};
     s.phaseStartMs = millis();
     s.signalLastFrameMs = s.phaseStartMs;
+    if (esp_reset_reason() == ESP_RST_DEEPSLEEP) {
+        s.fastWake = true;
+        ui::home_eyes::skipAnimationCaches();
+        Serial.println("[boot] deep-sleep wake: skipping animation");
+        return;
+    }
     s.externalAnimation = kSignalUseSdOverride && core::boot_animation::begin();
     bindBootAudio();
     soundBoot.playFromDef(sfx::kSfxBoot, s.phaseStartMs);
@@ -833,11 +843,22 @@ static void signalBootOnEnter() {
 }
 
 static void signalBootOnExit() {
+    if (s.fastWake) return;  // Nothing was bound or opened.
     core::boot_animation::end();
     releaseBootAudio();
 }
 
 static void signalBootOnTick(uint32_t now) {
+    if (s.fastWake) {
+        completeAnimation(now, s.phaseStartMs, 0u);
+        // Same greeting as a battery-sleep wake. An alarm's timer wake stays
+        // quiet: the alarm itself is what should be heard.
+        if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) {
+            sfx::play(sfx::kSfxBoot);
+            ui::kami_motion::trigger(ui::kami_expression::Action::Wake, now);
+        }
+        return;
+    }
     const uint32_t elapsed = now - s.phaseStartMs;
     const uint32_t duration = s.externalAnimation
         ? core::boot_animation::durationMs() : kSignalDurationMs;
@@ -875,6 +896,7 @@ static void signalBootOnTick(uint32_t now) {
 }
 
 static void signalBootOnDraw(TFT_eSprite& canvas) {
+    if (s.fastWake) return;
     const uint32_t now = millis();
     const uint32_t elapsed = now - s.phaseStartMs;
     if (s.externalAnimation) {

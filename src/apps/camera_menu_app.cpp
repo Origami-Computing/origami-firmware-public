@@ -58,6 +58,7 @@
 #include "ui/safe_area_draw.h"
 #include "services/camera_snapshot.h"
 #include "services/camera_trial.h"
+#include "services/firmware_update.h"
 #include "ui/camera_preview.h"
 #include "ui/onboarding_approved_view.h"
 
@@ -76,6 +77,7 @@
 #include "hal/hal_camera.h"
 #include "services/camera_session.h"
 #include "services/video_recording.h"
+#include "services/uploads.h"
 #include "hal/hal_input.h"
 #include "hal/hal_sd.h"
 #include "nav_handler.h"
@@ -117,6 +119,8 @@ static constexpr int CR_COUNT = 3; // Persisted request choices, in service enum
 // --- State -----------------------------------------------------------------
 
 static CamSubState camState       = CAM_INIT;
+static bool s_waitingForNotice = false;
+static uint32_t s_noticeWaitStarted = 0;
 static uint32_t    camPhotoCount  = 0;
 static char        camStatusMsg[64] = {0};
 static uint32_t    s_lastCaptureSeq   = 0;
@@ -201,6 +205,7 @@ static struct {
 } s_previewTiming;
 #endif
 static uint32_t    s_teWaitUs = 0;
+static uint32_t    s_transferUs = 0;
 static uint32_t    s_teMisses = 0;
 static uint32_t    s_previewMaxUs = 0;
 static uint32_t    s_decodeUs = 0;
@@ -216,6 +221,7 @@ extern const ::scene::Screen kScreenCameraError;
 
 static void showViewfinder();
 static bool requestViewfinder();
+static void servicePendingViewfinder();
 static void showSettings();
 static void showManual();
 static void showReadme();
@@ -388,9 +394,10 @@ static void camPresentPhotographer() {
  const unsigned age=std::min(999u,(unsigned)(now-s_cameraStageAt));
  const int pulseAge=s_cameraPulseAt && now-s_cameraPulseAt<140u ? int(now-s_cameraPulseAt) : -1;
  const auto presented=s_cameraPreview.present(s_cameraStage*1000+age,pulseAge,
-     s_tutorialCapture ? nullptr : (!s_shootMode && !s_cameraStage ? (s_shutterArmed && now-s_shutterPressedMs>=300u ? "HOLD B FOR VIDEO" : "B: PHOTO / HOLD: VIDEO") : camVideoLabel()), s_video.busy(), s_tutorialCapture);
+     s_tutorialCapture ? nullptr : apps::tutorial::navigationLessonActive() ? "A+B: GO BACK" : (!s_shootMode && !s_cameraStage ? (s_shutterArmed && now-s_shutterPressedMs>=300u ? "HOLD B FOR VIDEO" : "B: PHOTO / HOLD: VIDEO") : camVideoLabel()), s_video.busy(), s_tutorialCapture);
  if(presented.syncMissed)++s_teMisses;
  s_teWaitUs=presented.syncWaitUs;
+ s_transferUs=presented.transferUs;
  s_cameraAnimationAt=now;
 }
 static void camPhotographerStage(unsigned stage){
@@ -466,10 +473,10 @@ static bool camRenderFrame(const hal::camera::CameraFrame& fb) {
       if (++s_previewWindowFrames == 60) {
         const uint64_t nowUs = esp_timer_get_time();
         const double fps = 60000000.0 / (double)(nowUs - s_previewWindowUs);
-        Serial.printf("[camera-vga] preview samples=%lu max_us=%lu decode_us=%lu fit_us=%lu blit_us=%lu fps=%.2f te_wait_us=%lu te_misses=%lu\n",
+        Serial.printf("[camera-vga] preview samples=%lu max_us=%lu decode_us=%lu fit_us=%lu blit_us=%lu fps=%.2f te_wait_us=%lu te_misses=%lu transfer_us=%lu\n",
                       (unsigned long)s_previewSamples, (unsigned long)s_previewMaxUs,
                       (unsigned long)s_decodeUs, (unsigned long)s_fitUs, (unsigned long)s_blitUs,
-                      fps, (unsigned long)s_teWaitUs, (unsigned long)s_teMisses);
+                      fps, (unsigned long)s_teWaitUs, (unsigned long)s_teMisses, (unsigned long)s_transferUs);
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
         Serial.printf("[camera-preview-timing] mode=%s frames=60 decode_mean_us=%llu blit_mean_us=%llu gap_mean_us=%llu gap_max_us=%lu dma_age_samples=%lu dma_age_mean_us=%llu dma_age_max_us=%lu repeated_dma=%lu\n",
             s_videoPending ? "recording" : "idle",
@@ -745,6 +752,8 @@ static bool camCaptureContinuousVga() {
     core::usage::emit("camera","camera.failed");
     return false;
   }
+  auto photo = services::photos::prepare();
+  services::photos::markCaptured(photo);
   const auto timing = snapshot.timing();
   const size_t bytes = snapshot.size();
 
@@ -753,7 +762,6 @@ static bool camCaptureContinuousVga() {
   const bool rendered = camDrawPreview(snapshot.data(), bytes);
   camDrawReviewStatus(rendered ? "Saving..." : "Saving (no preview)");
   const uint64_t reviewUs = esp_timer_get_time();
-  const auto photo = services::photos::prepare();
   const bool pathOk = photo.valid();
   const uint64_t writeStartUs = esp_timer_get_time();
   const bool saved = services::photos::write(photo, snapshot.data(), bytes);
@@ -785,7 +793,7 @@ static bool camCaptureContinuousVga() {
 static bool camCaptureHighRes() {
   camShowShutterFrame();
 
-  const auto photo = services::photos::prepare();
+  auto photo = services::photos::prepare();
   if (!photo.valid()) {
     hal::display::clearContentArea(kUiBg);
     core::usage::emit("camera","camera.failed");
@@ -808,6 +816,7 @@ static bool camCaptureHighRes() {
     return false;
   }
 
+  services::photos::markCaptured(photo);
   const bool saved = s_camera.captureToFile(photo.path);
   if (!saved) core::usage::emit("camera","camera.failed");
   if (saved) {
@@ -1223,6 +1232,7 @@ static void camDrawError() {
 
 static void camEnter() {
   camState = CAM_INIT;
+  s_waitingForNotice = false;
   s_tutorialCapture=s_tutorialRequested;s_tutorialRequested=false;s_tutorialPhoto={};
   Serial.println("[cam] Entering Camera");
   // DO NOT endSession() here. Camera doesn't render eyes, so freeing the ~222 KB of PSRAM eye
@@ -1250,6 +1260,7 @@ static void camEnter() {
 }
 
 static void camExit() {
+  s_waitingForNotice = false;
   Serial.println("[cam] Exiting Camera");
   if (camState == CAM_VIEWFINDER || s_camera.running()) camStopViewfinder();
   camReleasePreviewBuffers();
@@ -1302,6 +1313,7 @@ static void camTickShutter() {
 }
 
 static void camTick() {
+  if (s_waitingForNotice) { servicePendingViewfinder(); return; }
   if(s_editMode && millis()-s_editBlinkMs>=450u) {
     s_editBlinkMs=millis(); s_editBlink=!s_editBlink;
     s_settingsNeedsRedraw=s_manualNeedsRedraw=true;
@@ -1315,7 +1327,19 @@ static void camTick() {
       s_previewDecode.close();
 #endif
       const bool saved = s_video.state() == VideoState::Saved;
+      // Queue the finalized original like a photo, through the same request as
+      // Photos' Upload. It stays on SD either way; Photos can retry a failure.
+      bool queued = false;
+      if (saved) {
+        using E = UploadQueue::VideoEnqueue;
+        const E result = services::uploads::ensureInit()
+            ? services::uploads::queue().enqueueVideo(s_video.path()) : E::StorageUnavailable;
+        queued = result == E::Queued || result == E::AlreadyQueued;
+        Serial.printf("[video-upload] enqueue=%d queued=%d path=%s\n", (int)result,
+                      queued ? 1 : 0, s_video.path());
+      }
       snprintf(s_videoNotice, sizeof(s_videoNotice), "%s", !saved ? s_video.error() :
+          !queued ? "SAVED, NOT QUEUED" :
           s_video.hasAudio() ? "VIDEO + MIC SAVED" : "VIDEO SAVED TO SD");
       camReportVideoResult();
       s_videoNoticeMs = millis();
@@ -1507,6 +1531,7 @@ void handleRotary(int steps) {
 
 static void camButtonA() {
   switch (camState) {
+    case CAM_INIT:
     case CAM_VIEWFINDER:
       if (s_video.busy()) { s_video.stop(); s_videoStopping = true; return; }
       NavHandler::instance().pop();
@@ -1557,20 +1582,21 @@ static void camButtonA() {
 
 static void captureTutorialPhoto(){
  if(!services::photos::available()){snprintf(camStatusMsg,sizeof(camStatusMsg),"SD unavailable");showError();return;}
- const auto photo=services::photos::prepare();
+ auto photo=services::photos::prepare();
  if(!photo.valid()){snprintf(camStatusMsg,sizeof(camStatusMsg),"Couldn't prepare photo");showError();return;}
  camShowShutterFrame();
  bool saved=false;
  if(s_continuousVga&&s_settings.capture==CR_VGA){
   services::camera::Snapshot snapshot;
   if(snapshot.captureVga(s_camera,esp_timer_get_time())==services::camera::Snapshot::Result::Ready){
+   services::photos::markCaptured(photo);
    s_cameraStage=2;s_cameraStageAt=millis();s_cameraPulseAt=millis();camDrawPreview(snapshot.data(),snapshot.size());
    camDrawReviewStatus("Saving...");saved=services::photos::write(photo,snapshot.data(),snapshot.size());
   }
  }else{
   camReleaseDecoder();
   if(s_camera.prepareStill(s_settings.capture,s_settings.tuning())==services::camera::Session::StillResult::Ready)
-   {camDrawReviewStatus("Saving...");saved=s_camera.captureToFile(photo.path);}
+   {camDrawReviewStatus("Saving...");services::photos::markCaptured(photo);saved=s_camera.captureToFile(photo.path);}
  }
  if(!saved){hal::sd::removeFile(photo.path);snprintf(camStatusMsg,sizeof(camStatusMsg),"Photo capture failed");showError();return;}
  camDrawReviewStatus("Saved");
@@ -1684,6 +1710,20 @@ void onInput(hal::input::InputEvent ev) {
 
 // App-owned mode transitions request operations; screen entry only refreshes views.
 static bool requestViewfinder() {
+  // Optional Settings metadata owns its TLS request until completion. Keep
+  // input responsive and defer camera admission instead of showing a permanent
+  // startup error or restoring Wi-Fi underneath that request.
+  if (services::firmware_update::noticeInFlight()) {
+    if (!s_waitingForNotice) {
+      s_noticeWaitStarted = millis();
+      LOGI("camera", "waiting for update notice");
+    }
+    s_waitingForNotice = true;
+    camState = CAM_INIT;
+    ui::showAppOpeningSplash("Camera");
+    return true;
+  }
+  s_waitingForNotice = false;
   const bool returningFromSettings = camState == CAM_SETTINGS ||
       camState == CAM_MANUAL || camState == CAM_README;
   if (returningFromSettings) camState = CAM_VIEWFINDER;
@@ -1695,6 +1735,16 @@ static bool requestViewfinder() {
     snprintf(camStatusMsg, sizeof(camStatusMsg), "Camera init failed");
   showError();
   return false;
+}
+
+static void servicePendingViewfinder() {
+  if (!s_waitingForNotice) return;
+  if (!services::firmware_update::noticeInFlight()) {
+    (void)requestViewfinder();
+  } else if (uint32_t(millis() - s_noticeWaitStarted) >= 30000u) {
+    snprintf(camStatusMsg, sizeof(camStatusMsg), "Network busy. Try again.");
+    showError();
+  }
 }
 
 static void resumeCameraWorkflow() {
@@ -1820,6 +1870,7 @@ static void showReadme() {
 }
 
 static void showError() {
+  s_waitingForNotice = false;
   camState = CAM_ERROR;
   // Release the camera before WiFi can reclaim DMA/internal RAM. Otherwise
   // an error both retains camera buffers and leaves Fleet polling suspended.

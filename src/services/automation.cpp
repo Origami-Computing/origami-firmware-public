@@ -103,6 +103,8 @@ static void stopAlertOutputs() {
 }
 
 static void startAlert(const QEntry& e) {
+  Serial.printf("[alert] start kind=%d fire=%ld now=%ld\n", (int)e.kind, (long)e.fire_at,
+                (long)::time(nullptr));
   s_showSnooze = false;
   s_alert_active    = true;
   s_alert_recipe    = e.recipe;
@@ -228,8 +230,8 @@ static void fireDueEvents() {
 
 bool wallClockSynced() {
   // Single source of truth: the clock is only trustworthy once SNTP has synced it
-  // this session (core::time::init() zeroes it at boot so a stale RTC value can't
-  // arm alarms). Keeps the display gate and the alarm gate in perfect agreement.
+  // this boot or the RTC carried an earlier sync across sleep/reset
+  // (core::time::init() zeroes any other boot value so a stale RTC can't arm alarms). Keeps the display gate and the alarm gate in perfect agreement.
   return core::time::isSynced();
 }
 
@@ -436,6 +438,13 @@ void service(uint32_t millis_now) {
   // Snooze/dismiss explicitly stop our outputs. Do not overwrite another
   // foreground app's vibration on every idle automation tick.
 }
+
+bool hasScheduledFire() {
+  time_t next = 0;
+  return earliestFire(&next);
+}
+
+bool nextScheduledFire(time_t* out) { return earliestFire(out); }
 
 bool shouldDeferBatterySleep() {
   if (!wallClockSynced()) return false;

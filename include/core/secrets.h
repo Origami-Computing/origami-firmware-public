@@ -128,13 +128,16 @@ bool setApiKey(const char* key);
  * Returns false on NVS error. Backend APIs require init before first use. */
 bool setDeviceToken(const char* token);
 
-// ---- Dev / Prod mode -------------------------------------------------------
-
-/** True when using the dev (local IP) backend, false for prod. */
+// ---- Server selection ------------------------------------------------------
+enum class ServerMode : uint8_t { Prod, Staging, Dev };
+ServerMode serverMode();
+const char* serverModeName(ServerMode mode);
+// Staging permits all modes; production permits only Prod. Custom builds retain
+// Prod/Dev. Persists selection, invalidates old registration before a changed
+// destination, and publishes a new request revision. API keys are not translated.
+bool setServerMode(ServerMode mode);
+// Legacy tooling: false selects the build's default hosted destination.
 bool isDevMode();
-
-/** Toggle dev/prod mode. Production images reject dev=true, including direct
- * service/tooling calls. Persists to NVS and updates the selected backend URL. */
 bool setDevMode(bool dev);
 
 }  // namespace secrets

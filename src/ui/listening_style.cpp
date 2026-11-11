@@ -2,7 +2,6 @@
 #include "config/display_safe_area.h"
 #include "config/ui_layout.h"
 #include "config/ui_theme.h"
-#include "core/store.h"
 #include "hal/hal_display.h"
 #include <esp_heap_caps.h>
 #include <math.h>
@@ -11,7 +10,7 @@
 namespace ui { namespace listening_style {
 namespace {
 constexpr int W=280, H=240, N=W*H;
-int s_selected=-1, s_mapStyle=-1, s_lastWidth=-1;
+int s_selected=0, s_mapStyle=-1, s_lastWidth=-1;
 uint16_t* s_base=nullptr;
 uint16_t* s_previewChrome=nullptr;
 int s_previewStyle=-1;
@@ -57,12 +56,10 @@ void preparePalette(void (*serviceMic)()) {
 }
 }
 int selected() {
-    if(s_selected<0) { const int stored=core::store::getU8("settings","agent_style",0); s_selected=stored<kCount?stored:0; }
     return s_selected;
 }
-bool select(int index, bool persist) {
+bool select(int index) {
     if(index<0 || index>=kCount) return false;
-    if(persist && !core::store::putU8("settings","agent_style",index)) return false;
     s_selected=index;
     return true;
 }

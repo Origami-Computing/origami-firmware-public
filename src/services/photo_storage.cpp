@@ -1,6 +1,7 @@
 #include "services/photo_storage.h"
 #include "services/uploads.h"
 #include "hal/hal_sd.h"
+#include "core/board_time.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -21,6 +22,9 @@ Target prepare() {
     if (!name[0] || n < 0 || (size_t)n >= sizeof(target.path) || hal::sd::exists(target.path)) return {};
     return target;
 }
+void markCaptured(Target& target) {
+    target.capturedAtUnix = core::time::isSynced() ? static_cast<uint32_t>(::time(nullptr)) : 0;
+}
 bool write(const Target& target, const uint8_t* jpeg, size_t length) {
     if (!target.valid()) return false;
     const bool saved = hal::sd::writeFile(target.path, jpeg, length);
@@ -28,6 +32,6 @@ bool write(const Target& target, const uint8_t* jpeg, size_t length) {
     return saved;
 }
 bool enqueue(const Target& saved) {
-    return saved.valid() && uploads::queue().enqueue("image", saved.path, "image/jpeg", false);
+    return saved.valid() && uploads::queue().enqueue("image", saved.path, "image/jpeg", false, saved.capturedAtUnix);
 }
 } }

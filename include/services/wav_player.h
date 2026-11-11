@@ -43,6 +43,11 @@ public:
 
     // Accepts PCM16 WAV and the firmware's bounded MJPEG/PCM AVI audio stream.
     bool startTrack(const char* path);
+    // UI task: copy <=256000 mono PCM16 frames into owned PSRAM. The caller may
+    // release input after return. Requires openSession; no new worker. Looping
+    // is sample-contiguous. Failed admission leaves the previous track intact;
+    // a TX startup failure stops playback. Stop/close use normal retirement.
+    bool startPcm(const int16_t* pcm, uint32_t frames, uint32_t rate, bool loop=false);
     // Terminal embedded-AVI read/demux failure; reset on start/restart.
     bool failed() const { return streamFailed_.load(); }
     // UI-task query: closeSession may retain ownership until worker acknowledgment.
@@ -54,7 +59,7 @@ public:
     void pause();
     void resume();
     bool isPlaying() const { return playing_; }
-    bool isOpen() const { return fileOpen_; }
+    bool isOpen() const { return fileOpen_ || memoryPcm_ != nullptr; }
 
     void setVolume(int vol0to100) { services::audio::media_volume::setVolume(vol0to100); }
     int  volume() const { return services::audio::media_volume::volume(); }
@@ -112,6 +117,10 @@ private:
     core::dsp::PcmRing ring_{};
     int16_t*           pcmBuf_ = nullptr;
     int                pcmBufSamples_ = 0;
+    // Worker/control protected; copied input never points into a native module.
+    int16_t* memoryPcm_ = nullptr;
+    uint32_t memoryFrames_ = 0, memoryPosition_ = 0;
+    bool memoryLoop_ = false;
 
     // StreamReader owns each SPI operation. Existing pump/header batches retain
     // the recursive SPI lock across their bounded sequence of stream calls.

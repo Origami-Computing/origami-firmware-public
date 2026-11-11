@@ -79,6 +79,7 @@ struct ListView {
     int selected    = 0; ///< Index of the currently highlighted item.
     int scrollFirst = 0; ///< Index of the topmost visible item.
     int totalItems  = 0; ///< Total number of items in the list.
+    bool dialogueFrame = false;
     int visibleRows = 0; ///< Computed by draw(); number of rows that fit.
 
     // Layout parameters — override before calling draw() if you need different spacing.

@@ -1,3 +1,4 @@
+#include "control/native_apps.h"
 #include "hal/hal_encoder_trace.h"
 #include "apps/agent/agent_flow.h"
 #include "services/vibration.h"
@@ -43,6 +44,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <mbedtls/platform.h>
+#include "config/memory_budget.h"
 
 #include "hal/hal_tasks.h"
 #include "services/agent_transport.h"
@@ -84,6 +86,7 @@
 #include "services/ble_files.h"
 #include "hal/hal_audio.h"
 #include "hal/hal_display.h"
+#include "services/screen_brightness.h"
 #include "hal/hal_input.h"
 #include "hal/hal_io.h"
 #include "hal/hal_power.h"
@@ -145,6 +148,7 @@ static void uiTask(void*) {
     static uint32_t s_hbTickMs = 0;  // health heartbeat rate limit
 
     for (;;) {
+        control::native_apps::collect(); // prior UI callbacks have fully returned
         const uint32_t now = millis();
 
         // Feed the task watchdog: if this loop wedges for TWDT_TIMEOUT_MS the
@@ -293,7 +297,7 @@ static void uiTask(void*) {
 
         // ---- Widget launch push (Kami agent -> device) --------------------
         // The server POSTs widget_loading when it starts generating; jump to the
-        // Lua Widget app's loading screen, which auto-launches on widget_ready.
+        // Custom Apps app's loading screen, which auto-launches on widget_ready.
         if (widgets::launch::takeLoadingRequest()) {
             NavHandler& nav = NavHandler::instance();
             if (nav.top() != &widgets::app) nav.push(&widgets::app);
@@ -486,6 +490,8 @@ static void* mbedtlsPsramCalloc(size_t n, size_t size) {
 }
 
 void setup() {
+    // Set the shared allocation policy before drivers and workers allocate.
+    if (psramFound()) heap_caps_malloc_extmem_enable(cfg::memory::kGeneralInternalLimit);
     const bool shippingWakeAuthorized = services::shipping::bootGate();
     hal::ble::configureFileReceiver(services::ble_files::receiver);
     mbedtls_platform_set_calloc_free(mbedtlsPsramCalloc, heap_caps_free);
@@ -494,13 +500,16 @@ void setup() {
         Serial.println("[menu] board bringup FAILED — halting");
         while (1) delay(1000);
     }
+    Serial.printf("[boot-phase] bringup done at %lu ms\n", (unsigned long)millis());
     Serial.println("\n======== Origami Menu (serial trace) ========");
+    services::screen_brightness::initialize();
     // Build the shared CA bundle index before any network task can connect.
     services::tls::init();
 
-    // Force the wall clock to "unset" before anything reads it. The RTC carries a
-    // stale time across soft reboots; without this it would show a wrong clock and
-    // arm alarms off it. Only SNTP (over WiFi) makes the clock valid from here.
+    // Decide whether the clock the RTC timer carried across deep sleep / reset
+    // descends from a trusted SNTP sync (keep it, no Wi-Fi needed) or must be
+    // forced to "unset" before anything reads it; also applies the timezone.
+    Serial.printf("[boot-phase] tls done at %lu ms\n", (unsigned long)millis());
     core::time::init();
 
     runProvisioningGate(kNormalProvisionProbeMs);
@@ -529,6 +538,7 @@ void setup() {
                   (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024u),
                   (unsigned)(heap_caps_get_total_size(MALLOC_CAP_SPIRAM) / 1024u));
 
+    Serial.printf("[boot-phase] pre_services done at %lu ms\n", (unsigned long)millis());
     services::init();
 
     hal::input::resetRotaryEncoderPins();
@@ -538,6 +548,7 @@ void setup() {
     // Boot is the initial lightweight root. Initializing Kami first loads its
     // large SD-backed eye sheet and starts transport work before any boot pixels
     // can be shown. The boot screen replaces itself with Kami on completion.
+    Serial.printf("[boot-phase] services done at %lu ms\n", (unsigned long)millis());
     NavHandler::instance().init(&apps::boot::app);
     NavHandler::instance().armInputBlock(400u);
 
@@ -569,7 +580,8 @@ void setup() {
     // SD hashing, the Lua diagnostic, Wi-Fi, and periodic background services
     // out of its critical three-second render window.
     const uint32_t bootVisibleAt = millis();
-    while ((uint32_t)(millis() - bootVisibleAt) < kBootSequenceAndHoldMs) {
+    const uint32_t bootHoldMs = esp_reset_reason() == ESP_RST_DEEPSLEEP ? 0u : kBootSequenceAndHoldMs;
+    while ((uint32_t)(millis() - bootVisibleAt) < bootHoldMs) {
         delay(10);
     }
 

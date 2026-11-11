@@ -1,0 +1,77 @@
+{
+  "format": 1,
+  "entries": [
+    {
+      "file": "tone_pump.cpp",
+      "commit": "584b23f4cb0b48c0e5322e9fbeb2f9249735ca47",
+      "source_path": "src/apps/hardware_test_app.cpp",
+      "source_sha256": "39f8a983033f89fde81db3fb2db6538b384ebc42a1bfeca5cfe913f0dc5aa44e",
+      "selection": {
+        "start": "static void playToneSamples()",
+        "end": "\n// ---- Camera",
+        "includes_end": false
+      },
+      "sha256": "b816016b85217cf21e6170c72efb040d9aa6f8273b4f1dfe77a4e18aad943384"
+    },
+    {
+      "file": "tone_start.cpp",
+      "commit": "584b23f4cb0b48c0e5322e9fbeb2f9249735ca47",
+      "source_path": "src/apps/hardware_test_app.cpp",
+      "source_sha256": "39f8a983033f89fde81db3fb2db6538b384ebc42a1bfeca5cfe913f0dc5aa44e",
+      "selection": {
+        "start": "        hal::audio::hardwareReset(); delay(50);",
+        "end": "\n      }",
+        "includes_end": false
+      },
+      "sha256": "ee79e042c93e2b039c625533e26dbc69ac817301561f400ad670cb523b18ff75"
+    },
+    {
+      "file": "camera_trial.cpp",
+      "commit": "0c7d82c67b05774fb75c40a71fb0115449d2ba8e",
+      "source_path": "src/apps/camera_menu_app.cpp",
+      "source_sha256": "f518eebdee25d517635f0cc39508fb325c97c17b58d4a2fd7974967912d45bdf",
+      "selection": {
+        "start": "bool runSettleTrial(",
+        "end": "\n#endif",
+        "includes_end": true
+      },
+      "sha256": "b3e6725befd97b564c6d0577815e5a779f68ffc70d6f432ae625879ac532c06e"
+    },
+    {
+      "file": "morning_quote.cpp",
+      "commit": "69fc72d78d651df7625b4e4e183206e645930bab",
+      "source_path": "src/apps/morning_routine_app.cpp",
+      "source_sha256": "c919e368677b0e7d5234ec23bc886fbd6ac02ced35e36b18196b34e68563e1f6",
+      "selection": {
+        "start": "void refreshQuote(",
+        "end": "void tickQuote(",
+        "includes_end": false
+      },
+      "sha256": "cfd03128c94007c91fb724f57721f9d7ad88c600e4bd8cac5488a921a5f00b82"
+    },
+    {
+      "file": "list_rows.cpp",
+      "commit": "447b99762980153b456e7848c5d5a9a9a114c86a",
+      "source_path": "src/ui/draw.cpp",
+      "source_sha256": "ce2a7aa0c69b32144da9a9fd63f2f8a75d13ab1629945a7450e6bc24a0325275",
+      "selection": {
+        "start": "void listRow(",
+        "end": "void scrollbar(",
+        "includes_end": false
+      },
+      "sha256": "310a07c601c3548d12d434685cc0ee4f28f205b55455a9ac93fc8f112cf0aa47"
+    },
+    {
+      "file": "screen_chrome.cpp",
+      "commit": "706ddfc0eb867fd299b465e3bcbc6c86dccff9a8",
+      "source_path": "src/ui/screen_chrome.cpp",
+      "source_sha256": "fdec2feb28230cd311c0e5e26dfa3127cffd68d8c18230aaee1077a7f2cafa4a",
+      "selection": {
+        "start": null,
+        "end": null,
+        "includes_end": false
+      },
+      "sha256": "fdec2feb28230cd311c0e5e26dfa3127cffd68d8c18230aaee1077a7f2cafa4a"
+    }
+  ]
+}

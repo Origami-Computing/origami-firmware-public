@@ -4,7 +4,7 @@
 namespace core { namespace power_button {
 constexpr uint32_t kHoldMs=1000;
 enum class Action : uint8_t { None, Click, Sleep };
-inline bool wakeRequested(bool /*a*/,bool /*b*/,bool c) { return c; }
+inline bool wakeRequested(bool a,bool b,bool c) { return a||b||c; }
 class Gesture {
   bool down_=false, consumed_=false;
   uint32_t started_=0;

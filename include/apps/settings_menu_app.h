@@ -6,8 +6,6 @@ class UploadQueue;
 
 namespace apps {
 namespace settings_menu {
-// Open the same style chooser used by Settings (also used by local diagnostics).
-void openAgentStyles();
 void openWifiMenu();
 
 extern App app;

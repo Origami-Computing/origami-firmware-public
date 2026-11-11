@@ -96,6 +96,7 @@ bool offerWidget(const char* action, const char* first, const char* second) {
     s_widgets[(s_widgetHead + s_widgetCount) % kMaxWidgetActions] = frame;
     s_widgetCount++;
     portEXIT_CRITICAL(&s_mux);
+    Serial.printf("[widget-launch] received %s\n", action);
     return true;
 }
 

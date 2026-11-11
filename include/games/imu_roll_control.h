@@ -115,5 +115,45 @@ inline Control mapAccelToControl(const int32_t accel[3], float neutralDeg,
   return control;
 }
 
+/**
+ * Detects player tilt for the idle policy of a tilt-only game.
+ *
+ * Steering a tilt game uses no buttons, so the game must report its own
+ * activity. Only a *change* of at least thresholdDeg from the last accepted
+ * pose counts: a device set down at any constant angle, including one held off
+ * neutral (which still steers), stops reporting activity and idles normally.
+ * Samples are low-pass filtered first: a stationary device measured on a desk
+ * showed single-sample accelerometer swings of about 3 degrees, which must not
+ * keep an abandoned game awake. Plain value type owned by the caller; no
+ * allocation, timing or I/O. Call once per game frame (about 15-60 Hz).
+ */
+struct ActivityDetector {
+  static constexpr float kDefaultThresholdDeg = 3.0f;  // Default zero dead zone.
+  static constexpr float kSmoothing = 0.25f;           // ~4-frame time constant.
+
+  float filteredDeg = 0.0f;
+  float anchorDeg = 0.0f;
+  bool anchored = false;
+
+  // Re-anchor without counting activity (new neutral or new round).
+  void reset(float rollDeg) {
+    filteredDeg = rollDeg;
+    anchorDeg = rollDeg;
+    anchored = true;
+  }
+
+  // Returns true when the filtered pose moved far enough to count as play.
+  bool update(float rollDeg, float thresholdDeg = kDefaultThresholdDeg) {
+    if (!anchored) {
+      reset(rollDeg);
+      return false;
+    }
+    filteredDeg += (rollDeg - filteredDeg) * kSmoothing;
+    if (fabsf(filteredDeg - anchorDeg) < thresholdDeg) return false;
+    anchorDeg = filteredDeg;
+    return true;
+  }
+};
+
 }  // namespace imu_roll
 }  // namespace games

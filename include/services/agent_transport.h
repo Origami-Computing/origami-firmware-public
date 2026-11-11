@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include "core/secrets.h"
 
 namespace services { namespace agent_transport {
 enum class Outcome : uint8_t { Ok, HttpError, NetworkError, Cancelled };
@@ -32,8 +33,9 @@ bool prepare(const VoiceCallbacks& callbacks, bool reconnectIfOffline = false);
 // UI-task configuration operations: update the shared backend preference and
 // request socket refresh after the active turn; callers never touch the socket.
 // Mode selection is inert when unchanged. A changed selection requests refresh
-// even if saving fails, preserving Settings' existing best-effort contract.
+// only when saving succeeds.
 void selectBackendMode(bool dev);
+bool selectServerMode(core::secrets::ServerMode mode);
 // Preserve the URL setter's result; refresh only on success. This overrides the
 // current URL and persists the dev URL only in dev mode; saving is not atomic.
 bool setBackendUrl(const char* url);

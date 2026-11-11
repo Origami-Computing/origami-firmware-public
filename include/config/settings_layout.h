@@ -31,6 +31,8 @@ static constexpr int16_t kSettingsSubListAreaX = 0;
 static constexpr int16_t kSettingsSubListAreaY = kSystemStatusBarH+2;
 static constexpr int16_t kSettingsSubListAreaW = 280;
 static constexpr int16_t kSettingsSubListAreaH = 197;
+// Reserve one 32 px header band on the saved-network action screen.
+static constexpr int16_t kSettingsNetworkActionHeaderH = ui::layout::space(8);
 static constexpr int16_t kSettingsSubListRowH = ui::layout::kListRowH;
 static constexpr int16_t kSettingsSubListRowPitch = ui::layout::kListRowPitch;
 static constexpr int16_t kSettingsSubListTopPad = 0;

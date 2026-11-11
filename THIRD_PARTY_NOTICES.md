@@ -6,6 +6,9 @@ MIT at the repository root applies to approved Origami-original work only. Retai
 | --- | --- | --- |
 | Espressif esp_new_jpeg 1.0.2 | `lib/esp_new_jpeg/LICENSE`, pinned source and binary hashes in `lib/esp_new_jpeg/provenance.json` | Espressif MIT notice retained; use restricted to Espressif products; target is ESP32-S3 |
 | Lua 5.4.9 | `lib/lua/LICENSE` | MIT notice retained |
+| Espressif elf_loader 2.1.0 | `lib/esp_elf_loader/license.txt`, `lib/esp_elf_loader/UPSTREAM.md` (pinned commit, local atomic-builtin change) | Apache-2.0 notice retained; only signed Kami app packages are loaded |
+| ggwave 0.4.3 | `lib/ggwave/LICENSE`, `lib/ggwave/src/reed-solomon/LICENSE`, `lib/ggwave/README.origami.md` (local PSRAM arena patch) | MIT notices retained |
+| wpa_supplicant SAE (ESP-IDF v4.4.7) | `vendor/wpa3-sae/README`, `vendor/wpa3-sae/upstream-sha256.json`, `vendor/wpa3-sae/ORIGAMI.md` (leak correction) | BSD-3-Clause notice retained |
 | minimp3 | `lib/minimp3/LICENSE` | CC0 notice retained |
 | qrcodegen | `lib/qrcodegen/LICENSE` | MIT notice retained |
 | quirc 1.2 | License headers in `lib/quirc` | ISC-style permission retained |

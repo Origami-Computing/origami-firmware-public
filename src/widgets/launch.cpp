@@ -35,6 +35,10 @@ void cp(char* dst, size_t cap, const char* src) {
 }  // namespace
 
 void notifyLoading(const char* t) {
+    // A previous loading view may have been dismissed before its completion
+    // was consumed. Never apply that retained result to a new build.
+    s_ready = false;
+    s_errorPending = false;
     cp(s_title, sizeof(s_title), t && t[0] ? t : "widget");
     s_loadingPending = true;
 }

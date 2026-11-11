@@ -1,6 +1,20 @@
 #include "apps/tutorial_app.h"
+#include <esp_heap_caps.h>
+#include <new>
+#include "ui/onboarding_scenes.h"
+#include "ui/native_frame.h"
+#include "apps/app_store_app.h"
+#include "widgets/storage.h"
+#include "core/secrets.h"
+#include "hal/hal_wifi.h"
+#include "hal/hal_power.h"
 #include "apps/agent_app.h"
 #include "apps/onboarding_flow.h"
+#include "apps/onboarding_controls.h"
+#include "ui/onboarding_flow_view.h"
+#include "services/uploads.h"
+#include "services/agent_coordination.h"
+#include "services/vibration.h"
 #include "services/onboarding_progress.h"
 #include "apps/menu_app.h"
 #include "apps/camera_menu_app.h"
@@ -8,6 +22,7 @@
 #include "hal/hal_sd.h"
 #include "ui/onboarding_approved_view.h"
 #include "apps/wifi_setup_app.h"
+#include "ui/onboarding_connect_view.h"
 #include "assets/onboarding_home_eyes.h"
 #include "core/board_time.h"
 #include "hal/hal_display.h"
@@ -15,6 +30,7 @@
 #include "scene/screen.h"
 #include "services.h"
 #include "sfx/sfx_typewriter.h"
+#include "services/battery_alerts.h"
 #include "ui/onboarding_navigation_view.h"
 #include "ui/scene.h"
 #include "ui/onboarding_motion.h"
@@ -22,11 +38,21 @@
 #include <Arduino.h>
 
 namespace apps { namespace tutorial {
+static void compositeNavigationHint(uint16_t*);
+static unsigned s_compositedHints=0;
 namespace {
 using onboarding::Input;
 using onboarding::Flow;
 Flow s_flow;
+services::custom_apps::Catalog* s_apps=nullptr;uint32_t s_catalogJob=0;bool s_catalogRequested=false;
+onboarding::Controls s_controls;
+bool s_audioSelected=false;
+unsigned s_backCount=0;uint32_t s_usbSuccessAt=0;
+bool s_controlSuccessDrawn=false;
 services::photos::Target s_photo;
+// Keep the idle agent socket paused through capture/review/send. The upload
+// service owns its own overlapping network lease; release only after receipt.
+services::agent_coordination::TransportPause s_photoTransport;
 bool s_photoQueued=false,s_reviewCached=false;
 std::string s_wrapped;
 onboarding::TextPlayback s_text;
@@ -55,7 +81,7 @@ int s_cachePage=-1,s_cacheLetters=-1,s_cacheScroll=-1;
 void releaseDialogue(){s_dialogueCache.deleteSprite();s_cachePage=s_cacheLetters=-1;}
 void prepareMotion(){
  s_motion.close();s_motionReady=false;
- if(s_flow.page==18)s_motionReady=s_motion.prepareWheel();
+ // Open-menu animation is owned by the shared approved scene painter.
  if(s_flow.page==34){
   s_motionReady=s_motion.prepareOutro();s_dialogueCache.setColorDepth(16);
   if(!s_dialogueCache.created())s_dialogueCache.createSprite(280,240);
@@ -69,6 +95,7 @@ void prepareMotion(){
 }
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 bool s_frozen=false;
+bool s_preview=false;unsigned s_previewSelection=0;char s_previewDetail[128]={};
 unsigned s_frozenMs=0;
 #endif
 unsigned elapsed(){
@@ -80,65 +107,61 @@ unsigned elapsed(){
 const char* dialogueCopy(){return s_wrapped.c_str();}
 void refreshCopy(){s_wrapped=ui::onboarding_approved::wrap(ui::onboarding_approved::copy(s_flow.page));}
 unsigned textRows(){return s_flow.page==24?2:s_flow.page==25?3:ui::onboarding_approved::textRows(120);}
-unsigned readyAt(){if(s_flow.page==8||s_flow.page==14||s_flow.page==30||s_flow.page==31||s_flow.page==34)return 0;return 450+unsigned(s_wrapped.size())*ui::onboarding_intro::kCharacterMs+140;}
+unsigned readyAt(){return 0;}
+unsigned legacyReadyAt(){if(s_flow.page==8||s_flow.page==14||s_flow.page==30||s_flow.page==31||s_flow.page==34)return 0;return 450+unsigned(s_wrapped.size())*ui::onboarding_intro::kCharacterMs+140;}
 void serviceSpeech(unsigned ms){
- if(s_flow.page==8||s_flow.page==14||(s_flow.page>=30&&s_flow.page!=32&&s_flow.page!=33)){stopSpeech();return;}
- const char* copy=dialogueCopy();
- const unsigned starts=450;
- const unsigned count=ms<starts?0:std::min(unsigned(strlen(copy)),(ms-starts)/ui::onboarding_intro::kCharacterMs);
+ static unsigned phase=0;
+ if(s_flow.page!=124){stopSpeech();phase=0;s_speechLetters=0;return;}
+ const auto speech=onboarding::DemoSpeech::at(ms);
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
- if(s_frozen){stopSpeech();s_speechLetters=count;return;}
+ if(s_frozen){stopSpeech();phase=speech.phase;s_speechLetters=speech.count;return;}
 #endif
- if(s_text.offset||!copy[0]){stopSpeech();s_speechLetters=count;return;}
- if(count>s_speechLetters){
-  // Match agent replies: play the latest revealed character, never a backlog
-  // of blips after a slow frame. Scrolling already-visible text stays silent.
-  unsigned at=count-1;while(at>s_speechLetters&&copy[at]<=' ')--at;
-  const char ch=copy[at];
-  if(ch>' '){
-   // Use one repeating note sequence on every speaking page. Advancing only
-   // after an actual blip keeps whitespace, wrapping and missed frames from
-   // turning the same SFX into a different page-specific melody.
-   if(sfx::typewriterServiceChar(ch,s_speechBlips))++s_speechBlips;
-   s_speechOpen=sfx::typewriterIsOpen();
-  }
-  s_speechLetters=count;
- }else if(count==strlen(copy))stopSpeech();
+ if(phase!=speech.phase||speech.count<s_speechLetters){stopSpeech();s_speechLetters=0;phase=speech.phase;}
+ if(speech.count>s_speechLetters){
+  unsigned at=speech.count-1;while(at>s_speechLetters&&speech.text[at]<=' ')--at;
+  if(sfx::typewriterServiceChar(speech.text[at],s_speechBlips))++s_speechBlips;
+  s_speechOpen=sfx::typewriterIsOpen();s_speechLetters=speech.count;
+ }else if(!speech.phase||speech.count==strlen(speech.text))stopSpeech();
 }
+
 void save(){
  if(s_flow.wifiOnly)return;
- if(!services::onboarding_progress::save(s_flow.page,s_completed)) Serial.println("[tutorial] progress save failed");
+ if(!services::onboarding_progress::save(s_flow.page,s_completed,s_flow.interest,s_flow.account,s_flow.joinWifi,s_flow.setupPublished,s_flow.connected)) Serial.println("[tutorial] progress save failed");
 }
 bool load(){
- const auto p=services::onboarding_progress::load();s_flow.reset();s_flow.page=p.page;s_completed=p.completed;return !s_completed;
+ const auto p=services::onboarding_progress::load();s_flow.reset();s_flow.interest=p.interest;s_flow.account=p.account;s_flow.joinWifi=p.joinWifi;s_flow.setupPublished=p.setupPublished;s_flow.connected=p.connected||hal::wifi::connected();s_flow.origin=p.account?40:(p.joinWifi?41:39);s_flow.setPage(p.page);s_completed=p.completed;return !s_completed;
 }
 void enterView(){
+ s_controls.reset(s_flow.page);s_controlSuccessDrawn=false;s_usbSuccessAt=0;s_catalogRequested=false;
  refreshCopy();s_reviewCached=false;
  stopSpeech();s_speechLetters=s_speechBlips=0;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
- s_frozen=false;
+ s_frozen=false;s_preview=false;
 #endif
  releaseDialogue();prepareMotion();s_text.reset();s_scrollFrom=s_scrollTarget=0;s_scrollAt=millis();s_scanAfter=readyAt()+kScanReadingPauseMs;
  s_started=millis();s_lastDraw=0;s_dirty=true;
 }
 void changed(){
+ s_controls.reset(s_flow.page);s_controlSuccessDrawn=false;s_usbSuccessAt=0;s_catalogRequested=false;
  refreshCopy();s_reviewCached=false;
  stopSpeech();s_speechLetters=s_speechBlips=0;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
- s_frozen=false;
+ s_frozen=false;s_preview=false;
 #endif
  releaseDialogue();prepareMotion();s_text.reset();s_scrollFrom=s_scrollTarget=0;s_scrollAt=millis();s_scanAfter=readyAt()+kScanReadingPauseMs;s_started=millis();s_lastDraw=0;s_dirty=true;save();}
 void prepareWorkflow(){
+ ui::setNativeFrameOverlay(compositeNavigationHint);
  if(!s_active){s_active=true;load();s_flow.reset();}
- else if(s_flow.page==12)s_flow.wifiReturned(apps::wifi_setup::takeTutorialResult());
- else if(s_flow.page==19)s_flow.menuReturned();
- else if(s_flow.page==30){auto photo=apps::camera_menu::takeTutorialPhoto();if(photo.valid()){s_photo=photo;s_photoQueued=false;s_flow.page=31;Serial.println("[tutorial-photo] review camera_released=1 reconnect_requested=1 queued=0");}else s_flow.page=29;}
+ else if(s_flow.page==12){if(s_flow.interest||s_flow.setupPublished)s_flow.account=core::secrets::backendConfig().apiKey[0]!=0;s_flow.wifiReturned(apps::wifi_setup::takeTutorialResult());}
+ else if(s_flow.page==19){s_flow.connected=s_flow.connected||hal::wifi::connected();s_flow.menuReturned();}
+ else if(s_flow.page==129){auto result=apps::app_store::takeTutorialResult();s_flow.installed=result==apps::app_store::TutorialResult::Installed;s_flow.setPage(result==apps::app_store::TutorialResult::Back?128:133);}
+ else if(s_flow.page==30){auto photo=apps::camera_menu::takeTutorialPhoto();if(photo.valid()){s_photo=photo;s_photoQueued=false;s_flow.page=31;Serial.println("[tutorial-photo] review camera_released=1 reconnect_requested=1 queued=0");}else{s_photoTransport.release();s_flow.page=40;}}
  refreshCopy();
  save();
 }
-void exitApp(){stopSpeech();s_active=false;releaseDialogue();s_motion.close();s_navHint.deleteSprite();s_hintStyle=-1;if(s_photo.valid()&&!s_photoQueued)hal::sd::removeFile(s_photo.path);s_photo={};s_photoQueued=false;
+void exitApp(){ui::setNativeFrameOverlay(nullptr);if(s_catalogJob)widgets::storage::abandon(s_catalogJob);s_catalogJob=0;if(s_apps){s_apps->~Catalog();heap_caps_free(s_apps);s_apps=nullptr;}s_photoTransport.release();stopSpeech();s_active=false;releaseDialogue();s_motion.close();s_navHint.deleteSprite();s_hintStyle=-1;if(s_photo.valid()&&!s_photoQueued)hal::sd::removeFile(s_photo.path);s_photo={};s_photoQueued=false;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
- s_frozen=false;
+ s_frozen=false;s_preview=false;
 #endif
 }
 void startScanner(){
@@ -146,19 +169,68 @@ void startScanner(){
 }
 void finish();
 void tick(uint32_t now){
+ // C click edges are delivered on release by the power-button gesture owner.
+ // Read the existing physical level for visual feedback without changing that policy.
+ if(s_flow.page==5&&!s_controls.success){
+  const bool down=hal::input::buttonCDown();
+  if(down!=s_controls.held){
+   const unsigned feedback=s_controls.button(2,down,now);
+   if(feedback)services::vibration::navigationFeedback(services::vibration::Cue::Scroll);
+   s_dirty=true;
+  }
+ }
  if(s_flow.wifiOnly && s_flow.page==Flow::kFinished){NavHandler::instance().pop();return;}
- if(now-s_lastDraw>=33)s_dirty=true;
+ if(now-s_lastDraw>=40)s_dirty=true;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
  if(s_frozen)return;
 #endif
+ if(!s_controls.success)s_controlSuccessDrawn=false;
+ if(onboarding::Controls::accepts(s_flow.page)&&s_controlSuccessDrawn&&s_controls.complete(now)){s_flow.setPage(s_controls.next());changed();return;}
+ if(s_flow.page==Flow::kBuildConnect){
+  if(!s_usbSuccessAt&&int32_t(now-s_started)>=1800&&hal::power::externalPowerPresent(hal::power::read())){
+   stopSpeech();services::battery_alerts::acknowledgeExternalPower();s_usbSuccessAt=millis();s_dirty=true;
+  }
+  if(s_usbSuccessAt&&int32_t(now-s_usbSuccessAt)>=1200){s_flow.setPage(Flow::kBuildBrowse);changed();return;}
+ }
+ if(s_flow.page==129){apps::app_store::beginTutorial();return;}
+ if(s_flow.page==133||s_flow.page==134){
+  if(!s_apps&&!s_catalogRequested){
+   void* memory=heap_caps_malloc(sizeof(services::custom_apps::Catalog),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT);
+   if(memory)s_apps=new(memory) services::custom_apps::Catalog{};else s_catalogRequested=true;
+  }
+  if(s_apps&&!s_catalogRequested&&!s_catalogJob){s_catalogJob=widgets::storage::request(widgets::storage::Operation::Catalog);s_catalogRequested=s_catalogJob!=0;}
+  services::custom_apps::Result result;
+  if(s_catalogJob&&widgets::storage::take(s_catalogJob,result,nullptr,s_apps)){s_catalogJob=0;s_dirty=true;}
+ }
  if(s_flow.page==34){if(elapsed()>=6500){s_flow.outroFinished();finish();}return;}
- serviceSpeech(elapsed()+s_text.offset);
+ if(s_flow.page==30){if(s_photoTransport.pollAcquire())apps::camera_menu::beginTutorialCapture();return;}
+ if(s_flow.page==Flow::kSending){
+  const auto* queue=services::uploads::readyQueue();
+  if(queue&&queue->deliveryConfirmed(s_photo.path)){Serial.println("[tutorial-photo] server receipt confirmed");s_photoTransport.release();s_flow.photoDelivered();s_photo={};s_photoQueued=false;changed();}return;
+ }
+ // Speech is serviced after painting, synchronized to the visible text.
  // QR scan begins on explicit B after the instructions, as approved.
 
 }
 void finish(){s_completed=true;save();NavHandler::instance().popToRoot();}
 void onInput(hal::input::InputEvent ev){
  using ET=hal::input::EventType;Input input;
+ if(onboarding::Controls::accepts(s_flow.page)){
+  unsigned haptics=0;
+  switch(ev.type){
+   case ET::ButtonA_Press:haptics=s_controls.button(0,true,millis());break;
+   case ET::ButtonA_Release:haptics=s_controls.button(0,false,millis());break;
+   case ET::ButtonB_Press:haptics=s_controls.button(1,true,millis());break;
+   case ET::ButtonB_Release:haptics=s_controls.button(1,false,millis());break;
+   case ET::ButtonC_Press:haptics=s_controls.button(2,true,millis());break;
+   case ET::ButtonC_Release:haptics=s_controls.button(2,false,millis());break;
+   case ET::Scroll:haptics=s_controls.turn(-ev.delta,millis(),ev.rotaryUndo);break;
+   default:break;
+  }
+  if(haptics)services::vibration::navigationFeedback(services::vibration::Cue::Scroll);
+  else services::vibration::suppressInputFeedback();
+  s_dirty=true;return;
+ }
  switch(ev.type){
   case ET::ButtonA_Tap:input=Input::A;break;
   case ET::ButtonB_Tap:input=Input::B;break;
@@ -166,35 +238,32 @@ void onInput(hal::input::InputEvent ev){
   case ET::Scroll:if(!ev.delta)return;input=Input::Rotate;break;
   default:return;
  }
+ if(s_flow.page==Flow::kSending)return;
+ if(input==Input::Rotate){
+  if(s_flow.turn(ev.delta)){services::vibration::navigationFeedback(services::vibration::Cue::Select);changed();
+   if(s_flow.page==19){s_backCount=0;NavHandler::instance().push(&apps::menu::app);}
+   return;
+  }
+  if(s_flow.page==22){s_text.turn(ev.delta,ui::onboarding_intro::lineCount(dialogueCopy()),textRows(),0);s_dirty=true;}return;
+ }
  if(s_flow.page==31){
   if(input==Input::B&&!s_photoQueued){
+   auto& q=services::uploads::queue();q.watchDelivery(s_photo.path);
    if(!services::photos::enqueue(s_photo)){ui::design::instruction(hal::display::tft(),"Queue full. B retries");hal::display::markAllDirty();return;}
-   s_photoQueued=true;Serial.printf("[tutorial-photo] send sequence=%lu queued=1\n",(unsigned long)s_photo.sequence);
-  }else if(input==Input::A){
-   if(s_photo.valid()&&!s_photoQueued)hal::sd::removeFile(s_photo.path);
-   s_photo={};s_photoQueued=false;
-  }
+   s_photoQueued=true;Serial.println("[tutorial-photo] queued; waiting for server receipt");
+  }else if(input==Input::A){if(s_photo.valid()&&!s_photoQueued)hal::sd::removeFile(s_photo.path);s_photo={};s_photoQueued=false;}
  }
- const unsigned age=elapsed(),starts=450;
- if(input==Input::B&&s_text.reveal(age,starts,readyAt())){stopSpeech();s_dirty=true;return;}
- if(input==Input::Rotate&&s_flow.page!=18){
-  if(age+s_text.offset<readyAt())return; // Follow the newest line until typing finishes.
-  const char* copy=dialogueCopy();
-  const unsigned count=(age+s_text.offset-starts)/ui::onboarding_intro::kCharacterMs;
-  const int oldOffset=websiteOffset();
-  if(s_text.turn(ev.delta,s_flow.page==8?textRows()+onboarding_wifi::kWebsiteScrollMax:ui::onboarding_intro::lineCount(copy),textRows(),s_flow.page==8?0:s_text.follow(copy,count,textRows()))){
-   if(s_flow.page==8){s_scrollFrom=oldOffset;s_scrollTarget=onboarding_wifi::websiteShift(s_text.scroll);s_scrollAt=millis();}if(s_flow.page==9)s_scanAfter=std::max(s_scanAfter,age+s_text.offset+kScanReadingPauseMs);s_dirty=true;return;}
- }
- if(!s_flow.input(input,s_flow.page==18||age+s_text.offset>=readyAt()))return;
- changed();
- if(s_flow.wifiOnly && s_flow.page==Flow::kFinished){NavHandler::instance().pop();return;}
- if(s_flow.page==12){releaseDialogue();apps::wifi_setup::beginTutorial();}
- else if(s_flow.page==30)apps::camera_menu::beginTutorialCapture();
- else if(s_flow.page==19)NavHandler::instance().push(&apps::menu::app);
+ if(s_flow.page==Flow::kLogin&&input==Input::B&&(s_flow.interest||s_flow.setupPublished))s_flow.account=core::secrets::backendConfig().apiKey[0]!=0;
+ if(!s_flow.input(input)){services::vibration::suppressInputFeedback();return;}
+ services::vibration::navigationFeedback(services::vibration::Cue::Select);changed();
+ if(s_flow.wifiOnly&&s_flow.page==Flow::kFinished){NavHandler::instance().pop();return;}
+ if(s_flow.page==12){releaseDialogue();apps::wifi_setup::beginTutorial(true);}
  else if(s_flow.page==23)finish();
 }
+
 bool onChord(){
  if(s_flow.wifiOnly){NavHandler::instance().pop();return true;}
+ if(s_flow.page==123){s_flow.setPage(124);changed();return true;}
  if(elapsed()+s_text.offset<readyAt()||!s_flow.beginTalk())return true;
  stopSpeech();save();releaseDialogue();
  auto& nav=NavHandler::instance();nav.popToRoot();
@@ -234,11 +303,19 @@ void drawHome(TFT_eSprite& c,unsigned ms){
 }
 void buildScene(ui::scene::Scene& sc,int16_t,int16_t){
  sc.clear();const char* copy=dialogueCopy();
+ if(s_flow.page==9){
+  for(int i=0;i<2;++i){const bool selected=i==int(s_audioSelected);
+   sc.addLabel(i?"tutorial.method.audio":"tutorial.method.qr",{int16_t(i?154:34),206,70,18},i?"Audio":"QR Code",selected?0xffff:0,selected?0:0xffff,1);
+  }
+ }
  sc.addLabel("tutorial.dialogue",{38,88,214,94},copy,kUiFg,kUiBg,2);
 }
 void draw(TFT_eSprite& c){
  if(!s_dirty)return;s_dirty=false;s_lastDraw=millis();const uint32_t started=micros();
- const unsigned ms=elapsed()+s_text.offset;
+ const unsigned ms=elapsed();
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+ if(s_preview){ui::onboarding_scenes::render(c,s_flow.page,ms,s_previewSelection,s_previewDetail);s_drawUs=micros()-started;hal::display::markAllDirty();return;}
+#endif
  if(s_flow.page==31){
   if(!s_reviewCached){
    c.fillSprite(kUiBg);
@@ -247,48 +324,27 @@ void draw(TFT_eSprite& c){
    if(!rendered)ui::design::instruction(c,"Photo unavailable");
    s_reviewCached=true;
   }
- }else if(s_flow.page==34){
-  if(!s_motionReady||!s_motion.drawOutro(c,s_dialogueCache,ms,NavHandler::instance().chrome())){c.fillSprite(kUiBg);ui::design::center(c,"Goodbye!",108);}
- }else if(s_flow.page==8)ui::onboarding_approved::setupQr(c,ms,"Scan me",true,true);
- else if(s_flow.page==18&&s_motionReady){
-  if(!s_dialogueCache.created()){s_dialogueCache.setColorDepth(16);s_dialogueCache.createSprite(280,240);}
-  if(s_dialogueCache.created()){
-   if(s_cachePage!=18){ui::onboarding_approved::navigation(s_dialogueCache,18,0,0);s_cachePage=18;}
-   s_dialogueCache.pushToSprite(&c,0,0);s_motion.drawWheel(c,ms);ui::onboarding_approved::wheelText(c,ms);
-  }else ui::onboarding_approved::navigation(c,18,ms,0);
- }
- else if(s_flow.page==18||(s_flow.page>=24&&s_flow.page<=26)){
-  const unsigned offset=s_text.scroll==999?s_text.follow(dialogueCopy(),ms<450?0:(ms-450)/56,textRows()):s_text.scroll;
-  ui::onboarding_approved::navigation(c,s_flow.page,ms,offset);
- }
- else if(s_flow.page==14){
-  c.fillSprite(kUiSuccessBg);c.drawCircle(140,90,23,kUiFg);
-  c.drawLine(128,90,137,99,kUiFg);c.drawLine(137,99,153,81,kUiFg);
-  ui::design::center(c,"Connected",126);onboarding_wifi::arrows(c,false,true);
  }else{
-  Flow a=s_flow,b=s_flow;a.input(Input::A);b.input(Input::B);
-  const bool back=s_flow.page<3?s_flow.page!=0:a.page!=s_flow.page,next=b.page!=s_flow.page;
-  const unsigned offset=s_text.scroll==999?s_text.follow(dialogueCopy(),ms<450?0:(ms-450)/56,textRows()):s_text.scroll;
-  const int letters=std::min<unsigned>(s_wrapped.size(),ms<450?0:(ms-450)/56);
-  const int key=int(offset)*2+int(ms%4200>4010);
-  const bool animated=s_flow.page>=3&&s_flow.page<=6;
-  if(!animated&&!s_dialogueCache.created()){s_dialogueCache.setColorDepth(16);s_dialogueCache.createSprite(280,240);}
-  if(!animated&&s_dialogueCache.created()){
-   // Scrollbar thumb extends outside the text clear rectangle. Rebuild its
-   // background on scroll changes so the old thumb cannot remain behind.
-   if(s_cachePage!=int(s_flow.page)||s_cacheScroll!=key){
-    ui::onboarding_approved::background(s_dialogueCache,s_flow.page,ms,88,120,back,next);
-    s_cacheLetters=-1;
-   }
-   if(s_cachePage!=int(s_flow.page)||s_cacheLetters!=letters||s_cacheScroll!=key){
-    s_dialogueCache.fillRect(34,132,212,80,kUiBg);
-    ui::onboarding_approved::draftText(s_dialogueCache,s_wrapped,letters,offset,120,true);
-    s_cachePage=s_flow.page;s_cacheLetters=letters;s_cacheScroll=key;
-   }
-   s_dialogueCache.pushToSprite(&c,0,0);
-  }else ui::onboarding_approved::proposal(c,s_flow.page,ms,offset,88,120,ui::onboarding_approved::copy(s_flow.page),back,next);
+  unsigned selection=s_flow.selection;char detail[80]={};
+  if(onboarding::Controls::accepts(s_flow.page))snprintf(detail,sizeof(detail),"%.1f,%u,%u",s_controls.angleDegrees(),s_controls.held,s_controls.success);
+  if(s_flow.page==Flow::kBuildConnect)selection=s_usbSuccessAt?1:0;
+  if(s_flow.page>=40&&s_flow.page<=42||s_flow.page==128)selection=ORIGAMI_STAGING_BUILD?0:1;
+  if(s_flow.page==133||s_flow.page==134)selection=s_flow.installed?1:0;
+  if(s_flow.page==133||s_flow.page==134){
+   const char* names[services::custom_apps::kCatalogEntries];
+   const unsigned count=s_apps?s_apps->count:0;
+   for(unsigned i=0;i<count;++i)names[i]=s_apps->entries[i].name;
+   ui::onboarding_scenes::customMenu(c,s_flow.installed,s_flow.page==134,names,count);
+  }else ui::onboarding_scenes::render(c,s_flow.page,ms,selection,detail);
  }
+ serviceSpeech(ms);
  s_drawUs=micros()-started;hal::display::markAllDirty();
+ // Start the dwell after painting, so queued input or a busy UI loop cannot skip green.
+ if(s_controls.success&&!s_controlSuccessDrawn){s_controlSuccessDrawn=true;s_controls.successAt=millis();
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  Serial.printf("[tutorial-feedback] page=%u greenAt=%lu\n",s_flow.page,(unsigned long)s_controls.successAt);
+#endif
+ }
 }
 const ::scene::Screen kScreen={"Meet Kami",enterView,nullptr,tick,onInput,onChord,draw,"learn",buildScene};
 const ::scene::Screen* const kScreens[]={&kScreen};
@@ -306,36 +362,54 @@ App app = SCENE_APP_CATALOG_LIFECYCLE_HOOKS("Meet Kami","tutorial",&kScreen,prep
 bool isActive(){return s_active&&NavHandler::instance().top()==&app;}
 bool sessionActive(){return s_active;}
 bool navigationLessonActive(){return s_active&&s_flow.page==19;}
+void noteNavigationBack(){if(navigationLessonActive()){++s_backCount;s_hintStyle=-1;}}
 bool navigationPracticed(){return navigationLessonActive()&&s_flow.practiced;}
 void noteNavigation(){if(navigationLessonActive())s_flow.practiced=true;}
 bool returnFromNavigation(){
  if(!navigationLessonActive())return false;
  if(!s_flow.practiced)return true;
+ noteNavigationBack();
  auto& nav=NavHandler::instance();
  if(nav.top()==&apps::menu::app)return false; // Menu owns its own category history.
  if(nav.depth()>1&&nav.top()!=&app)nav.pop();
  return true;
 }
-static void drawNavigationHint(TFT_eSprite& c){
- if(!navigationLessonActive())return;
- const int style=s_flow.practiced?1:0,top=style?164:194,h=240-top;
+static int prepareNavigationHint(){
+ if(!navigationLessonActive())return -1;
+ const int style=s_flow.practiced?(s_backCount?2:1):0,top=style?164:194,h=240-top;
  if(!s_navHint.created()||s_hintStyle!=style){
   s_navHint.deleteSprite();s_navHint.setColorDepth(16);s_navHint.createSprite(280,h);
-  if(!s_navHint.created())return;
+  if(!s_navHint.created())return -1;
   struct Offset{TFT_eSprite& c;int top;void fillRect(int x,int y,int w,int h,uint16_t ink){c.fillRect(x,y-top,w,h,ink);}} offset{s_navHint,top};
-  s_navHint.fillSprite(kUiBg);ui::onboarding_approved::menuInstruction(offset,s_flow.practiced);s_hintStyle=style;
+  s_navHint.fillSprite(kUiBg);if(style==2)ui::onboarding_scenes::backPrompt(offset);else ui::onboarding_approved::menuInstruction(offset,s_flow.practiced);s_hintStyle=style;
  }
+ return top;
+}
+static void compositeNavigationHint(uint16_t* pixels){
+ auto& nav=NavHandler::instance();
+ if(nav.systemScreenActive()||appPresentation(nav.top()).hideAppOverlays)return;
+ const int top=prepareNavigationHint();if(top<0)return;
+ ++s_compositedHints;
+ for(int x=0;x<280;++x)for(int y=top;y<240;++y){
+  const uint16_t color=s_navHint.readPixel(x,y-top);
+  pixels[(279-x)*240+y]=(color>>8)|(color<<8);
+ }
+}
+static void drawNavigationHint(TFT_eSprite& c){
+ const int top=prepareNavigationHint();if(top<0)return;const int h=240-top;
  if(hal::display::isOptimizedRender()){hal::display::beginDirectDraw();s_navHint.pushSprite(0,top);hal::display::endDirectDraw();}
  else{s_navHint.pushToSprite(&c,0,top);hal::display::markDirty(top,h);}
 }
 
 void replay(){
+ s_audioSelected=false;
  NavHandler::instance().setWorkflowPolicy({});
  s_talkPending=s_agentStarted=false;
- auto& nav=NavHandler::instance();nav.popToRoot();load();s_flow.reset();s_active=true;s_bootChecked=true;
+ auto& nav=NavHandler::instance();nav.popToRoot();load();s_flow.reset();s_completed=false;s_active=true;s_bootChecked=true;
  services::notifyUserActivity();nav.push(&app);
 }
 void beginWifiSetup(){
+ s_audioSelected=false;
  s_talkPending=s_agentStarted=false;
  s_flow.beginWifiSetup();s_active=true;
  services::notifyUserActivity();NavHandler::instance().push(&app);
@@ -373,11 +447,17 @@ bool restartForTesting(){
  NavHandler::instance().setWorkflowPolicy({});
  s_talkPending=s_agentStarted=false;NavHandler::instance().popToRoot();s_bootChecked=false;return true;
 }
-void printStatus(){const auto audio=sfx::typewriterStats();Serial.printf("[tutorial] page=%u elapsed=%u ready=%u active=%u practiced=%u completed=%u reveal=%u scroll=%u agent=%u recording=%u thinking=%u reply=%u error=%u drawUs=%lu fps=%.1f saved=%08lx speechOpen=%u speechBlips=%u audioBlips=%lu audioAvgGap=%lu audioMaxGap=%lu motion=%u\n",s_flow.page,elapsed(),readyAt(),isActive(),s_flow.practiced,s_completed,s_text.offset,s_text.scroll,s_talkPending,apps::agent::isRecording(),apps::agent::isSending(),apps::agent::isOnReplyScreen(),apps::agent::isShowingError(),(unsigned long)s_drawUs,hal::display::currentFps(),(unsigned long)services::onboarding_progress::savedRecordForDevelopment(),s_speechOpen,s_speechBlips,(unsigned long)audio.played,(unsigned long)(audio.played>1?audio.totalGapMs/(audio.played-1):0),(unsigned long)audio.maxGapMs,s_motionReady);}
+void printStatus(){Serial.printf("[tutorial] compositedHints=%u\n",s_compositedHints);Serial.printf("[tutorial-route] interest=%u account=%u wifi=%u selection=%u\n",s_flow.interest,s_flow.account,s_flow.joinWifi,s_flow.selection);const auto audio=sfx::typewriterStats();Serial.printf("[tutorial] page=%u elapsed=%u ready=%u active=%u practiced=%u completed=%u reveal=%u scroll=%u agent=%u recording=%u thinking=%u reply=%u error=%u drawUs=%lu fps=%.1f saved=%08lx speechOpen=%u speechBlips=%u audioBlips=%lu audioAvgGap=%lu audioMaxGap=%lu motion=%u\n",s_flow.page,elapsed(),readyAt(),isActive(),s_flow.practiced,s_completed,s_text.offset,s_text.scroll,s_talkPending,apps::agent::isRecording(),apps::agent::isSending(),apps::agent::isOnReplyScreen(),apps::agent::isShowingError(),(unsigned long)s_drawUs,hal::display::currentFps(),(unsigned long)services::onboarding_progress::savedRecordForDevelopment(),s_speechOpen,s_speechBlips,(unsigned long)audio.played,(unsigned long)(audio.played>1?audio.totalGapMs/(audio.played-1):0),(unsigned long)audio.maxGapMs,s_motionReady);}
 bool debugSeek(unsigned page,unsigned ms){
- if(!isActive()||page>34||(page>=12&&page<=15)||page==19||page==20||page==23||page==27||page==30||page==31)return false;
- stopSpeech();s_speechLetters=s_speechBlips=0;releaseDialogue();s_text.reset();s_scrollFrom=s_scrollTarget=0;s_scrollAt=millis();s_flow.page=page==26?25:page;refreshCopy();s_scanAfter=readyAt()+kScanReadingPauseMs;s_text.scroll=0;s_frozen=true;s_frozenMs=ms;prepareMotion();s_dirty=true;return true;
+ if(!isActive()||page>141||(page>=12&&page<=15)||page==19||page==20||page==23||page==27||page==30||page==31)return false;
+ s_preview=false;stopSpeech();s_speechLetters=s_speechBlips=0;releaseDialogue();s_text.reset();s_scrollFrom=s_scrollTarget=0;s_scrollAt=millis();s_flow.setPage(page==26?25:page);s_controls.reset(s_flow.page);s_controlSuccessDrawn=false;refreshCopy();s_scanAfter=readyAt()+kScanReadingPauseMs;s_text.scroll=0;s_frozen=true;s_frozenMs=ms;prepareMotion();s_dirty=true;return true;
 }
-void debugPlay(){s_started=millis()-elapsed();s_frozen=false;s_dirty=true;}
+bool debugPreview(unsigned page,unsigned ms,unsigned selection,const char* detail){
+ if(ms>120000||selection>8||!debugSeek(page,ms))return false;
+ s_preview=true;s_previewSelection=selection;snprintf(s_previewDetail,sizeof(s_previewDetail),"%s",detail?detail:"");
+ for(char* at=s_previewDetail;*at;++at)if(at[0]=='\\'&&at[1]=='n'){*at='\n';memmove(at+1,at+2,strlen(at+2)+1);}
+ s_dirty=true;return true;
+}
+void debugPlay(){s_started=millis()-elapsed();s_frozen=false;s_preview=false;s_dirty=true;}
 #endif
 }} // namespace apps::tutorial

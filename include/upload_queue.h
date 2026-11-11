@@ -25,6 +25,7 @@ struct QueueItem {
     char mimeType[24];
     char fileName[32];
     uint32_t createdAt;
+    uint32_t capturedAtUnix; // UTC capture seconds; zero for unknown/legacy items.
     uint32_t lastAttemptAt;
     uint32_t nextEligibleAt;
     uint8_t  attempts;          // Lifetime attempts; persisted across reboot.
@@ -34,7 +35,7 @@ struct QueueItem {
     char lastError[48];
 };
 
-static_assert(sizeof(QueueItem) == 248,
+static_assert(sizeof(QueueItem) == 252,
               "QueueItem growth permanently increases PSRAM usage");
 
 namespace services { namespace uploads { bool ensureInit(); void tick(); } }
@@ -57,8 +58,9 @@ public:
     // filePath: full SD path
     // mimeType: e.g. "image/jpeg", "audio/wav"
     // deleteAfterUpload: true for queue-owned temporary files; false for retained media
+    // capturedAtUnix is sampled at capture, never at enqueue/upload.
     bool enqueue(const char* type, const char* filePath, const char* mimeType,
-                 bool deleteAfterUpload = true);
+                 bool deleteAfterUpload = true, uint32_t capturedAtUnix = 0);
     enum class VideoEnqueue { Queued, AlreadyQueued, Busy, Full, Invalid, AccountRequired, AccountChanged, StorageUnavailable };
     // Explicit request for a finalized /videos/<name>.avi original. Brief SD
     // setup/manifest I/O; use a workflow action/service context, never a painter.
@@ -93,11 +95,15 @@ public:
     };
 
     // One mutex-protected observation; pending excludes active transfers.
-    struct Counts { int total = 0, pending = 0, failed = 0; };
+    struct Counts { int total = 0, pending = 0, failed = 0, active = 0; };
     Counts counts() const;
     int  size()         const { return counts().total; }
     int  pendingCount() const { return counts().pending; }
     int  failedCount()  const { return counts().failed; }
+    // One UI-owned delivery observation, fulfilled only by a validated server receipt.
+    // Watch before enqueue; observing a missing/failed/cancelled item is not success.
+    void watchDelivery(const char* path);
+    bool deliveryConfirmed(const char* path) const;
     bool workerRunning() const;
     const char* lastStatus() const { return m_lastStatus; }
 
@@ -150,6 +156,8 @@ public:
     void clearPendingItems();
 
 private:
+    char m_deliveryPath[96] = {};
+    bool m_deliveryConfirmed = false;
     enum class UploadResultKind : uint8_t {
         HttpResponse,
         RetryableFailure,

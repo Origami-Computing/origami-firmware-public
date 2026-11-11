@@ -7,6 +7,7 @@
 #include "services/agent_voice.h"
 #include "services/automation.h"
 #include "sfx/sfx.h"
+#include "services/vibration.h"
 #include <string.h>
 namespace control {
 namespace {
@@ -41,6 +42,11 @@ Result execute(const Request &request) {
         result.error = Error::StaleState;
     if (result.error == Error::None)
         switch (request.operation) {
+        case Operation::HapticPlay:
+            if(!request.cue || (strcmp(request.cue,"breathe_in") && strcmp(request.cue,"breathe_out") && strcmp(request.cue,"complete")))result.error=Error::InvalidArgument;
+            else if(nav.systemScreenActive() || services::automation::wantsInputCapture() || !services::vibration::widgetCue(request.cue))result.error=Error::Busy;
+            break;
+        case Operation::HapticStop: services::vibration::stopWidgetCue();break;
         case Operation::TimerStart:
             result.error = convert(services::countdown::start(
                 request.durationSeconds, result.timer.sound, result.timer.vibration));

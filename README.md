@@ -32,7 +32,9 @@ This produces a **custom production-policy build**, not an official signed OTA r
 
 ## Firmware
 
-This source targets **v1.0.5**, adding on-device video recording with audio and local playback within Photos. Videos appear alongside photos with previews and duration labels; Back returns to the selected gallery item. Tap B for a photo; hold B for 1.2 seconds to start video, release to keep recording, and tap B again to save. Camera Settings selects VGA or 720p. Clips remain on the SD card; cloud video processing is not enabled by this firmware release. Preview/playback run below the recording frame rate. The MP3 metadata fix, batched analytics, and Public-default migration remain included. See [published releases](https://github.com/Origami-Computing/origami-firmware-public/releases) for available binaries.
+This source targets **v1.0.6**. It adds a reworked onboarding flow and Wi-Fi setup by sound, an App Store that installs signed native apps by QR or six-digit code, new built-in games, IMU calibration, a clock that survives deep sleep, battery sleep with alarm wake, faster wake to Home, automatic upload of saved recordings, and memory and network recovery fixes. Native app packages load only with a valid publisher signature and matching hashes.
+
+Earlier releases added on-device video recording with audio and local playback within Photos (v1.0.4) and Public updates without an OTA enrollment key (v1.0.5).
 
 Run `python3 tools/test_mp3_metadata.py` and `python3 tools/test_playback_start_admission.py` for the metadata, decoder, seeking and failed-start regression checks.
 
@@ -52,4 +54,4 @@ Run `python3 tools/test_mp3_metadata.py` and `python3 tools/test_playback_start_
 
 Origami’s original source is offered under [MIT](LICENSE), as selected for this migration. Existing third-party licenses continue to govern their respective components. Origami confirmed ownership of its artwork and generated font for this migration. Upstream components retain their own licenses; see [distribution requirements](docs/distribution.md).
 
-Public updates in v1.0.5 require no OTA enrollment key. HTTPS, signed manifests, image hashes, hardware/layout checks and update confirmation remain mandatory. Private and Staging retain developer authorization. This change only takes effect after installation; legacy recovery is qualified separately for each supported updater and partition layout.
+Public updates since v1.0.5 require no OTA enrollment key. HTTPS, signed manifests, image hashes, hardware/layout checks and update confirmation remain mandatory. Private and Staging retain developer authorization. This change only takes effect after installation; legacy recovery is qualified separately for each supported updater and partition layout.

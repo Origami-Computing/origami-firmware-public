@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "core/health_policy.h"
 #include "services/doodle_controls.h"
 #include "games/imu_roll_control.h"
 #include "hal/hal_display.h"
@@ -75,6 +76,10 @@ static constexpr float kFallMargin = 34.0f;
 static constexpr float kMinPlatformGap = 30.0f;
 static constexpr float kMaxPlatformGap = 50.0f;
 static constexpr uint32_t kMaxElapsedMs = 48u;
+// Steering is tilt-only, so the system idle return/battery sleep cannot see play.
+// A round stays busy for this long after the last tilt or button, like Golf,
+// Tennis and Bowling; a paused, finished or set-down game then idles normally.
+static constexpr uint32_t kActivityWindowMs = 60000u;
 static constexpr int kPlayfieldTop = 63; // Includes the score strip's bottom stroke.
 static constexpr uint16_t kHeader = doodle_draw::rgb(233,222,192);
 static constexpr uint8_t kPelletCount = 8;
@@ -115,6 +120,8 @@ struct State {
   uint32_t shotsFired = 0;
   uint32_t lastShotMs = 0;
   uint32_t pausedAt = 0;
+  uint32_t activeAt = 0;  // Last tilt change or button while playing.
+  games::imu_roll::ActivityDetector motion;
   games::imu_roll::Control control;
   Platform platforms[kPlatformCount];
 };
@@ -122,7 +129,18 @@ struct State {
 static State s;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 static bool s_testClipping = false;
+// Developer-only roll offset added to the measured tilt, so a stationary
+// fixture can exercise the real steering and activity path.
+static float s_testRollOffsetDeg = 0.0f;
 #endif
+
+static float controlNeutralDeg() {
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  return s.neutralRollDeg - s_testRollOffsetDeg;
+#else
+  return s.neutralRollDeg;
+#endif
+}
 
 static uint32_t randRange(uint32_t minValue, uint32_t maxValue) {
   if (maxValue <= minValue) return minValue;
@@ -198,7 +216,7 @@ static bool readControl(games::imu_roll::Control* outControl) {
   s.imuOk = hal::imu::readAxes(accel, gyro);
   if (!s.imuOk) return false;
   if (outControl) {
-    *outControl = games::imu_roll::mapAccelToControl(accel, s.neutralRollDeg,
+    *outControl = games::imu_roll::mapAccelToControl(accel, controlNeutralDeg(),
                                                      services::doodle_controls::tuning());
   }
   return true;
@@ -222,8 +240,9 @@ static bool captureNeutral() {
   }
 
   games::imu_roll::captureNeutralDeg(accel, &s.neutralRollDeg, services::doodle_controls::tuning());
-  s.control = games::imu_roll::mapAccelToControl(accel, s.neutralRollDeg,
+  s.control = games::imu_roll::mapAccelToControl(accel, controlNeutralDeg(),
                                                  services::doodle_controls::tuning());
+  s.motion.reset(s.control.relativeRollDeg);
   s.imuOk = true;
   s.lastMs = millis();
   Serial.printf("[doodle] neutral=%.1f deg\n", s.neutralRollDeg);
@@ -412,6 +431,9 @@ static void prepareWorkflow() {
 }
 
 static void exitApp() {
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  s_testRollOffsetDeg = 0.0f;
+#endif
   Serial.println("[doodle] exit");
 }
 
@@ -433,6 +455,7 @@ void tick() {
   }
 
   ++s.frames;
+  if (s.motion.update(control.relativeRollDeg)) s.activeAt = now;
   const float dt = (float)elapsed / 1000.0f;
   s.control = control;
   s.previousPlayerY = s.playerY;
@@ -460,6 +483,7 @@ void tick() {
 
 void onInput(hal::input::InputEvent ev) {
   using ET = hal::input::EventType;
+  s.activeAt = millis();
 
   if (ev.type == ET::ButtonC_Tap) {
     if (s.mode == Mode::Running) {
@@ -512,6 +536,13 @@ void onDraw(TFT_eSprite& canvas) {
   hal::display::markAllDirty();
 }
 
+// Pure query: busy only while a round runs and the player tilted or pressed a
+// button within the window. Ticks stop while covered, so covering idles too.
+core::health::RuntimePolicy runtimePolicy() {
+  return core::health::whileBusy(s.mode == Mode::Running &&
+                                 (int32_t)(millis() - s.activeAt) < (int32_t)kActivityWindowMs);
+}
+
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 void testClipping() { s_testClipping=true;hal::display::markAllDirty(); }
 void printStatus(Print& out) {
@@ -519,12 +550,16 @@ void printStatus(Print& out) {
       s.mode == Mode::Running ? "running" : s.mode == Mode::Paused ? "paused" : s.mode == Mode::GameOver ? "game-over" : "no-imu";
   unsigned active = 0;
   for (const auto& p : s.pellets) if (p.active) ++active;
-  out.printf("[doodle] status mode=%s imu=%d score=%lu best=%lu x=%.2f y=%.2f vx=%.2f vy=%.2f landings=%lu frames=%lu draw_us=%lu shots=%lu pellets=%u screen_y=%.2f camera=%.2f camera_peak=%.2f\n",
+  out.printf("[doodle] status mode=%s imu=%d score=%lu best=%lu x=%.2f y=%.2f vx=%.2f vy=%.2f landings=%lu frames=%lu draw_us=%lu shots=%lu pellets=%u screen_y=%.2f camera=%.2f camera_peak=%.2f roll=%.2f active_age_ms=%lu busy=%d\n",
       mode,s.imuOk,(unsigned long)s.score,(unsigned long)s.highScore,
       s.playerX,s.playerY,s.vx,s.vy,(unsigned long)s.landings,
       (unsigned long)s.frames,(unsigned long)s.drawUs,(unsigned long)s.shotsFired,active,
-      screenYForWorld(s.playerY),s.cameraY,s.peakCameraY);
+      screenYForWorld(s.playerY),s.cameraY,s.peakCameraY,s.control.relativeRollDeg,
+      (unsigned long)(millis()-s.activeAt),runtimePolicy().reportActivity ? 1 : 0);
 }
+
+// Developer-only: offset measured roll for steering and activity until exit.
+void testTilt(float offsetDeg) { s_testRollOffsetDeg = offsetDeg; }
 
 // Developer-only fault injection exercises the normal tick -> endGame path.
 // Does not write tuning or calibration preferences or bypass the IMU read.
@@ -560,7 +595,7 @@ static const ::scene::Screen kScreenDoodle = {
 
 static const ::scene::Screen* const kScreens[] = {&kScreenDoodle};
 App app = SCENE_APP_CATALOG_LIFECYCLE_HOOKS("Doodle Jump", "doodle-jump", &kScreenDoodle, prepareWorkflow, prepareWorkflow, exitApp,
-                            "src/apps/doodle_jump_app.cpp", kScreens, nullptr, nullptr);
+                            "src/apps/doodle_jump_app.cpp", kScreens, nullptr, runtimePolicy);
 
 }  // namespace doodle_jump
 }  // namespace apps

@@ -7,6 +7,8 @@
  *   - held still by hand (spread < 8 dps) and close to the current estimate (< 4 dps): nudged gently (tremor averages
  *     out, a slow deliberate turn is too far off to count);
  *   - anything else (turning, swinging): ignored.
+ * Samples arrive with the stored sensor calibration applied (services/imu_sensor_calibration.h), so on a
+ * calibrated device this tracks the residual (temperature drift) around zero.
  * Wii Sports Resort does the same idea by asking you to put the remote down to calibrate MotionPlus.
  * Pure C++ (no Arduino); host test test/test_bias_estimator.
  */

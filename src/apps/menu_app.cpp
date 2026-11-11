@@ -12,7 +12,9 @@
  */
 
 #include "apps/menu_app.h"
+#include "widgets/app.h"
 #include "apps/tutorial_app.h"
+#include "ui/onboarding_menu_scene.h"
 
 #include <Arduino.h>
 
@@ -56,9 +58,7 @@ enum Page {
   PAGE_MAIN,
   PAGE_AUDIO,
   PAGE_TIME,
-  PAGE_CUSTOM_APPS,
   PAGE_GAMES,
-  PAGE_PRODUCTIVITY,
   PAGE_COUNT,
 };
 
@@ -84,7 +84,7 @@ static const MenuEntry kMainEntries[] = {
     {"Clock", nullptr, PAGE_TIME, icons::kClock},
     {"Settings", &apps::settings_menu::app, PAGE_COUNT, icons::kSettings},
     {"Games", nullptr, PAGE_GAMES, icons::kGames},
-    {"Custom Apps", nullptr, PAGE_CUSTOM_APPS, icons::kTools},
+    {"Custom Apps", &widgets::app, PAGE_COUNT, icons::kTools},
 };
 
 static const MenuEntry kAudioEntries[] = {
@@ -96,10 +96,6 @@ static const MenuEntry kTimeEntries[] = {
     {"Alarms", &apps::alarm_clock::app, PAGE_COUNT, icons::kAlarm},
     {"Timer", &apps::timer::app, PAGE_COUNT, icons::kTimer},
     {"Pomodoro", &apps::pomodoro::app, PAGE_COUNT, icons::kFocus},
-};
-
-static const MenuEntry kCustomAppEntries[] = {
-    {"Productivity", nullptr, PAGE_PRODUCTIVITY, icons::kTools},
 };
 
 static const MenuEntry kGameEntries[] = {
@@ -115,17 +111,11 @@ static const MenuEntry kGameEntries[] = {
     {"T-Rex Game", &apps::trex::app, PAGE_COUNT, icons::kDinosaur},
 };
 
-static const MenuEntry kProductivityEntries[] = {
-    {"Steps", &apps::steps::app, PAGE_COUNT, icons::kSteps},
-};
-
 static const PageDef kPages[PAGE_COUNT] = {
     {nullptr, kMainEntries, (int)(sizeof(kMainEntries) / sizeof(kMainEntries[0])), PAGE_COUNT},
     {"Audio", kAudioEntries, 2, PAGE_MAIN},
     {"Clock", kTimeEntries, 3, PAGE_MAIN},
-    {"Custom Apps", kCustomAppEntries, 1, PAGE_MAIN},
     {"Games", kGameEntries, (int)(sizeof(kGameEntries) / sizeof(kGameEntries[0])), PAGE_MAIN},
-    {"Productivity", kProductivityEntries, (int)(sizeof(kProductivityEntries) / sizeof(kProductivityEntries[0])), PAGE_CUSTOM_APPS},
 };
 
 static Page s_page = PAGE_MAIN;
@@ -199,7 +189,7 @@ static ui::ListItem menuItemFn(int idx, void*) {
 
 static void applyMenuListLayout(bool nested) {
   if (apps::tutorial::navigationLessonActive()) {
-    s_list.rowH=26; s_list.rowPitch=30; s_list.topPad=0; s_list.leftX=14;
+    s_list.rowH=36; s_list.rowPitch=40; s_list.topPad=0; s_list.leftX=24;
     s_list.scrollbarW=3; s_list.scrollbarPad=5; s_list.scrollbarRight=7;
     return;
   }
@@ -252,7 +242,7 @@ void exitApp() {
 }
 
 bool onChord() {
-  if(goBackOneLevel())return true;
+  if(goBackOneLevel()){apps::tutorial::noteNavigationBack();return true;}
   return apps::tutorial::returnFromNavigation();
 }
 
@@ -321,9 +311,9 @@ static void buildMenuScene(ui::scene::Scene& scene, int16_t width, int16_t heigh
 
 void drawOnboardingPreview(TFT_eSprite& canvas){
  canvas.fillSprite(kUiBg);ui::ListView list;list.totalItems=sizeof(kMainEntries)/sizeof(kMainEntries[0]);list.selected=0;
- list.rowH=26;list.rowPitch=30;list.topPad=0;list.leftX=14;list.scrollbarW=3;list.scrollbarPad=5;list.scrollbarRight=7;
+ list.rowH=36;list.rowPitch=40;list.topPad=0;list.leftX=24;list.scrollbarW=3;list.scrollbarPad=5;list.scrollbarRight=7;
  const auto item=[](int index,void*){ui::ListItem value;value.label=kMainEntries[index].label;value.icon=kMainEntries[index].icon;value.fg=kUiFg;return value;};
- auto& sc=ui::scene::scratchScene();sc.clear();list.buildScene(sc,0,menu_layout::kMenuListAreaY,280,158,item,nullptr,kUiSelBg,kUiSelFg,kUiBg,kUiScrollTrack,kUiScrollThumb);sc.render(canvas);sc.clear();
+ auto& sc=ui::scene::scratchScene();sc.clear();list.buildScene(sc,0,menu_layout::kMenuListAreaY,280,158,item,nullptr,kUiSelBg,kUiSelFg,kUiBg,kUiScrollTrack,kUiScrollThumb);ui::onboarding_menu::render(canvas,sc);sc.clear();
 }
 void onDraw(TFT_eSprite& canvas) {
   if (!s_needRedraw) {
@@ -348,7 +338,7 @@ void onDraw(TFT_eSprite& canvas) {
   ui::scene::Scene& scene = ui::scene::scratchScene();
   ui::scene::setCurrentScene(&scene);
   buildMenuScene(scene, canvas.width(), canvas.height());
-  scene.render(canvas);
+  if(apps::tutorial::navigationLessonActive())ui::onboarding_menu::render(canvas,scene);else scene.render(canvas);
   hal::display::markAllDirty();
 }
 

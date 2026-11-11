@@ -1,3 +1,4 @@
+#include "hal/app_storage.h"
 #include "services/device_fs.h"
 
 #include <Arduino.h>
@@ -127,7 +128,7 @@ bool hasHiddenSegment(const String& path) {
 // Folders we must never touch: upload_queue is owned by the timeline upload
 // worker, and dot-prefixed folders are host OS metadata, not user files.
 bool isExcluded(const String& path) {
-  return path == "/telemetry_queue" || path.startsWith("/telemetry_queue/") ||
+  return (path.length()>1 && hal::app_storage::protectedSdPath(path.c_str())) || path == "/telemetry_queue" || path.startsWith("/telemetry_queue/") ||
          path == "/upload_queue" || path.startsWith("/upload_queue/") ||
          path == "/System Volume Information" || path.startsWith("/System Volume Information/") ||
          hasHiddenSegment(path);

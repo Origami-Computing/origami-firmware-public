@@ -4,10 +4,18 @@ namespace apps {
 namespace photos {
 namespace policy {
 
-enum class Action { Delete, Escape };
+enum class Action { Delete, Escape, Upload };
+constexpr int actionRow(Action action, bool video) {
+    return video ? (action == Action::Upload ? 0 : action == Action::Delete ? 1 : 2)
+                 : (action == Action::Delete ? 0 : 1);
+}
+constexpr Action actionAt(int row, bool video) {
+    return video ? (row <= 0 ? Action::Upload : row == 1 ? Action::Delete : Action::Escape)
+                 : (row <= 0 ? Action::Delete : Action::Escape);
+}
 
-constexpr Action moveAction(Action current, int delta) {
-    return delta < 0 ? Action::Delete : delta > 0 ? Action::Escape : current;
+constexpr Action moveAction(Action current, int delta, bool video = false) {
+    return actionAt(actionRow(current, video) + (delta < 0 ? -1 : delta > 0 ? 1 : 0), video);
 }
 
 constexpr int indexAfterRemoval(int index, int remaining) {

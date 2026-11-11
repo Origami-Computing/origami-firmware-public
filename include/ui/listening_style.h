@@ -6,8 +6,8 @@ class TFT_eSprite;
 
 namespace ui { namespace listening_style {
 int selected();
-// Persist only when the user explicitly selects a preset in Settings.
-bool select(int index, bool persist = true);
+// Development-only transient preview; normal startup always uses style 0.
+bool select(int index);
 // Build reusable geometry before a voice gesture, outside the capture path.
 bool prepare(void (*serviceMic)() = nullptr);
 void releaseCache();

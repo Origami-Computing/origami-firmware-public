@@ -4,6 +4,8 @@
 namespace control {
 namespace {
 const Descriptor kOperations[] = {
+    {Operation::HapticPlay,"haptics.play","Play a bounded foreground haptic cue",true,"cue","enum",0,0,"breathe_in,breathe_out,complete","kami.haptics.play"},
+    {Operation::HapticStop,"haptics.stop","Release only the foreground widget cue",true,nullptr,nullptr,0,0,nullptr,"kami.haptics.stop"},
     {Operation::DeviceState, "device.state", "Timer, SFX volume and current app", false, nullptr,
      nullptr, 0, 0, nullptr, "kami.device.snapshot"},
     {Operation::TimerGet, "timer.get", "Read the single device countdown", false, nullptr, nullptr,

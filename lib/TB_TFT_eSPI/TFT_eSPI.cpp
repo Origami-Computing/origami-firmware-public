@@ -1,3 +1,9 @@
+// Pixel payloads only: command/address writes must never be transformed.
+#ifdef ORIGAMI_DISPLAY_DIMMING
+#define TFT_OUTPUT_COLOR(c) outputColor(c)
+#else
+#define TFT_OUTPUT_COLOR(c) (c)
+#endif
 #if defined(ORIGAMI_SOFT_BLOCK_DISPLAY) || defined(ORIGAMI_INSTRUMENT_FONT)
 #include "Fonts/FlashFont.h"
 #ifdef ORIGAMI_INSTRUMENT_FONT
@@ -1471,6 +1477,15 @@ void TFT_eSPI::pushRect(int32_t x, int32_t y, int32_t w, int32_t h, uint16_t *da
   pushImage(x, y, w, h, data);
   _swapBytes = swap;
 }
+
+#ifdef ORIGAMI_DISPLAY_DIMMING
+void TFT_eSPI::pushImageOutput(int32_t x,int32_t y,int32_t w,int32_t h,uint16_t* data) {
+  const PixelScale565* previous = _outputScale;
+  _outputScale = nullptr;
+  pushImage(x,y,w,h,data);
+  _outputScale = previous;
+}
+#endif
 
 
 /***************************************************************************************
@@ -3263,11 +3278,11 @@ void TFT_eSPI::drawChar(int32_t x, int32_t y, uint16_t c, uint32_t color, uint32
 
     for (int8_t j = 0; j < 8; j++) {
       for (int8_t k = 0; k < 5; k++ ) {
-        if (column[k] & mask) {tft_Write_16(color);}
-        else {tft_Write_16(bg);}
+        if (column[k] & mask) {tft_Write_16(TFT_OUTPUT_COLOR(color));}
+        else {tft_Write_16(TFT_OUTPUT_COLOR(bg));}
       }
       mask <<= 1;
-      tft_Write_16(bg);
+      tft_Write_16(TFT_OUTPUT_COLOR(bg));
     }
 
     end_tft_write();
@@ -3626,6 +3641,10 @@ void TFT_eSPI::readAddrWindow(int32_t xs, int32_t ys, int32_t w, int32_t h)
 ***************************************************************************************/
 void TFT_eSPI::drawPixel(int32_t x, int32_t y, uint32_t color)
 {
+#ifdef ORIGAMI_DISPLAY_DIMMING
+  ++_outputStats.single;
+#endif
+
   if (_vpOoB) return;
 
   x+= _xDatum;
@@ -3673,9 +3692,9 @@ void TFT_eSPI::drawPixel(int32_t x, int32_t y, uint32_t color)
   // write to RAM
   DC_C; tft_Write_8(TFT_RAMWR);
   #if defined(TFT_PARALLEL_8_BIT) || defined(TFT_PARALLEL_16_BIT) || !defined(ESP32)
-    DC_D; tft_Write_16(color);
+    DC_D; tft_Write_16(TFT_OUTPUT_COLOR(color));
   #else
-    DC_D; tft_Write_16N(color);
+    DC_D; tft_Write_16N(TFT_OUTPUT_COLOR(color));
   #endif
 
 // Temporary solution is to include the RP2040 optimised code here
@@ -3819,9 +3838,9 @@ void TFT_eSPI::drawPixel(int32_t x, int32_t y, uint32_t color)
   DC_C; tft_Write_8(TFT_RAMWR);
 
   #if defined(TFT_PARALLEL_8_BIT) || defined(TFT_PARALLEL_16_BIT) || !defined(ESP32)
-    DC_D; tft_Write_16(color);
+    DC_D; tft_Write_16(TFT_OUTPUT_COLOR(color));
   #else
-    DC_D; tft_Write_16N(color);
+    DC_D; tft_Write_16N(TFT_OUTPUT_COLOR(color));
   #endif
 #endif
 
@@ -3837,7 +3856,7 @@ void TFT_eSPI::pushColor(uint16_t color)
   begin_tft_write();
 
   SPI_BUSY_CHECK;
-  tft_Write_16N(color);
+  tft_Write_16N(TFT_OUTPUT_COLOR(color));
 
   end_tft_write();
 }
@@ -5381,13 +5400,13 @@ int16_t TFT_eSPI::drawChar(uint16_t uniCode, int32_t x, int32_t y, uint8_t font)
           line = pgm_read_byte((uint8_t *) (flash_address + w * i + k) );
           mask = 0x80;
           while (mask && pX) {
-            if (line & mask) {tft_Write_16(textcolor);}
-            else {tft_Write_16(textbgcolor);}
+            if (line & mask) {tft_Write_16(TFT_OUTPUT_COLOR(textcolor));}
+            else {tft_Write_16(TFT_OUTPUT_COLOR(textbgcolor));}
             pX--;
             mask = mask >> 1;
           }
         }
-        if (pX) {tft_Write_16(textbgcolor);}
+        if (pX) {tft_Write_16(TFT_OUTPUT_COLOR(textbgcolor));}
       }
 
       end_tft_write();
@@ -5436,9 +5455,9 @@ int16_t TFT_eSPI::drawChar(uint16_t uniCode, int32_t x, int32_t y, uint8_t font)
 
             if (ts) {
               tnp = np;
-              while (tnp--) {tft_Write_16(textcolor);}
+              while (tnp--) {tft_Write_16(TFT_OUTPUT_COLOR(textcolor));}
             }
-            else {tft_Write_16(textcolor);}
+            else {tft_Write_16(TFT_OUTPUT_COLOR(textcolor));}
             px += textsize;
 
             if (px >= (xd + width * textsize)) {

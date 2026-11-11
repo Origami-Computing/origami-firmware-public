@@ -3,8 +3,13 @@
 #include <SPI.h>
 #include <driver/gpio.h>
 #include <esp_sleep.h>
+#include <esp_system.h>
+
+#include <sys/time.h>
+#include <esp_attr.h>
 
 #include "Pins.h"
+#include "core/clock_retention.h"
 #include "hal/hal_bus.h"
 #include "hal/hal_display.h"
 #include "hal/hal_io.h"
@@ -13,10 +18,53 @@
 namespace core {
 namespace board {
 
-// TCA6424A has a shared interrupt and no per-input mask. Reject non-C wakes
+// Survives deep sleep; garbage after power-on, so the pair must agree.
+struct ScheduledWake { int64_t epoch; int64_t check; };
+static RTC_NOINIT_ATTR ScheduledWake s_scheduledWake;
+
+static int64_t scheduledWakeEpoch() {
+  return s_scheduledWake.check == ~s_scheduledWake.epoch ? s_scheduledWake.epoch : 0;
+}
+
+void armDeepSleepWake(int64_t targetEpoch) {
+  s_scheduledWake = ScheduledWake{targetEpoch, ~targetEpoch};
+  if (targetEpoch <= 0) return;
+  const int64_t remaining = targetEpoch - (int64_t)::time(nullptr);
+  const int64_t stage = core::time::scheduledWakeStageSeconds(remaining);
+  // Already inside the lead window: wake almost at once and boot.
+  esp_sleep_enable_timer_wakeup((uint64_t)(stage > 0 ? stage : 1) * 1000000ULL);
+}
+
+struct SleepInputs { uint8_t port0, port2, check; };
+static RTC_NOINIT_ATTR SleepInputs s_sleepInputs;
+
+void rememberSleepInputs(uint8_t port0, uint8_t port2) {
+  s_sleepInputs = SleepInputs{port0, port2, (uint8_t)~(port0 ^ port2)};
+}
+
+static void resumeDeepSleep() {
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)IO_EXPANDER_INT_B_PIN,0);
+  armDeepSleepWake(scheduledWakeEpoch());
+  Serial.flush();
+  esp_deep_sleep_start();
+}
+
+// TCA6424A has a shared interrupt and no per-input mask. Reject non-button wakes
 // before its begin() resets output registers or any accessory rail is enabled.
 static void filterDeepSleepWake() {
-  if(esp_sleep_get_wakeup_cause()!=ESP_SLEEP_WAKEUP_EXT0) return;
+  const auto cause=esp_sleep_get_wakeup_cause();
+  if(cause==ESP_SLEEP_WAKEUP_TIMER) {
+    // An early stage of a scheduled wake: go back down before any rail or the
+    // screen comes up. Only the final stage continues into a normal boot.
+    const int64_t target=scheduledWakeEpoch();
+    if(target>0 && core::time::scheduledWakeStageSeconds(target-(int64_t)::time(nullptr))>0) {
+      Serial.println("[power-control] scheduled wake stage; sleeping on");
+      resumeDeepSleep();
+    }
+    return;
+  }
+  if(cause!=ESP_SLEEP_WAKEUP_EXT0) return;
   Wire.begin(SDA_PIN,SCL_PIN);
   Wire.setTimeOut(50);
   auto readPort=[](uint8_t port,uint8_t& value) {
@@ -28,18 +76,24 @@ static void filterDeepSleepWake() {
   const bool firstOk=readPort(1,first);
   delay(15);
   const bool secondOk=readPort(1,second);
-  const uint8_t cMask=(1u<<(IOX_BUTTON_C&7));
-  if(firstOk && secondOk && !(first&cMask) && !(second&cMask)) {
-    Serial.println("[power-control] C accepted after deep sleep");
+  const uint8_t buttons=(1u<<(IOX_BUTTON_A&7))|(1u<<(IOX_BUTTON_B&7))|(1u<<(IOX_BUTTON_C&7));
+  if(firstOk && secondOk && (~first&~second&buttons)) {
+    Serial.println("[power-control] button accepted after deep sleep");
     return;
   }
-  uint8_t unused;
-  readPort(0,unused); readPort(1,unused); readPort(2,unused);
-  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
-  esp_sleep_enable_ext0_wakeup((gpio_num_t)IO_EXPANDER_INT_B_PIN,0);
-  Serial.println("[power-control] ignored non-C wake; accessories remain off");
-  Serial.flush();
-  esp_deep_sleep_start();
+  uint8_t port0=0,port2=0,unused;
+  const bool port0Ok=readPort(0,port0),port2Ok=readPort(2,port2);
+  readPort(1,unused);
+  // Nothing but the buttons changed: a quick tap, already released by now.
+  const bool remembered=s_sleepInputs.check==(uint8_t)~(s_sleepInputs.port0^s_sleepInputs.port2);
+  if(port0Ok && port2Ok && remembered &&
+     port0==s_sleepInputs.port0 && port2==s_sleepInputs.port2) {
+    Serial.println("[power-control] button tap accepted after deep sleep");
+    return;
+  }
+  if(port0Ok && port2Ok) rememberSleepInputs(port0,port2);
+  Serial.println("[power-control] ignored non-button wake; accessories remain off");
+  resumeDeepSleep();  // Keeps any scheduled wake; a charger edge must not lose it.
 }
 
 bool bringupMenuHardware(bool shippingWakeAuthorized) {
@@ -73,6 +127,7 @@ bool bringupMenuHardware(bool shippingWakeAuthorized) {
     return false;
   }
   Serial.println("IO expander OK");
+  Serial.printf("[boot-phase] io done at %lu ms\n",(unsigned long)millis());
 
   hal::io::setPmicHighPower();  // rev4: no-op (no PMIC strap on TCA6424A)
   hal::io::configureDefaultPins();
@@ -115,7 +170,11 @@ bool bringupMenuHardware(bool shippingWakeAuthorized) {
   // coldResetAndInit() creates the canvas, so hal::display::tft() now redirects
   // to that off-screen buffer. Address the controller directly here; otherwise
   // its white init fill remains visible until the UI task eventually flushes.
-  hal::display::directTft().fillScreen(TFT_BLACK);
+  // A deep-sleep wake skips the boot animation, which is what normally covers
+  // this fill, so start on Home's white or unpainted rows stay as black bars.
+  const bool deepSleepWake = esp_reset_reason() == ESP_RST_DEEPSLEEP;
+  hal::display::directTft().fillScreen(deepSleepWake ? TFT_WHITE : TFT_BLACK);
+  if (deepSleepWake) hal::display::tft().fillScreen(TFT_WHITE);
 
   // Keep the backlight off until main_menu has rendered and flushed the first
   // real boot-animation frame. TE is generated by the panel controller and can
@@ -133,6 +192,7 @@ bool bringupMenuHardware(bool shippingWakeAuthorized) {
   // bounded mount sequence. Attempts are intentionally not gated by card
   // detect: prior failures showed that a timing-sensitive false "absent"
   // decision could skip a healthy card for the whole boot.
+  Serial.printf("[boot-phase] display done at %lu ms\n",(unsigned long)millis());
   constexpr uint8_t kSdDetectSamples = 8;
   uint8_t detectLow = 0;
   uint8_t detectHigh = 0;
@@ -187,6 +247,7 @@ bool bringupMenuHardware(bool shippingWakeAuthorized) {
   // noisy VFS errors, those calls can issue more transactions on the display's
   // SPI bus while it is recovering from a failed card probe.
   if (sdMounted) {
+    Serial.printf("[boot-phase] sd mounted at %lu ms\n",(unsigned long)millis());
     (void)hal::sd::ensureDir("/music");
     (void)hal::sd::ensureDir("/photos");
     (void)hal::sd::ensureDir("/recordings");

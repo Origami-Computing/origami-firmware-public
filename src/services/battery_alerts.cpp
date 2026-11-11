@@ -8,6 +8,7 @@
 namespace services { namespace battery_alerts {
 namespace {
 core::BatteryAlertPolicy s_batteryPolicy;
+uint32_t s_lastPlugAt=0;bool s_plugPlayed=false;
 uint32_t s_lowCount=0,s_plugCount=0,s_skippedCount=0,s_renderedFrames=0;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 bool s_preview=false;
@@ -26,6 +27,8 @@ Diagnostics diagnostics() {
   return {s_lowCount,s_plugCount,s_skippedCount,s_renderedFrames,s_preview,sfx::volume()};
 }
 #endif
+static void playCue(core::BatteryCue cue, uint8_t percent, uint32_t now);
+void acknowledgeExternalPower(){playCue(core::BatteryCue::PluggedIn,hal::power::read().battery_percent,millis());}
 void service(uint32_t millis_now) {
   // Visual fixtures do not drive sound unless the explicit battery-demo mode is used.
   auto power=hal::power::read();
@@ -34,7 +37,11 @@ void service(uint32_t millis_now) {
   if(s_preview) { power.battery_percent=s_percent; power.charger=s_power==1 ? hal::power::ChargerState::Charging : s_power==2 ? hal::power::ChargerState::Done : hal::power::ChargerState::Off; }
 #endif
   const auto cue=s_batteryPolicy.update(power.battery_percent,hal::power::externalPowerPresent(power),millis_now);
+  playCue(cue,power.battery_percent,millis_now);
+}
+static void playCue(core::BatteryCue cue, uint8_t percent, uint32_t now) {
   if(cue==core::BatteryCue::None) return;
+  if(cue!=core::BatteryCue::Low && s_plugPlayed && uint32_t(now-s_lastPlugAt)<3000) return;
   bool busy=false;
   if(auto* group=sfx::activeAudioGroup()) for(unsigned i=0;i<group->count;++i)
     if(group->nodes[i] && (group->nodes[i]->playing || group->nodes[i]->repeating)) busy=true;
@@ -49,7 +56,7 @@ void service(uint32_t millis_now) {
   sfx::notePlaybackActivity(millis()+8000u);
   s_renderedFrames+=voice.pos;
   const bool complete=voice.pos==int(def.duration*22050.f);
-  if(complete) { if(cue==core::BatteryCue::Low) ++s_lowCount; else ++s_plugCount; }
-  Serial.printf("[battery-cue] kind=%s percent=%u complete=%d frames=%d\n",cue==core::BatteryCue::Low ? "low" : "plug",power.battery_percent,complete,voice.pos);
+  if(complete) { if(cue==core::BatteryCue::Low) ++s_lowCount; else {++s_plugCount;s_lastPlugAt=millis();s_plugPlayed=true;} }
+  Serial.printf("[battery-cue] kind=%s percent=%u complete=%d frames=%d\n",cue==core::BatteryCue::Low ? "low" : "plug",percent,complete,voice.pos);
 }
 } }

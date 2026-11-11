@@ -15,11 +15,14 @@
 #include "hal/hal_io.h"
 #include "hal/display_rotate.h"
 #include "hal/display_dirty.h"
+#include "hal/display_brightness_curve.h"
 
 namespace hal {
 namespace display {
 
 static TFT_eSPI s_tft;
+static PixelScale565 s_brightness;
+static unsigned s_brightnessPercent = 100;
 static bool s_frozen = false;
 static bool s_pinsReady = false;
 
@@ -109,6 +112,7 @@ bool init() {
 
   ensureControlPins();
   s_tft.init();
+  s_tft.setOutputScale(&s_brightness);
   s_tft.setRotation(0);
   // The backlight is still off, but initialize panel RAM to black so an early
   // light-up can never expose a white controller-default frame.
@@ -180,7 +184,34 @@ TFT_eSPI& tft() {
   return s_tft;
 }
 
-uint16_t* prepareNativeOutput(uint16_t* pixels) { return pixels; }
+void setBrightness(unsigned percent) {
+  hal::bus::lockSpi();
+  s_tft.dmaWait();
+  s_brightnessPercent = percent > 100 ? 100 : percent;
+  s_brightness.set(calibratedBrightnessDrive(s_brightnessPercent));
+  s_tft.setOutputScale(&s_brightness);
+  hal::bus::unlockSpi();
+  markAllDirty();
+}
+unsigned brightness() { return s_brightnessPercent; }
+uint16_t brightnessColor(uint16_t rgb) { return s_brightness.map(rgb); }
+
+uint16_t* prepareNativeOutput(uint16_t* pixels) {
+  if (!s_brightness.active()) return pixels;
+  if (!s_rotBuf) return nullptr;
+  // UI-task preparation cannot interleave with canvas flush or brightness
+  // updates. Reuse portrait scratch without holding SPI during CPU conversion;
+  // preserve the decoded camera/QR source and its overlays.
+  for (unsigned y=0; y<280; ++y) for (unsigned x=0; x<240; ++x) {
+    const unsigned i=y*240+x;
+    const uint16_t wire=pixels[i];
+    const uint16_t rgb=(wire>>8)|(wire<<8);
+    const uint16_t output=s_brightness.mapDithered(rgb,x,y);
+    s_rotBuf[i]=(output>>8)|(output<<8);
+  }
+  return s_rotBuf;
+}
+
 TFT_eSPI& directTft() {
   return s_tft;
 }
@@ -270,7 +301,12 @@ void flush() {
   uint32_t pixelCount=0;
   while (s_dirty.next(cursor, windows[count])) {
     const auto& r=windows[count++];
-    rotateRect(src,s_rotBuf+pixelCount,kCanvasW,r.x,r.x+r.w,r.y,r.y+r.h);
+    // Finish conversion before TE: the transfer must keep the full-brightness
+    // SPI cadence so the panel cannot catch a slower dimmed pixel stream.
+    if (s_brightness.active()) {
+      rotateRect(src,s_rotBuf+pixelCount,kCanvasW,r.x,r.x+r.w,r.y,r.y+r.h,
+                 [](uint16_t pixel){return s_brightness.map(pixel);});
+    } else rotateRect(src,s_rotBuf+pixelCount,kCanvasW,r.x,r.x+r.w,r.y,r.y+r.h);
     pixelCount+=r.w*r.h;
     if(r.y<cyMin)cyMin=r.y;
     if(r.y+r.h>cyMax)cyMax=r.y+r.h;
@@ -294,6 +330,7 @@ void flush() {
     return;
   }
   if (!s_flushService) waitForVSync();
+  const uint32_t transferStartedUs = micros();
   // INVON is an SPI command too. It must be in the same critical section as
   // the frame push; issuing it before lockSpi can land in the middle of an SD
   // sector read on the shared bus and poison an open MP3 file.
@@ -303,11 +340,13 @@ void flush() {
   uint32_t offset=0;
   for(int i=0;i<count;++i) {
     const auto& r=windows[i];
-    s_tft.pushImage(r.y,kCanvasW-r.x-r.w,r.h,r.w,s_rotBuf+offset);
+    s_tft.pushImageOutput(r.y,kCanvasW-r.x-r.w,r.h,r.w,s_rotBuf+offset);
     offset+=r.w*r.h;
   }
   s_tft.endWrite();
   s_tft.setSwapBytes(false);
+  s_flushStats.lastTransferUs = micros() - transferStartedUs;
+  s_flushStats.transferUs += s_flushStats.lastTransferUs;
   hal::bus::unlockSpi();
   const uint32_t completedMs=millis();
 

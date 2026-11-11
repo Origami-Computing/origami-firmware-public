@@ -5,6 +5,7 @@
 
 #include "core/telemetry.h"
 #include "apps/wifi_setup_app.h"
+#include "ui/onboarding_scenes.h"
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -25,6 +26,7 @@
 #include "hal/hal_camera.h"
 #include "services/wifi_qr_session.h"
 #include "services/net_poll.h"
+#include "services/firmware_update.h"
 #include "hal/hal_display.h"
 #include "hal/hal_input.h"
 #include "hal/hal_sd.h"
@@ -38,6 +40,10 @@
 #include "ui/onboarding_scanner_view.h"
 #include "ui/qr_scanner_view.h"
 #include "ui/qr_preview.h"
+#include "ui/onboarding_connect_view.h"
+#include "ui/onboarding_flow_view.h"
+#include "services/ggwave_receiver.h"
+#include "core/wifi_audio_packet.h"
 
 #include <stdio.h>
 
@@ -47,6 +53,8 @@ namespace wifi_setup {
 enum class State {
   PREPARING,
   SCANNING,
+  LISTENING,
+  AUDIO_JOIN_PREP,
   RELEASING,
   CONNECTING,
   SUCCESS,
@@ -58,6 +66,14 @@ static bool      s_chromeDrawn  = false;
 
 static bool     s_displayBypass = false;
 static bool s_tutorialMode=false;
+static bool s_registrationQueued=false;
+static bool s_audioMode=false;
+static unsigned s_errorSelection=0;
+static bool s_restartPending=false,s_restartAudio=false;
+static char s_errorTitle[64]={},s_errorDetail[96]={};
+static core::wifi_audio::Assembly s_audioAssembly;
+static uint32_t s_audioPaint=0,s_audioStart=0;
+static char s_audioError[64]={};
 static onboarding::WifiResult s_tutorialResult=onboarding::WifiResult::None;
 static uint32_t s_scanStartMs=0,s_lastFrameMs=0,s_resultMs=0;
 static State    s_state         = State::PREPARING;
@@ -119,6 +135,7 @@ static void buildScanningScene(ui::scene::Scene& scene, int16_t width, int16_t h
 }
 
 static void buildScannerPreviewScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
+  if(s_audioMode){scene.clear();scene.addLabel("wifi_setup.audio",{24,44,232,24},ui::onboarding_connect::listeningTitle(services::ggwave_receiver::snapshot().receiving,s_audioError),0,0xffff,2);return;}
   buildScanningScene(scene, width, height, false);
 }
 
@@ -174,6 +191,9 @@ static uint16_t backgroundColor() {
 }
 
 static void animateActivity(uint32_t now) {
+  if(s_tutorialMode||s_audioMode){if(now-s_activityFrameMs<40)return;s_activityFrameMs=now;
+   ui::onboarding_scenes::render(hal::display::canvas(),105,now-s_activityStartMs,0,s_statusLine);hal::display::markAllDirty();return;}
+
   if (now - s_activityFrameMs < 33) return;
   auto& scene = ui::scene::scratchScene();
   if (!scene.find(kActivityDots[0])) return;
@@ -192,7 +212,7 @@ static void animateActivity(uint32_t now) {
   }
   hal::display::endDirectDraw();
   hal::display::markDirty(77, 18);
-  if(s_tutorialMode){
+  if(s_tutorialMode||s_audioMode){
     hal::display::beginDirectDraw();d.fillRect(0,188,280,52,kUiBg);
     onboarding_wifi::footer(d,now-s_activityStartMs,"Press A to go back");
     hal::display::endDirectDraw();hal::display::markDirty(188,52);
@@ -201,7 +221,17 @@ static void animateActivity(uint32_t now) {
 
 static void drawStatusScreen(const char* title, const char* line1, const char* line2,
                              bool ok) {
-  if(s_tutorialMode)line2=nullptr;
+  if((s_tutorialMode||s_audioMode) && s_state==State::ERROR){
+    if(title!=s_errorTitle)copyField(title,s_errorTitle,sizeof(s_errorTitle));
+    if(line1!=s_errorDetail)copyField(line1,s_errorDetail,sizeof(s_errorDetail));
+    auto& canvas=hal::display::canvas();if(s_audioMode){char message[164];snprintf(message,sizeof(message),"%s. %s",s_errorTitle,s_errorDetail);ui::onboarding_connect::listening(canvas,false,0,0,message,millis()-s_audioStart);}
+    else ui::onboarding_flow::wifiError(canvas,s_errorTitle,s_errorDetail,false,s_errorSelection);
+    hal::display::markAllDirty();return;
+  }
+  if(s_tutorialMode||s_audioMode){
+   if(!ok)s_activityStartMs=millis();
+   ui::onboarding_scenes::render(hal::display::canvas(),ok?106:105,0,0,line1?line1:"");hal::display::markAllDirty();return;
+  }
   hal::display::beginDirectDraw();
   TFT_eSPI& d = panel();
   ui::scene::Scene& scene = ui::scene::scratchScene();
@@ -247,14 +277,14 @@ static void drawStatusScreen(const char* title, const char* line1, const char* l
     if(detail)snprintf(detail->text,sizeof(detail->text),"%s",all.substr(0,cut).c_str());
     scene.addLabel("wifi_setup.detail2",{14,174,252,12},all.substr(cut+1).c_str(),kUiMuted,bg,1,ui::scene::TextAlign::TopCenter);
   }
-  if(s_tutorialMode && s_state==State::ERROR)
+  if(s_tutorialMode && s_state==State::ERROR && !s_audioMode)
     scene.addLabel("wifi_setup.retry",{24,32,72,10},"Try again",kUiFg,bg,1);
   scene.render(d);
-  if(s_tutorialMode){
+  if(s_tutorialMode||s_audioMode){
     // These pages share the preview's arrows and retain the actual scanner result.
     d.fillRect(0,0,280,kSystemStatusBarH,bg);
-    onboarding_wifi::arrows(d,!result,result);
-    if(s_state==State::ERROR){
+    onboarding_wifi::arrows(d,s_audioMode||!result,s_audioMode||result);
+    if(s_state==State::ERROR&&!s_audioMode){
       // The scene label supplies inspection metadata; use the shared pixel font
       // for the final control, clearing the scene font's different baseline.
       d.fillRect(20,30,90,18,bg);
@@ -278,6 +308,17 @@ static void logStartupStage(const char* stage) {
 static void beginConnect(const core::wifi_qr::Credentials& creds) {
   s_connectStartMs = millis();
   s_credentials = creds;
+  if(s_audioMode){
+    services::ggwave_receiver::stop();s_audioAssembly.clear();
+    s_state=State::AUDIO_JOIN_PREP;
+    if(!s_session.begin(logStartupStage)){
+      memset(&s_credentials,0,sizeof(s_credentials));
+      s_state=State::ERROR;s_resultMs=millis();
+      drawStatusScreen("Couldn't join","Network busy. Go back and retry",nullptr,false);return;
+    }
+    copyField(creds.ssid,s_statusLine,sizeof(s_statusLine));
+    drawStatusScreen("Connecting...",s_statusLine,nullptr,false);return;
+  }
   s_preview.close();
   s_session.stopCapture();
   setDisplayBypass(false);
@@ -290,6 +331,7 @@ static void showError(const char* reason, const char* title = "Couldn't join") {
   LOGW("camera-qr", "session failed: %s", reason);
   Serial.printf("[wifi-app] error id=%lu title=%s reason=%s\n",
                 (unsigned long)s_session.id(), title, reason);
+  services::ggwave_receiver::stop();s_audioAssembly.clear();s_errorSelection=0;
   s_preview.close();
   s_session.fail();
   setDisplayBypass(false);
@@ -301,6 +343,10 @@ static void showError(const char* reason, const char* title = "Couldn't join") {
 }
 
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
+void printStatus(){
+  const char* names[]={"preparing","scanning","listening","audio-join-prep","releasing","connecting","success","error"};
+  Serial.printf("[wifi-setup] method=%s phase=%s parts=%u total=%u\n",s_audioMode?"audio":"qr",names[unsigned(s_state)],s_audioAssembly.received(),s_audioAssembly.total);
+}
 bool debugJoin(bool savedNetwork, bool accountPayload) {
   if (NavHandler::instance().top() != &app || s_state != State::SCANNING) return false;
   core::wifi_qr::Credentials credentials{};
@@ -354,6 +400,7 @@ bool debugPayload(const char* payload){
 
 static void prepareWorkflow() {
   Serial.println("[wifi-app] Entering WiFi QR setup");
+  s_errorSelection=0;
   s_state = State::PREPARING;
   s_connectStartMs = 0;
   s_scanAttempts = 0;
@@ -362,14 +409,29 @@ static void prepareWorkflow() {
   memset(&s_credentials, 0, sizeof(s_credentials));
   s_statusLine[0] = s_detailLine[0] = s_lastPayload[0] = '\0';
   s_needsScanRequest = true;
+  if(s_audioMode){
+    s_audioAssembly.clear();s_audioError[0]=0;s_audioPaint=0;s_audioStart=millis();
+  }
 }
 
-static bool s_registrationQueued = false;
+static void tickAudioPreparation(uint32_t now) {
+  // Settings may still own an optional metadata request. Keep A/B responsive
+  // while it finishes, exactly as Camera does before acquiring the radio.
+  const bool waiting = services::firmware_update::noticeInFlight();
+  if (waiting && uint32_t(now-s_prepareStartMs)<30000u) return;
+  s_state=State::LISTENING;
+  s_audioStart=now;
+  if(waiting)showError("Network busy. Please try again.","Audio unavailable");
+  else if(!services::ggwave_receiver::start(true))showError("The audio receiver could not start.","Microphone unavailable");
+}
+
+
 
 static void enterView() {
   // Paint first; tick pauses network users BEFORE asking the manager to stop
   // the radio. Retry keeps an already-held pause, without nesting ownership.
-  drawStatusScreen("Starting scanner...", nullptr, "Left: back", false);
+  if(s_audioMode)drawStatusScreen("Starting audio...", "Please wait", nullptr, false);
+  else drawStatusScreen("Starting scanner...", nullptr, "Left: back", false);
 }
 
 static void retireView() {
@@ -381,14 +443,57 @@ static void retireView() {
 }
 
 void exitApp() {
-  s_tutorialMode=false;
+  services::ggwave_receiver::stop();s_audioAssembly.clear();
+  s_tutorialMode=false;s_restartPending=false;
   Serial.println("[wifi-app] Exiting WiFi QR setup");
   (void)s_session.close(retireView);
+  s_audioMode=false;
 }
 
 void tick() {
   const uint32_t now = millis();
+  if(s_restartPending){
+    services::ggwave_receiver::stop();
+    if(!s_session.close(retireView))return;
+    s_audioMode=s_restartAudio;s_restartPending=false;prepareWorkflow();enterView();return;
+  }
   const auto status = hal::wifi::qrStatus();
+  if(s_audioMode&&s_state==State::ERROR&&now-s_audioPaint>=40){s_audioPaint=now;drawStatusScreen(s_errorTitle,s_errorDetail,nullptr,false);}
+
+
+  if(s_audioMode && s_state==State::PREPARING){tickAudioPreparation(now);return;}
+
+  if(s_state==State::LISTENING){
+    char packet[141]={},payload[513]={};
+    if(services::ggwave_receiver::takePayload(packet,sizeof(packet))){
+      const int assembled=s_audioAssembly.add(packet,now,payload,sizeof(payload));
+      if(assembled<0)copyField("Sound incomplete. Send again.",s_audioError,sizeof(s_audioError));
+      else s_audioError[0]=0;
+      if(assembled==1){
+        core::wifi_qr::Credentials credentials{};
+        if(core::wifi_qr::parsePayload(payload,&credentials)){
+          Serial.println("[wifi-audio] credentials validated (redacted)");beginConnect(credentials);
+        }else copyField("Invalid Wi-Fi details. Try again.",s_audioError,sizeof(s_audioError));
+        memset(&credentials,0,sizeof(credentials));
+      }
+      memset(packet,0,sizeof(packet));memset(payload,0,sizeof(payload));
+    }
+    if(s_state!=State::LISTENING)return;
+    if(s_audioError[0]){char reason[64];copyField(s_audioError,reason,sizeof(reason));showError(reason,"Invalid audio data");return;}
+    if(s_audioAssembly.total && now-s_audioAssembly.lastMs>90000){s_audioAssembly.clear();copyField("Sound incomplete. Send again.",s_audioError,sizeof(s_audioError));}
+    if(now-s_audioStart>180000){showError("No setup sound was received.","Listening timed out");return;}
+    if(now-s_audioPaint>=40){
+      auto& canvas=hal::display::canvas();
+      ui::onboarding_connect::listening(canvas,services::ggwave_receiver::snapshot().receiving,s_audioAssembly.received(),s_audioAssembly.total,s_audioError,now-s_audioStart);
+      hal::display::markAllDirty();s_audioPaint=now;
+    }
+    return;
+  }
+  if(s_state==State::AUDIO_JOIN_PREP){
+    if(status.id==s_session.id()&&status.phase==hal::wifi::QrPhase::Scanning)s_state=State::RELEASING;
+    else if((status.id==s_session.id()&&status.phase==hal::wifi::QrPhase::Failed)||now-s_connectStartMs>10000)showError("Wi-Fi startup failed");
+    return;
+  }
 
   if (s_state == State::PREPARING || s_state == State::RELEASING ||
       s_state == State::CONNECTING) animateActivity(now);
@@ -513,27 +618,32 @@ void tick() {
         default: showError("Connection timed out"); break;
       }
     }
-  } else if (s_state == State::SUCCESS && !s_tutorialMode && now - s_successMs >= 1200) {
+  } else if (s_state == State::SUCCESS && !s_tutorialMode && !s_audioMode && now - s_successMs >= 1200) {
     NavHandler::instance().pop();
   }
 }
 
 void onInput(hal::input::InputEvent ev) {
   using ET = hal::input::EventType;
+  if(s_restartPending)return;
+  if(ev.type==ET::ButtonC_Tap&&(s_state==State::LISTENING||s_state==State::SCANNING||s_state==State::PREPARING)){
+    s_restartAudio=!s_audioMode;s_restartPending=true;return;
+  }
+  if(s_audioMode&&s_state==State::ERROR){
+    if(ev.type==ET::ButtonA_Tap||ev.type==ET::ButtonC_Tap){s_restartAudio=ev.type==ET::ButtonA_Tap;s_restartPending=true;}return;
+  }
   if(s_tutorialMode){
-    const bool result=s_state==State::SUCCESS||s_state==State::ERROR;
-    if(result && millis()-s_resultMs<600)return;
-    if(ui::nav::isBackTap(ev) && s_state==State::ERROR){
-      // Reuse startup ownership/cleanup gates; remain in this tutorial scanner.
-      s_tutorialResult=onboarding::WifiResult::None;prepareWorkflow();enterView();return;
+    if(s_state==State::SUCCESS){if(ev.type==ET::ButtonA_Tap){s_tutorialResult=onboarding::WifiResult::Back;NavHandler::instance().pop();return;}if(ev.type==ET::ButtonB_Tap){s_tutorialResult=onboarding::WifiResult::Joined;NavHandler::instance().pop();}return;}
+    if(s_state==State::ERROR){
+      if(ev.type==ET::Scroll&&ev.delta){s_errorSelection=ev.delta>0?1:0;drawStatusScreen(s_errorTitle,s_errorDetail,nullptr,false);}
+      else if(ev.type==ET::ButtonC_Tap||ev.type==ET::ButtonA_Tap){s_restartAudio=ev.type==ET::ButtonA_Tap||s_errorSelection==0?s_audioMode:!s_audioMode;s_restartPending=true;}
+      return;
     }
-    if(ev.type==ET::ButtonB_Tap && s_state!=State::CONNECTING && s_state!=State::RELEASING){
-      s_tutorialResult=s_state==State::SUCCESS?onboarding::WifiResult::Joined:s_state==State::ERROR?onboarding::WifiResult::Failed:onboarding::WifiResult::Skipped;
-      NavHandler::instance().pop();
-    }else if(ui::nav::isBackTap(ev) && !result){
-      s_tutorialResult=onboarding::WifiResult::Back;NavHandler::instance().pop();
-    }
+    if(ev.type==ET::ButtonA_Tap){s_tutorialResult=onboarding::WifiResult::Back;NavHandler::instance().pop();}
     return;
+  }
+  if(s_audioMode){
+    if(ev.type==ET::ButtonA_Tap||ev.type==ET::ButtonB_Tap)NavHandler::instance().pop();return;
   }
   if (ui::nav::isBackTap(ev) ||
       (ev.type == ET::ButtonB_Tap && (s_state == State::SCANNING || s_state == State::PREPARING))) {
@@ -548,13 +658,19 @@ void onInput(hal::input::InputEvent ev) {
 }
 
 bool tutorialActive(){return s_tutorialMode;}
-void beginTutorial(){
+void beginAudio(){
+ s_audioMode=true;s_tutorialMode=false;s_tutorialResult=onboarding::WifiResult::None;
+ NavHandler::instance().push(&app);
+}
+void beginTutorial(bool audio){
+ s_registrationQueued=false;
+ s_audioMode=audio;
  s_tutorialMode=true;s_tutorialResult=onboarding::WifiResult::None;
  NavHandler::instance().push(&app);
 }
 onboarding::WifiResult takeTutorialResult(){auto result=s_tutorialResult;s_tutorialResult=onboarding::WifiResult::None;return result;}
 static bool onChord(){
- if(!s_tutorialMode)return false;
+ if(!s_tutorialMode&&!s_audioMode)return false;
  hal::input::InputEvent ev;ev.type=hal::input::EventType::ButtonA_Tap;onInput(ev);return true;
 }
 static void screenTick(uint32_t) {
@@ -576,11 +692,14 @@ static const ::scene::Screen kScreenWifiSetup = {
 
 static const ::scene::Screen* const kScreens[] = {&kScreenWifiSetup};
 static AppPresentation presentationPolicy() {
-    const bool tutorial=tutorialActive();
+    const bool tutorial=tutorialActive()||s_audioMode;
     return {false, tutorial, tutorial ? AppPresentation::StatusBar::Hidden : AppPresentation::StatusBar::Default};
 }
-App app = SCENE_APP_CATALOG_LIFECYCLE_HOOKS("WiFi Setup", "wifi-setup", &kScreenWifiSetup, prepareWorkflow, prepareWorkflow, exitApp,
-                            "src/apps/wifi_setup_app.cpp", kScreens, presentationPolicy, nullptr);
+static void cover(){if(s_audioMode){services::ggwave_receiver::stop();s_audioAssembly.clear();}(void)s_session.close(retireView);}
+static core::health::RuntimePolicy runtimePolicy(){return core::health::whileBusy(true);}
+static App makeApp(){App result=SCENE_APP_CATALOG_LIFECYCLE_HOOKS("WiFi Setup", "wifi-setup", &kScreenWifiSetup, prepareWorkflow, prepareWorkflow, exitApp,
+                            "src/apps/wifi_setup_app.cpp", kScreens, presentationPolicy, runtimePolicy);result.onCover=cover;return result;}
+App app=makeApp();
 
 }  // namespace wifi_setup
 }  // namespace apps

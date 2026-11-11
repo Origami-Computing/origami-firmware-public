@@ -5,6 +5,8 @@ namespace services { namespace battery_alerts {
 // codec/TX admission and idle teardown. Preserves synchronous one-shot playback.
 // Call once per UI loop, independently of status-bar visibility or painting.
 void service(uint32_t now);
+// UI-task setup acknowledgement, coalesced with the ordinary USB edge cue.
+void acknowledgeExternalPower();
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 // Explicit audio fixture only; expires after two minutes. Never writes telemetry.
 void setPreview(int percent, int power, bool audio);

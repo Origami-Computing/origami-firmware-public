@@ -12,6 +12,7 @@
  */
 
 #include "app.h"
+#include "core/health_policy.h"
 #include "hal/hal_input.h"
 #include <TB_TFT_eSPI.h>
 
@@ -23,11 +24,14 @@ extern App app;
 void tick();
 void onInput(hal::input::InputEvent ev);
 void onDraw(TFT_eSprite& canvas);
+// Tilt-only play: busy while running with a tilt change or button within 60 s.
+core::health::RuntimePolicy runtimePolicy();
 
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 void printStatus(Print& out);
 void testFall();
 void testClipping();
+void testTilt(float offsetDeg);  // Offsets measured roll until app exit.
 #endif
 
 }  // namespace doodle_jump

@@ -1,4 +1,6 @@
 #include "services/vibration.h"
+#include "apps/custom_apps_settings_app.h"
+#include "services/screen_brightness.h"
 #include "config/screen_chrome_layout.h"
 #include "core/release_policy.h"
 /**
@@ -22,6 +24,7 @@
  */
 
 #include "apps/settings_menu_app.h"
+#include "apps/app_store_app.h"
 
 #include <Arduino.h>
 #include "app.h"
@@ -36,7 +39,8 @@
 #include "apps/ota_update_app.h"
 #include "services/firmware_update.h"
 #include "apps/tutorial_app.h"
-#include "assets/menu_icons.h"
+#include "assets/settings_icons.h"
+#include "ui/alpha_bitmap.h"
 #include "services/uploads.h"
 #include "services/device_fs.h"
 #include "hal/hal_sd.h"
@@ -68,7 +72,6 @@
 #include "ui/edit_field.h"
 #include "ui/morning_style.h"
 #include "ui/source_layout.h"
-#include "ui/listening_style.h"
 
 namespace apps {
 namespace settings_menu {
@@ -86,9 +89,9 @@ enum Sub {
   SUB_UPLOADS,
   SUB_FILE_SYNC,
   SUB_SOUND_MENU,
-  SUB_AGENT_STYLE,
   SUB_MUSIC_OUTPUT,
   SUB_SFX_VOLUME,
+  SUB_BRIGHTNESS,
   SUB_WIFI_NETS,
   SUB_WIFI_NET_ACTION,
   SUB_SLEEP_MENU,
@@ -107,9 +110,9 @@ extern const ::scene::Screen kScreenSettingsWifiMenu;
 extern const ::scene::Screen kScreenSettingsUploads;
 extern const ::scene::Screen kScreenSettingsFileSync;
 extern const ::scene::Screen kScreenSettingsSoundMenu;
-extern const ::scene::Screen kScreenSettingsAgentStyle;
 extern const ::scene::Screen kScreenSettingsMusic;
 extern const ::scene::Screen kScreenSettingsSfxVolume;
+extern const ::scene::Screen kScreenSettingsBrightness;
 extern const ::scene::Screen kScreenSettingsWifi;
 extern const ::scene::Screen kScreenSettingsNetworkAction;
 extern const ::scene::Screen kScreenSettingsSleepMenu;
@@ -121,9 +124,10 @@ static void showMain();
 static void showWifiMenu();
 static void showUploads();
 static void showSoundMenu();
-static void showAgentStyle();
 static void showMusicOutput();
 static void showSfxVolume();
+static void showBrightness();
+static bool s_brightnessSaveFailed = false;
 static void showWifiNetworks(bool resetSelection);
 static void showNetworkAction();
 static void showSleepMenu();
@@ -137,8 +141,8 @@ static void showAbout();
 enum MainRow {
   ROW_WIFI = 0,
   ROW_SOUND,
+  ROW_BRIGHTNESS,
   ROW_RECIPE_ALERTS,
-  ROW_AGENT_STYLE,
   ROW_REPLAY_TUTORIAL,
   ROW_SERVER,
   ROW_SLEEP,
@@ -148,14 +152,16 @@ enum MainRow {
   ROW_REBOOT,
   ROW_ABOUT,
   ROW_UPLOADS,
+  ROW_MANAGE_APPS,
+  ROW_APP_DOWNLOADER,
   kRows,
 };
 
 static const char* kLabels[kRows] = {
     "WiFi",
     "Sound",
+    "Screen brightness",
     "Recipe alerts off",
-    "Agent UI",
     "Redo Tutorial",
     "Server: Dev",
     "Sleep",
@@ -165,6 +171,8 @@ static const char* kLabels[kRows] = {
     "Reboot Device!",
     "About",
     "Upload Queue",
+    "Manage apps",
+    "App Downloader",
 };
 
 static char s_serverLabel[24] = "Server: Dev";
@@ -196,9 +204,9 @@ static void updateOtaChannelLabel() {
   kLabels[ROW_OTA_CHANNEL] = s_otaChannelLabel;
 }
 
-enum WifiRow { WIFI_QR, WIFI_HELP, WIFI_NETWORKS, kWifiRows };
+enum WifiRow { WIFI_QR, WIFI_AUDIO, WIFI_HELP, WIFI_NETWORKS, kWifiRows };
 static const char* kWifiLabels[kWifiRows] = {
-    "Join WiFi (QR)", "How to Join WiFi", "Saved Networks"};
+    "Join WiFi (QR)", "Join Wi-Fi Audio", "How to Join WiFi", "Saved Networks"};
 
 enum SoundRow { SOUND_MUSIC_OUTPUT, SOUND_SFX_VOLUME, kSoundRows };
 static const char* kSoundLabels[kSoundRows] = {
@@ -223,9 +231,6 @@ static ui::ListView s_soundMenuList;
 static ui::ListView s_sleepMenuList;
 static ui::ListView s_sensorsMenuList;
 static ui::ListView s_musicList;
-static ui::ListView s_agentStyleList;
-static int s_agentStyleSel=0;
-static bool s_agentStyleSaveFailed=false;
 static int s_wifiMenuSel = 0;
 static int s_soundMenuSel = 0;
 static int s_sleepMenuSel = 0;
@@ -300,14 +305,23 @@ static void uploadNotice(const char* text) {
 
 static void updateServerLabel() {
   snprintf(s_serverLabel, sizeof(s_serverLabel), "Server: %s",
-           core::secrets::isDevMode() ? "Dev" : "Prod");
+           core::secrets::serverModeName(core::secrets::serverMode()));
   kLabels[ROW_SERVER] = s_serverLabel;
 }
 
 static void prepareWorkflow() {
   // Main entry retries initialization after a prior SD/queue failure. Returning
   // from an overlay on another Settings view must not introduce a new attempt.
-  if (app.currentScreen == &kScreenSettingsMain) services::uploads::ensureInit();
+  if (app.currentScreen == &kScreenSettingsMain) {
+    // App uncover resets currentScreen to the initial view before this callback.
+    // Retain the mounted brightness workflow; an ordinary screen switch back
+    // to Main does not run this callback, and final app exit clears s_sub.
+    if (s_sub == SUB_BRIGHTNESS) {
+      s_resumeSub = SUB_BRIGHTNESS;
+      s_preserveMainSelection = true;
+    }
+    services::uploads::ensureInit();
+  }
 }
 
 static void enterMainView() {
@@ -327,14 +341,15 @@ static void enterMainView() {
 
   const Sub resume = s_resumeSub;
   s_resumeSub = SUB_MAIN;
-  if (resume == SUB_WIFI_MENU) showWifiMenu();
+  if (resume == SUB_BRIGHTNESS) ::scene::switchTo(&app, &kScreenSettingsBrightness);
+  else if (resume == SUB_WIFI_MENU) showWifiMenu();
   else if (resume == SUB_SOUND_MENU) showSoundMenu();
   else if (resume == SUB_SLEEP_MENU) showSleepMenu();
   else if (resume == SUB_SENSORS_MENU) showSensorsMenu();
 }
 
 void exitApp() {
-  ui::listening_style::exitPreview();
+  if (s_sub == SUB_BRIGHTNESS) services::screen_brightness::discard();
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
   s_uploadPreview=nullptr;
 #endif
@@ -372,21 +387,39 @@ void tick() {
   }
 }
 
+namespace settings_icons = assets::settings_icons;
+static uint8_t s_motionFrame = 0;
+static uint32_t s_motionStart = 0;
+static bool s_iconDirty = false;
+
+static void setSettingsIcon(ui::ListItem& item, const settings_icons::Icon& icon, bool selected) {
+  item.icon = icon.still;
+  item.iconSlotSize = settings_icons::kSize;
+  if (selected && !s_valueEditing) {
+    item.icon = icon.motion + s_motionFrame * settings_icons::kFrameBytes;
+    item.iconSize = settings_icons::kSize;
+    item.iconColor = icon.color;
+  }
+}
+
 static ui::ListItem settingsMainItemFn(int idx, void*) {
     ui::ListItem item;
     idx -= s_updateNotice ? 1 : 0;
-    if (idx == -1) { item.label="Update available"; item.opensScreen=true; item.fg=kUiFg; return item; }
+    if (idx == -1) { item.label="Update available"; item.opensScreen=true; item.fg=kUiFg; setSettingsIcon(item,settings_icons::kDownload,s_sel==-1); return item; }
     item.label = (idx >= 0 && idx < kRows) ? kLabels[idx] : "";
-    item.opensScreen = idx == ROW_WIFI || idx == ROW_AGENT_STYLE || idx == ROW_UPLOADS || idx == ROW_SOUND ||
-                       idx == ROW_SLEEP || idx == ROW_SENSORS || idx == ROW_ABOUT || idx == ROW_REPLAY_TUTORIAL;
+    item.opensScreen = idx == ROW_WIFI || idx == ROW_UPLOADS || idx == ROW_SOUND ||
+                       idx == ROW_SLEEP || idx == ROW_SENSORS || idx == ROW_ABOUT || idx == ROW_REPLAY_TUTORIAL || idx == ROW_MANAGE_APPS || idx == ROW_APP_DOWNLOADER;
     item.fg = kUiFg;
     if(s_valueEditing && idx==s_sel) {
       static char draft[40];
-      if(idx==ROW_SERVER) snprintf(draft,sizeof(draft),"Server: %s",s_valueDraft?"Dev":"Prod");
+      if(idx==ROW_SERVER) snprintf(draft,sizeof(draft),"Server: %s",core::secrets::serverModeName(static_cast<core::secrets::ServerMode>(s_valueDraft)));
       else if(idx==ROW_RECIPE_ALERTS) snprintf(draft,sizeof(draft),"Recipe alerts %s",s_valueDraft?"on":"off");
       else if(idx==ROW_OTA_CHANNEL) snprintf(draft,sizeof(draft),"Updates: %s",services::ota_client::releaseChannelName(static_cast<services::ota_client::ReleaseChannel>(s_valueDraft)));
       item.label=draft; item.editing=true; item.blinkOn=s_valueBlink;
     }
+    static const settings_icons::Icon* const icons[] = {&settings_icons::kWifi,&settings_icons::kVolume,&settings_icons::kBrightness,&settings_icons::kBell,&settings_icons::kTutorial,&settings_icons::kServer,&settings_icons::kMoon,&settings_icons::kSensors,&settings_icons::kChannel,&settings_icons::kDownload,&settings_icons::kPower,&settings_icons::kInfo,&settings_icons::kUpload,&settings_icons::kDelete,&settings_icons::kDownload};
+    static_assert(sizeof(icons)/sizeof(icons[0]) == kRows, "Settings icon row mapping");
+    if (idx >= 0 && idx < kRows) setSettingsIcon(item,*icons[idx],idx==s_sel);
     return item;
 }
 
@@ -394,6 +427,9 @@ static ui::ListItem settingsWifiMenuItemFn(int idx, void*) {
     ui::ListItem item;
     item.label = (idx >= 0 && idx < kWifiRows) ? kWifiLabels[idx] : "";
     item.fg = kUiFg;
+    static const settings_icons::Icon* const icons[] = {&settings_icons::kQR,&settings_icons::kSpeaker,&settings_icons::kHelp,&settings_icons::kNetworks};
+    static_assert(sizeof(icons)/sizeof(icons[0]) == kWifiRows, "Settings icon row mapping");
+    if (idx >= 0 && idx < kWifiRows) setSettingsIcon(item,*icons[idx],idx==s_wifiMenuSel);
     return item;
 }
 
@@ -401,6 +437,9 @@ static ui::ListItem settingsSoundMenuItemFn(int idx, void*) {
     ui::ListItem item;
     item.label = (idx >= 0 && idx < kSoundRows) ? kSoundLabels[idx] : "";
     item.fg = kUiFg;
+    static const settings_icons::Icon* const icons[] = {&settings_icons::kMusic,&settings_icons::kVolume};
+    static_assert(sizeof(icons)/sizeof(icons[0]) == kSoundRows, "Settings icon row mapping");
+    if (idx >= 0 && idx < kSoundRows) setSettingsIcon(item,*icons[idx],idx==s_soundMenuSel);
     return item;
 }
 
@@ -413,6 +452,9 @@ static ui::ListItem settingsSleepMenuItemFn(int idx, void*) {
       item.editing=true; item.blinkOn=s_valueBlink;
     }
     item.fg = kUiFg;
+    static const settings_icons::Icon* const icons[] = {&settings_icons::kToggle,&settings_icons::kTimer,&settings_icons::kReset,&settings_icons::kMoon};
+    static_assert(sizeof(icons)/sizeof(icons[0]) == kSleepRows, "Settings icon row mapping");
+    if (idx >= 0 && idx < kSleepRows) setSettingsIcon(item,*icons[idx],idx==s_sleepMenuSel);
     return item;
 }
 
@@ -420,6 +462,9 @@ static ui::ListItem settingsSensorsMenuItemFn(int idx, void*) {
     ui::ListItem item;
     item.label = (idx >= 0 && idx < kSensorRows) ? kSensorLabels[idx] : "";
     item.fg = kUiFg;
+    static const settings_icons::Icon* const icons[] = {&settings_icons::kCheck,&settings_icons::kCalibration};
+    static_assert(sizeof(icons)/sizeof(icons[0]) == kSensorRows, "Settings icon row mapping");
+    if (idx >= 0 && idx < kSensorRows) setSettingsIcon(item,*icons[idx],idx==s_sensorsMenuSel);
     return item;
 }
 
@@ -430,16 +475,13 @@ static ui::ListItem settingsMusicItemFn(int idx, void* ctx) {
     item.fg      = kUiFg;
     item.choice  = true;
     item.checked = idx == musicOutRowFromRoute(hal::audio::getOutputRoute());
+    static const settings_icons::Icon* const icons[] = {&settings_icons::kSpeaker,&settings_icons::kAux,&settings_icons::kBoth,&settings_icons::kAuto};
+    static_assert(sizeof(icons)/sizeof(icons[0]) == kMusicOutRows, "Settings icon row mapping");
+    if (idx >= 0 && idx < kMusicOutRows) setSettingsIcon(item,*icons[idx],idx==s_musicOutSel);
     return item;
 }
 
-static ui::ListItem agentStyleItemFn(int idx, void*) {
-    ui::ListItem item;
-    item.label=ui::listening_style::kStyles[idx].name;
-    item.fg=kUiFg; item.choice=true;
-    item.checked=idx==ui::listening_style::selected();
-    return item;
-}
+
 
 static ui::ListItem settingsWifiItemFn(int idx, void*) {
     const char* ssid = core::secrets::wifiNetworkSSID(idx);
@@ -448,6 +490,7 @@ static ui::ListItem settingsWifiItemFn(int idx, void*) {
     ui::ListItem item;
     item.label = (ssid && ssid[0]) ? ssid : "(empty)";
     item.fg    = live ? kUiAccent : kUiFg;
+    setSettingsIcon(item,settings_icons::kWifi,idx==s_wifiNetSel);
     return item;
 }
 
@@ -464,7 +507,39 @@ static ui::ListItem settingsNetActionItemFn(int idx, void*) {
     } else {
         item.fg = kUiFg;
     }
+    static const settings_icons::Icon* const icons[] = {&settings_icons::kConnect,&settings_icons::kDelete};
+    static_assert(sizeof(icons)/sizeof(icons[0]) == kNetActionRows, "Settings icon row mapping");
+    if (idx >= 0 && idx < kNetActionRows) setSettingsIcon(item,*icons[idx],idx==s_netActionSel);
     return item;
+}
+
+// Native list row index, including the optional update notice.
+static int selectedIconRow() {
+  switch (s_sub) {
+    case SUB_MAIN: return s_sel + (s_updateNotice ? 1 : 0);
+    case SUB_WIFI_MENU: return s_wifiMenuSel;
+    case SUB_SOUND_MENU: return s_soundMenuSel;
+    case SUB_SLEEP_MENU: return s_sleepMenuSel;
+    case SUB_SENSORS_MENU: return s_sensorsMenuSel;
+    case SUB_MUSIC_OUTPUT: return s_musicOutSel;
+    case SUB_WIFI_NETS: return core::secrets::wifiNetworkCount() ? s_wifiNetSel : -1;
+    case SUB_WIFI_NET_ACTION: return s_netActionSel;
+    default: return -1;
+  }
+}
+
+static ui::ListItem selectedIconItem(int index) {
+  switch (s_sub) {
+    case SUB_MAIN: return settingsMainItemFn(index,nullptr);
+    case SUB_WIFI_MENU: return settingsWifiMenuItemFn(index,nullptr);
+    case SUB_SOUND_MENU: return settingsSoundMenuItemFn(index,nullptr);
+    case SUB_SLEEP_MENU: return settingsSleepMenuItemFn(index,nullptr);
+    case SUB_SENSORS_MENU: return settingsSensorsMenuItemFn(index,nullptr);
+    case SUB_MUSIC_OUTPUT: return settingsMusicItemFn(index,nullptr);
+    case SUB_WIFI_NETS: return settingsWifiItemFn(index,nullptr);
+    case SUB_WIFI_NET_ACTION: return settingsNetActionItemFn(index,nullptr);
+    default: return {};
+  }
 }
 
 static void applySettingsMainListLayout() {
@@ -507,8 +582,9 @@ static void finishValueEdit() {
       snprintf(s_recipeLabel,sizeof(s_recipeLabel),"Recipe alerts save failed");
     } else updateRecipeLabel();
   } else if(s_sel==ROW_SERVER) {
-    services::agent_transport::selectBackendMode(s_valueDraft);
+    const bool ok = services::agent_transport::selectServerMode(static_cast<core::secrets::ServerMode>(s_valueDraft));
     updateServerLabel();
+    if (!ok) snprintf(s_serverLabel,sizeof(s_serverLabel),"Server save failed");
   } else if(s_sel==ROW_OTA_CHANNEL) {
     const bool ok = services::ota_client::setReleaseChannel(static_cast<services::ota_client::ReleaseChannel>(s_valueDraft));
     updateOtaChannelLabel();
@@ -525,10 +601,25 @@ static void beginValueEdit() {
   }
   s_valueDraft=s_sub==SUB_SLEEP_MENU?core::sleep_timer::enabled():
       s_sel==ROW_RECIPE_ALERTS?services::automation::recipeAlertsEnabled():
-      s_sel==ROW_SERVER?core::secrets::isDevMode():
+      s_sel==ROW_SERVER?static_cast<int>(core::secrets::serverMode()):
       static_cast<int>(services::ota_client::releaseChannel());
   s_valueEditing=true; s_valueBlink=true; s_valueBlinkMs=millis(); s_needRedraw=true;
   sfx::play(sfx::kSfxAlarmOpen);
+}
+
+static void finishBrightness(bool cancelFailed = false) {
+  if (cancelFailed && s_brightnessSaveFailed) {
+    services::screen_brightness::discard();
+    showMain();
+    return;
+  }
+  if (services::screen_brightness::save()) {
+    showMain();
+  } else {
+    s_brightnessSaveFailed = true;
+    s_needRedraw = true;
+    hal::display::markAllDirty();
+  }
 }
 
 void onInput(hal::input::InputEvent ev) {
@@ -575,7 +666,10 @@ void onInput(hal::input::InputEvent ev) {
     if(ev.type==ET::Scroll && ev.delta) {
       if (s_sub != SUB_SLEEP_MENU && s_sel == ROW_OTA_CHANNEL)
         s_valueDraft = (s_valueDraft + ev.delta % 3 + 3) % 3;
-      else if(abs(ev.delta)%2) s_valueDraft=!s_valueDraft;
+      else if (s_sub != SUB_SLEEP_MENU && s_sel == ROW_SERVER) {
+        if (core::release_policy::stagingBuild) s_valueDraft = (s_valueDraft + ev.delta % 3 + 3) % 3;
+        else if (abs(ev.delta)%2) s_valueDraft = s_valueDraft == 0 ? 2 : 0;
+      } else if(abs(ev.delta)%2) s_valueDraft=!s_valueDraft;
       sfx::play(sfx::kSfxAlarmNavigate); s_needRedraw=true;
     } else if(ui::nav::isEnterTap(ev) || ui::nav::isBackTap(ev)) finishValueEdit();
     return;
@@ -596,8 +690,7 @@ void onInput(hal::input::InputEvent ev) {
       scrollSettingsList(s_wifiMenuList, s_wifiMenuSel, kWifiRows, steps);
     } else if (s_sub == SUB_SOUND_MENU) {
       scrollSettingsList(s_soundMenuList, s_soundMenuSel, kSoundRows, steps);
-    } else if (s_sub == SUB_AGENT_STYLE) {
-      scrollSettingsList(s_agentStyleList,s_agentStyleSel,ui::listening_style::kCount,steps);
+
     } else if (s_sub == SUB_SLEEP_MENU) {
       scrollSettingsList(s_sleepMenuList, s_sleepMenuSel, kSleepRows, steps);
     } else if (s_sub == SUB_SLEEP_TIMER) {
@@ -612,6 +705,15 @@ void onInput(hal::input::InputEvent ev) {
       hal::display::markAllDirty();
     } else if (s_sub == SUB_SENSORS_MENU) {
       scrollSettingsList(s_sensorsMenuList, s_sensorsMenuSel, kSensorRows, steps);
+    } else if (s_sub == SUB_BRIGHTNESS) {
+      const int previous = services::screen_brightness::percent();
+      services::screen_brightness::set(previous - steps * 5);
+      if (previous != services::screen_brightness::percent()) {
+        s_brightnessSaveFailed = false;
+        services::vibration::navigationFeedback(services::vibration::Cue::Scroll);
+        sfx::play(sfx::kSfxMenuTick);
+        s_needRedraw = true;
+      }
     } else if (s_sub == SUB_SFX_VOLUME) {
       const int next = constrain(sfx::volume() - steps * 5, 0, 100);
       if (next != sfx::volume()) {
@@ -661,14 +763,6 @@ void onInput(hal::input::InputEvent ev) {
   }
 
   if (ui::nav::isEnterTap(ev)) {
-    if(s_sub==SUB_AGENT_STYLE) {
-      s_agentStyleSaveFailed=!ui::listening_style::select(s_agentStyleSel);
-      if(!s_agentStyleSaveFailed) {
-        sfx::play(sfx::kSfxAlarmSave);
-        NavHandler::instance().popToRoot();
-      } else { s_needRedraw=true; hal::display::markAllDirty(); }
-      return;
-    }
     if (s_sub == SUB_SLEEP_TIMER) {
       if(s_sleepField<2) { sfx::play(sfx::kSfxAlarmNavigate); s_sleepEditing=!s_sleepEditing; s_sleepBlink=true; s_sleepBlinkMs=millis(); s_needRedraw=true; hal::display::markAllDirty(); return; }
       if (core::sleep_timer::save(s_sleepTimerDraft)) {
@@ -681,10 +775,11 @@ void onInput(hal::input::InputEvent ev) {
       return;
     }
     if (s_sub == SUB_WIFI_MENU) {
-      if (s_wifiMenuSel == WIFI_QR || s_wifiMenuSel == WIFI_HELP) {
+      if (s_wifiMenuSel == WIFI_QR || s_wifiMenuSel == WIFI_AUDIO || s_wifiMenuSel == WIFI_HELP) {
         s_resumeSub = SUB_WIFI_MENU;
         s_preserveMainSelection = true;
         if(s_wifiMenuSel == WIFI_QR) NavHandler::instance().push(&apps::wifi_setup::app);
+        else if(s_wifiMenuSel == WIFI_AUDIO) apps::wifi_setup::beginAudio();
         else apps::tutorial::beginWifiSetup();
       } else {
         showWifiNetworks(true);
@@ -729,6 +824,7 @@ void onInput(hal::input::InputEvent ev) {
       s_needRedraw=true; sfx::play(sfx::kSfxAlarmSave);
       return;
     }
+    if (s_sub == SUB_BRIGHTNESS) { finishBrightness(); return; }
     if (s_sub == SUB_SFX_VOLUME) {
       sfx::saveVolume();
       showSoundMenu();
@@ -769,16 +865,22 @@ void onInput(hal::input::InputEvent ev) {
       case ROW_WIFI:
         showWifiMenu();
         return;
+      case ROW_APP_DOWNLOADER:
+        s_resumeSub=SUB_MAIN;s_preserveMainSelection=true;
+        NavHandler::instance().push(&apps::app_store::app);return;
+      case ROW_MANAGE_APPS:
+        s_resumeSub=SUB_MAIN;s_preserveMainSelection=true;
+        NavHandler::instance().push(&apps::custom_apps_settings::app);return;
       case ROW_UPLOADS:
         showUploads();
         return;
       case ROW_SOUND:
         showSoundMenu();
         return;
-      case ROW_RECIPE_ALERTS: beginValueEdit(); return;
-      case ROW_AGENT_STYLE:
-        showAgentStyle();
+      case ROW_BRIGHTNESS:
+        showBrightness();
         return;
+      case ROW_RECIPE_ALERTS: beginValueEdit(); return;
       case ROW_REPLAY_TUTORIAL:
         apps::tutorial::replay();
         return;
@@ -823,6 +925,7 @@ void onInput(hal::input::InputEvent ev) {
       return;
     }
     if (s_sub == SUB_MUSIC_OUTPUT) { showSoundMenu(); return; }
+    if (s_sub == SUB_BRIGHTNESS) { finishBrightness(true); return; }
     if (s_sub == SUB_SFX_VOLUME) {
       sfx::saveVolume();
       showSoundMenu();
@@ -906,15 +1009,14 @@ static void buildSettingsScene(ui::scene::Scene& scene, int16_t width, int16_t h
 
       break;
     }
-    case SUB_AGENT_STYLE: {
-      scene.addLabel("agent-style.title",{16,43,(int16_t)(width-32),20},"Agent UI",kUiFg,kUiBg,2,ui::scene::TextAlign::MiddleCenter,2);
-      applySettingsSubListLayout(s_agentStyleList);
-      s_agentStyleList.totalItems=ui::listening_style::kCount;
-      s_agentStyleList.selected=s_agentStyleSel;
-      s_agentStyleList.buildScene(scene,16,68,width-32,126,agentStyleItemFn,nullptr,
-          kUiSelBg,kUiSelFg,kUiBg,kUiPanel,kUiFg);
-      scene.addLabel("agent-style.hint",{12,199,(int16_t)(width-24),16},
-          s_agentStyleSaveFailed?"Save failed. Press C to retry":"Turn: browse / C: use + home",
+    case SUB_BRIGHTNESS: {
+      char value[8];
+      snprintf(value, sizeof(value), "%d%%", services::screen_brightness::percent());
+      scene.addLabel("brightness.title",{14,52,(int16_t)(width-28),24},"Screen brightness",kUiFg,kUiBg,2,ui::scene::TextAlign::MiddleCenter,2);
+      scene.addLabel("brightness.value",{14,92,(int16_t)(width-28),40},value,kUiFg,kUiBg,3,ui::scene::TextAlign::MiddleCenter,2);
+      scene.addProgressBar("brightness.level",{24,154,(int16_t)(width-48),12},services::screen_brightness::percent(),100,kUiPanel,kUiAccent,3,2);
+      if (s_brightnessSaveFailed) scene.addLabel("brightness.error",{12,196,(int16_t)(width-24),16},
+          "Save failed. C: retry / A: cancel",
           kUiFg,kUiBg,1,ui::scene::TextAlign::MiddleCenter,2);
       break;
     }
@@ -956,9 +1058,9 @@ static void buildSettingsScene(ui::scene::Scene& scene, int16_t width, int16_t h
       s_netActionList.selected   = s_netActionSel;
       s_netActionList.buildScene(scene,
                                  settings_layout::kSettingsSubListAreaX,
-                                 settings_layout::kSettingsSubListAreaY,
+                                 settings_layout::kSettingsSubListAreaY + settings_layout::kSettingsNetworkActionHeaderH,
                                  settings_layout::kSettingsSubListAreaW,
-                                 settings_layout::kSettingsSubListAreaH,
+                                 settings_layout::kSettingsSubListAreaH - settings_layout::kSettingsNetworkActionHeaderH,
                                  settingsNetActionItemFn, nullptr,
                                  kUiSelBg, kUiSelFg, kUiBg, kUiPanel, kUiFg);
       break;
@@ -1006,14 +1108,15 @@ static void buildSettingsScene(ui::scene::Scene& scene, int16_t width, int16_t h
     }
     case SUB_ABOUT: {
       const auto account=services::account_info::snapshot();
-      char rows[6][128];
+      char rows[7][128];
       snprintf(rows[0],sizeof(rows[0]),"kamiOS %s",OTA_FIRMWARE_VERSION);
       snprintf(rows[1],sizeof(rows[1]),"Account: %s",account.name);
       snprintf(rows[2],sizeof(rows[2]),"Build: %s",services::ota_client::buildKindName());
       snprintf(rows[3],sizeof(rows[3]),"Board: %s",OTA_HARDWARE_ID);
       snprintf(rows[4],sizeof(rows[4]),"Updates: Ask first");
       snprintf(rows[5],sizeof(rows[5]),"API key: %s",core::secrets::backendConfig().apiKey[0]?"Configured":"Not set");
-      applySettingsSubListLayout(s_aboutList);s_aboutList.totalItems=6;
+      if (core::release_policy::stagingBuild) snprintf(rows[6],sizeof(rows[6]),"Firmware: Staging");
+      applySettingsSubListLayout(s_aboutList);s_aboutList.totalItems=core::release_policy::stagingBuild?7:6;
       s_aboutList.buildScene(scene,settings_layout::kSettingsSubListAreaX,
           settings_layout::kSettingsSubListAreaY,settings_layout::kSettingsSubListAreaW,
           settings_layout::kSettingsSubListAreaH,
@@ -1086,9 +1189,7 @@ static void buildSoundMenuScene(ui::scene::Scene& scene, int16_t width, int16_t 
   buildSettingsScene(scene, width, height, SUB_SOUND_MENU);
 }
 
-static void buildAgentStyleScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
-  buildSettingsScene(scene,width,height,SUB_AGENT_STYLE);
-}
+
 
 static void buildMusicScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
   buildSettingsScene(scene, width, height, SUB_MUSIC_OUTPUT);
@@ -1096,6 +1197,10 @@ static void buildMusicScene(ui::scene::Scene& scene, int16_t width, int16_t heig
 
 static void buildSfxVolumeScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
   buildSettingsScene(scene, width, height, SUB_SFX_VOLUME);
+}
+
+static void buildBrightnessScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
+  buildSettingsScene(scene, width, height, SUB_BRIGHTNESS);
 }
 
 static void buildWifiScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
@@ -1124,19 +1229,27 @@ static void buildAboutScene(ui::scene::Scene& scene, int16_t width, int16_t heig
 
 void onDraw(TFT_eSprite& canvas) {
   if (!s_needRedraw) {
-    if (s_sub == SUB_AGENT_STYLE) ui::listening_style::restorePreviewChrome(canvas,s_agentStyleSel);
+    if (s_iconDirty && !s_valueEditing) {
+      const int selected = selectedIconRow();
+      char id[32]; snprintf(id,sizeof(id),"list.row.%d.icon",selected);
+      auto* node = ui::scene::scratchScene().find(id);
+      const auto item = selectedIconItem(selected);
+      if (selected >= 0 && node && item.icon && node->rect.w == settings_icons::kSize) {
+        node->bitmap = item.icon;
+        const auto r = node->rect;
+        ui::drawAlphaBitmap(canvas,r.x,r.y,r.w,r.h,item.icon,
+                            settings_icons::kSize,settings_icons::kSize,item.iconColor,node->bgColor);
+        hal::display::markDirty(r.y,r.h);
+      }
+    }
+    s_iconDirty = false;
     return;
   }
   s_needRedraw = false;
-
+  s_iconDirty = false;
   ui::scene::Scene& scene = ui::scene::scratchScene();
   buildSettingsScene(scene, canvas.width(), canvas.height(), s_sub);
-  if (s_sub == SUB_AGENT_STYLE) canvas.fillSprite(kUiBg);
   scene.render(canvas);
-  if (s_sub == SUB_AGENT_STYLE) {
-    ui::listening_style::drawPreview(canvas, s_agentStyleSel);
-    NavHandler::instance().invalidateChrome();
-  }
   hal::display::markAllDirty();
 }
 
@@ -1160,6 +1273,7 @@ bool onChord() {
     showSoundMenu();
     return true;
   }
+  if (s_sub == SUB_BRIGHTNESS) { finishBrightness(true); return true; }
   if (s_sub == SUB_SFX_VOLUME) {
     sfx::saveVolume();
     showSoundMenu();
@@ -1200,16 +1314,16 @@ static void enterMusicOutput() {
   hal::display::markAllDirty();
 }
 
-static void enterAgentStyle() {
-  s_sub=SUB_AGENT_STYLE;
-  s_agentStyleSel=ui::listening_style::selected();
-  s_agentStyleSaveFailed=false;
-  s_agentStyleList.scrollFirst=0;
-  s_needRedraw=true; hal::display::markAllDirty();
-}
+
 
 static void enterSfxVolume() {
   s_sub = SUB_SFX_VOLUME;
+  s_needRedraw = true;
+  hal::display::markAllDirty();
+}
+
+static void enterBrightness() {
+  s_sub = SUB_BRIGHTNESS;
   s_needRedraw = true;
   hal::display::markAllDirty();
 }
@@ -1255,8 +1369,19 @@ static void enterAbout() {
   hal::display::markAllDirty();
 }
 
-static void screenTick(uint32_t) {
+static void screenTick(uint32_t now) {
   tick();
+  static int previousRow = -1;
+  static Sub previousSub = SUB_MAIN;
+  const int row = selectedIconRow();
+  if (previousRow != row || previousSub != s_sub) {
+    previousRow = row; previousSub = s_sub;
+    s_motionStart = now; s_motionFrame = 0;
+    s_needRedraw = true;
+  }
+  if (row < 0 || s_valueEditing) return;
+  const uint8_t frame = ((now-s_motionStart)/settings_icons::kFrameMs)%settings_icons::kFrames;
+  if (frame != s_motionFrame) { s_motionFrame = frame; s_iconDirty = true; }
 }
 
 const ::scene::Screen kScreenSettingsMain = {
@@ -1266,7 +1391,7 @@ const ::scene::Screen kScreenSettingsMain = {
 };
 
 const ::scene::Screen kScreenSettingsWifiMenu = {
-    "WiFi", enterWifiMenu, nullptr, nullptr, onInput, onChord, onDraw,
+    "WiFi", enterWifiMenu, nullptr, screenTick, onInput, onChord, onDraw,
     "wifi-menu", buildWifiMenuScene,
 };
 
@@ -1287,17 +1412,13 @@ const ::scene::Screen kScreenSettingsFileSync = {
 };
 
 const ::scene::Screen kScreenSettingsSoundMenu = {
-    "Sound", enterSoundMenu, nullptr, nullptr, onInput, onChord, onDraw,
+    "Sound", enterSoundMenu, nullptr, screenTick, onInput, onChord, onDraw,
     "sound-menu", buildSoundMenuScene,
 };
 
-const ::scene::Screen kScreenSettingsAgentStyle = {
-    "Agent UI", enterAgentStyle, [](){ui::listening_style::exitPreview();}, nullptr, onInput, onChord, onDraw,
-    "agent-style", buildAgentStyleScene,
-};
 
 const ::scene::Screen kScreenSettingsMusic = {
-    "Music Output", enterMusicOutput, nullptr, nullptr, onInput, onChord, onDraw,
+    "Music Output", enterMusicOutput, nullptr, screenTick, onInput, onChord, onDraw,
     "music", buildMusicScene,
     &screen_chrome_layout::kSettingsMusicTopBarColor,
 };
@@ -1307,14 +1428,19 @@ const ::scene::Screen kScreenSettingsSfxVolume = {
     "sfx-volume", buildSfxVolumeScene,
 };
 
+const ::scene::Screen kScreenSettingsBrightness = {
+    "Screen brightness", enterBrightness, nullptr, nullptr, onInput, onChord, onDraw,
+    "brightness", buildBrightnessScene,
+};
+
 const ::scene::Screen kScreenSettingsWifi = {
-    "Saved Networks", enterWifiNetworks, nullptr, nullptr, onInput, onChord, onDraw,
+    "Saved Networks", enterWifiNetworks, nullptr, screenTick, onInput, onChord, onDraw,
     "wifi", buildWifiScene,
     &screen_chrome_layout::kSettingsWifiTopBarColor,
 };
 
 const ::scene::Screen kScreenSettingsNetworkAction = {
-    "Network Action", enterNetworkAction, nullptr, nullptr, onInput, onChord, onDraw,
+    "Network Action", enterNetworkAction, nullptr, screenTick, onInput, onChord, onDraw,
     "network-action", buildNetworkActionScene,
     &screen_chrome_layout::kSettingsNetworkActionTopBarColor,
 };
@@ -1334,7 +1460,7 @@ static void showSleepTimer() {
 }
 
 const ::scene::Screen kScreenSettingsSensorsMenu = {
-    "Sensors", enterSensorsMenu, nullptr, nullptr, onInput, onChord, onDraw,
+    "Sensors", enterSensorsMenu, nullptr, screenTick, onInput, onChord, onDraw,
     "sensors-menu", buildSensorsMenuScene,
 };
 
@@ -1362,19 +1488,14 @@ static void showSoundMenu() {
   ::scene::switchTo(&app, &kScreenSettingsSoundMenu, s_sub != SUB_MAIN ? ::scene::ScreenTransition::Back : ::scene::ScreenTransition::Forward);
 }
 
-static void showAgentStyle() {
-  ::scene::switchTo(&app,&kScreenSettingsAgentStyle);
-}
+
 
 void openWifiMenu() {
   if(NavHandler::instance().top()!=&app) NavHandler::instance().push(&app);
   showWifiMenu();
 }
 
-void openAgentStyles() {
-  if(NavHandler::instance().top()!=&app) NavHandler::instance().push(&app);
-  showAgentStyle();
-}
+
 
 static void showMusicOutput() {
   s_musicOutSel = musicOutRowFromRoute(hal::audio::getOutputRoute());
@@ -1384,6 +1505,11 @@ static void showMusicOutput() {
 static void showSfxVolume() {
   sfx::loadVolume();
   ::scene::switchTo(&app, &kScreenSettingsSfxVolume);
+}
+
+static void showBrightness() {
+  s_brightnessSaveFailed = false;
+  ::scene::switchTo(&app, &kScreenSettingsBrightness);
 }
 
 static void showWifiNetworks(bool resetSelection) {
@@ -1412,9 +1538,9 @@ static const ::scene::Screen* const kScreens[] = {
     &kScreenSettingsMain,
     &kScreenSettingsWifiMenu,
     &kScreenSettingsSoundMenu,
-    &kScreenSettingsAgentStyle,
     &kScreenSettingsMusic,
     &kScreenSettingsSfxVolume,
+    &kScreenSettingsBrightness,
     &kScreenSettingsWifi,
     &kScreenSettingsNetworkAction,
     &kScreenSettingsSleepMenu,
@@ -1424,17 +1550,10 @@ static const ::scene::Screen* const kScreens[] = {
     &kScreenSettingsFileSync,
     &kScreenSettingsAbout,
 };
-static AppPresentation presentationPolicy() {
-  AppPresentation p{};
-  if (app.currentScreen == &kScreenSettingsAgentStyle) {
-    p.contentUsesStatusArea = true;
-    p.statusBar = AppPresentation::StatusBar::GlyphOverlay;
-  }
-  return p;
-}
+
 App app = SCENE_APP_CATALOG_LIFECYCLE_HOOKS("Settings", "settings", &kScreenSettingsMain,
                             prepareWorkflow, prepareWorkflow, exitApp,
-                            "src/apps/settings_menu_app.cpp", kScreens, presentationPolicy, nullptr);
+                            "src/apps/settings_menu_app.cpp", kScreens, nullptr, nullptr);
 
 }  // namespace settings_menu
 }  // namespace apps
