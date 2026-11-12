@@ -45,6 +45,7 @@ namespace ui {namespace listening_style {void exitPreview(){}} namespace focused
 AppPresentation presentationPolicy(){return {};}
 namespace ui {namespace home_eyes {void setTapHeartsEnabled(bool enabled){assert(!enabled);}}}
 void updateRecipeLabel(){}
+void updateHapticsLabel(){}
 void updateServerLabel(){++refreshes;}void updateSleepLabel(){}void updateOtaChannelLabel(){}
 static void showMain();static void showWifiMenu();static void showSoundMenu();static void showSleepMenu();static void showSensorsMenu();
 void enterWifiMenu(){s_sub=SUB_WIFI_MENU;++viewEntries;}void enterSoundMenu(){s_sub=SUB_SOUND_MENU;++viewEntries;}

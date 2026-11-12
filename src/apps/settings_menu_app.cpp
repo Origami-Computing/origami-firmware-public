@@ -141,6 +141,7 @@ static void showAbout();
 enum MainRow {
   ROW_WIFI = 0,
   ROW_SOUND,
+  ROW_HAPTICS,
   ROW_BRIGHTNESS,
   ROW_RECIPE_ALERTS,
   ROW_REPLAY_TUTORIAL,
@@ -160,6 +161,7 @@ enum MainRow {
 static const char* kLabels[kRows] = {
     "WiFi",
     "Sound",
+    "Haptics on",
     "Screen brightness",
     "Recipe alerts off",
     "Redo Tutorial",
@@ -177,6 +179,11 @@ static const char* kLabels[kRows] = {
 
 static char s_serverLabel[24] = "Server: Dev";
 static char s_recipeLabel[32] = "Recipe alerts off";
+static char s_hapticsLabel[32] = "Haptics on";
+static void updateHapticsLabel() {
+  snprintf(s_hapticsLabel,sizeof(s_hapticsLabel),"Haptics %s",services::vibration::hapticsEnabled()?"on":"off");
+  kLabels[ROW_HAPTICS]=s_hapticsLabel;
+}
 static void updateRecipeLabel() {
   snprintf(s_recipeLabel,sizeof(s_recipeLabel),"Recipe alerts %s",services::automation::recipeAlertsEnabled()?"on":"off");
   kLabels[ROW_RECIPE_ALERTS]=s_recipeLabel;
@@ -334,6 +341,7 @@ static void enterMainView() {
   s_needRedraw = true;
   updateServerLabel();
   updateRecipeLabel();
+  updateHapticsLabel();
   updateSleepLabel();
   ui::home_eyes::setTapHeartsEnabled(false);
   updateOtaChannelLabel();
@@ -414,10 +422,11 @@ static ui::ListItem settingsMainItemFn(int idx, void*) {
       static char draft[40];
       if(idx==ROW_SERVER) snprintf(draft,sizeof(draft),"Server: %s",core::secrets::serverModeName(static_cast<core::secrets::ServerMode>(s_valueDraft)));
       else if(idx==ROW_RECIPE_ALERTS) snprintf(draft,sizeof(draft),"Recipe alerts %s",s_valueDraft?"on":"off");
+      else if(idx==ROW_HAPTICS) snprintf(draft,sizeof(draft),"Haptics %s",s_valueDraft?"on":"off");
       else if(idx==ROW_OTA_CHANNEL) snprintf(draft,sizeof(draft),"Updates: %s",services::ota_client::releaseChannelName(static_cast<services::ota_client::ReleaseChannel>(s_valueDraft)));
       item.label=draft; item.editing=true; item.blinkOn=s_valueBlink;
     }
-    static const settings_icons::Icon* const icons[] = {&settings_icons::kWifi,&settings_icons::kVolume,&settings_icons::kBrightness,&settings_icons::kBell,&settings_icons::kTutorial,&settings_icons::kServer,&settings_icons::kMoon,&settings_icons::kSensors,&settings_icons::kChannel,&settings_icons::kDownload,&settings_icons::kPower,&settings_icons::kInfo,&settings_icons::kUpload,&settings_icons::kDelete,&settings_icons::kDownload};
+    static const settings_icons::Icon* const icons[] = {&settings_icons::kWifi,&settings_icons::kVolume,&settings_icons::kToggle,&settings_icons::kBrightness,&settings_icons::kBell,&settings_icons::kTutorial,&settings_icons::kServer,&settings_icons::kMoon,&settings_icons::kSensors,&settings_icons::kChannel,&settings_icons::kDownload,&settings_icons::kPower,&settings_icons::kInfo,&settings_icons::kUpload,&settings_icons::kDelete,&settings_icons::kDownload};
     static_assert(sizeof(icons)/sizeof(icons[0]) == kRows, "Settings icon row mapping");
     if (idx >= 0 && idx < kRows) setSettingsIcon(item,*icons[idx],idx==s_sel);
     return item;
@@ -581,6 +590,10 @@ static void finishValueEdit() {
     if(!services::automation::setRecipeAlertsEnabled(s_valueDraft)) {
       snprintf(s_recipeLabel,sizeof(s_recipeLabel),"Recipe alerts save failed");
     } else updateRecipeLabel();
+  } else if(s_sel==ROW_HAPTICS) {
+    if(!services::vibration::setHapticsEnabled(s_valueDraft)) {
+      snprintf(s_hapticsLabel,sizeof(s_hapticsLabel),"Haptics save failed");
+    } else updateHapticsLabel();
   } else if(s_sel==ROW_SERVER) {
     const bool ok = services::agent_transport::selectServerMode(static_cast<core::secrets::ServerMode>(s_valueDraft));
     updateServerLabel();
@@ -601,6 +614,7 @@ static void beginValueEdit() {
   }
   s_valueDraft=s_sub==SUB_SLEEP_MENU?core::sleep_timer::enabled():
       s_sel==ROW_RECIPE_ALERTS?services::automation::recipeAlertsEnabled():
+      s_sel==ROW_HAPTICS?services::vibration::hapticsEnabled():
       s_sel==ROW_SERVER?static_cast<int>(core::secrets::serverMode()):
       static_cast<int>(services::ota_client::releaseChannel());
   s_valueEditing=true; s_valueBlink=true; s_valueBlinkMs=millis(); s_needRedraw=true;
@@ -881,6 +895,7 @@ void onInput(hal::input::InputEvent ev) {
         showBrightness();
         return;
       case ROW_RECIPE_ALERTS: beginValueEdit(); return;
+      case ROW_HAPTICS: beginValueEdit(); return;
       case ROW_REPLAY_TUTORIAL:
         apps::tutorial::replay();
         return;

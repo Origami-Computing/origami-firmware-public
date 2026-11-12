@@ -33,8 +33,8 @@ code = r'''
 #include <cstdio>
 #include <cstring>
 bool s_valueEditing=true,s_needRedraw=false;int s_valueDraft=0;
-char s_otaChannelLabel[64],s_recipeLabel[64],s_serverLabel[64];
-enum {SUB_MAIN, SUB_SLEEP_MENU, ROW_SERVER, ROW_OTA_CHANNEL, ROW_RECIPE_ALERTS};
+char s_otaChannelLabel[64],s_recipeLabel[64],s_serverLabel[64],s_hapticsLabel[64];
+enum {SUB_MAIN, SUB_SLEEP_MENU, ROW_SERVER, ROW_OTA_CHANNEL, ROW_RECIPE_ALERTS, ROW_HAPTICS};
 int s_sub=SUB_MAIN,s_sel=ROW_SERVER;
 int currentMode=0;bool saveOk=true;
 int modeWrites=0,urlWrites=0,restarts=0,labels=0;
@@ -48,6 +48,7 @@ bool setBackendUrl(const char*){++urlWrites;return saveOk;}
 }}
 namespace services {
 namespace automation {bool setRecipeAlertsEnabled(bool){assert(false);return false;}}
+namespace vibration {bool setHapticsEnabled(bool){assert(false);return false;}}
 namespace agent_transport {void reconfigure(){++restarts;}
 ''' + operations + r'''
 }
@@ -59,6 +60,7 @@ void setDeveloperHold(bool){assert(false);}
 }}
 void updateSleepLabel(){assert(false);}
 void updateRecipeLabel(){assert(false);}
+void updateHapticsLabel(){assert(false);}
 void updateServerLabel(){++labels;}
 void updateOtaChannelLabel(){strcpy(s_otaChannelLabel,"Updates: Production");}
 ''' + confirmation + '\nbool serialSet(const char* url){\n' + serial_gate + r'''return ok;}
