@@ -36,6 +36,13 @@ bool bindEffect(bool selection,const core::haptic::Effect& effect);
 const core::haptic::Effect& boundEffect(bool selection);
 void setNavigationEnabled(bool enabled);
 bool navigationEnabled();
+// Saved user setting (Settings > Haptics), default on. Off refuses feedback
+// haptics: navigation clicks, the dizzy gesture, game pulses and Lua cues.
+// Alarm and Pomodoro alert vibration and explicit previews ignore it.
+// UI-task only. setHapticsEnabled returns false when the value could not be
+// saved; the previous setting then stays in effect.
+bool hapticsEnabled();
+bool setHapticsEnabled(bool enabled);
 void navigationFeedback(bool selection);
 enum class Cue : uint8_t { None, Scroll, Select, Back, Dizzy };
 const core::haptic::Effect& savedEffect(Cue cue);
