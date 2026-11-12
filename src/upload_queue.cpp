@@ -531,6 +531,8 @@ bool UploadQueue::processOnePending() {
             return true;
         }
         strlcpy(live->lastError, snapshot.lastError, sizeof(live->lastError));
+        if(!strcmp(m_deliveryPath,live->filePath) && result.kind!=UploadResultKind::Aborted)
+            strlcpy(m_deliveryError,snapshot.lastError,sizeof(m_deliveryError));
 
         if (result.kind == UploadResultKind::Aborted) {
             live->status = QSTATUS_PENDING;
@@ -1629,8 +1631,18 @@ void UploadQueue::watchDelivery(const char* path) {
     MutexGuard g(m_mutex);
     strlcpy(m_deliveryPath,path?path:"",sizeof(m_deliveryPath));
     m_deliveryConfirmed=false;
+    m_deliveryError[0]=0;
 }
 bool UploadQueue::deliveryConfirmed(const char* path) const {
     MutexGuard g(m_mutex);
     return path && path[0] && m_deliveryConfirmed && !strcmp(path,m_deliveryPath);
+}
+
+UploadQueue::Delivery UploadQueue::delivery(const char* path) const {
+    MutexGuard g(m_mutex);Delivery result;
+    if(g.taken && path && path[0] && !strcmp(path,m_deliveryPath)){
+        result.confirmed=m_deliveryConfirmed;
+        strlcpy(result.error,m_deliveryError,sizeof(result.error));
+    }
+    return result;
 }

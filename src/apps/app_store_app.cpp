@@ -31,7 +31,7 @@ void paintLoading(bool force=false) {
  ui::onboarding_scenes::scannerLoading(hal::display::canvas(),now-loadingAt);
  hal::display::markAllDirty();hal::display::flush();
 }
-char payload[256]{},message[64]{};
+char payload[256]{},message[64]{},installedName[49]{};
 bool bypass=false,ownsScanner=false,retryDownload=false;
 uint32_t job=0,progressFrame=0;
 widgets::storage::DownloadProgress progress;
@@ -66,6 +66,7 @@ bool frame(const hal::camera::CameraFrame& f){
  return grayReady;
 }
 void tick(uint32_t now){
+ if(tutorial && now-lastLoadingPaint>=40 && (step==Step::Install||step==Step::WaitNetwork||step==Step::Release||step==Step::Done)){lastLoadingPaint=now;hal::display::markAllDirty();}
  if(step==Step::Error){if(ownsScanner&&scanner.releaseStopped())ownsScanner=false;return;}
  if(step==Step::Start){
   paintLoading();
@@ -123,9 +124,15 @@ void tick(uint32_t now){
    progress=next;progressFrame=now/160;hal::display::markAllDirty();
   }
   services::custom_apps::Result result;
-  if(widgets::storage::take(job,result)){
+  services::custom_apps::Package package;
+  if(widgets::storage::take(job,result,&package)){
    job=0;
-   if(result==services::custom_apps::Result::Ok)setStep(Step::Done);
+   if(result==services::custom_apps::Result::Ok){
+    services::custom_apps::View view;
+    installedName[0]=0;
+    if(services::custom_apps::inspect(package.bytes,package.size,view)==services::custom_apps::Result::Ok)snprintf(installedName,sizeof(installedName),"%s",view.name);
+    setStep(Step::Done);
+   }
    else {
     using Result=services::custom_apps::Result;
     switch(result){
@@ -148,12 +155,14 @@ void tick(uint32_t now){
 }
 void input(hal::input::InputEvent ev){
  if(tutorial){
+  if(step==Step::Install||step==Step::WaitNetwork||step==Step::Release)return;
   using E=hal::input::EventType;
   if(ev.type==E::ButtonA_Tap){
+   if(step==Step::Done)return;
    if(step==Step::Error){if(!ownsScanner){retryDownload=false;setStep(Step::Start);started=millis();}return;}
    tutorialResult=TutorialResult::Back;NavHandler::instance().pop();return;
   }
-  if(ev.type==E::ButtonB_Tap){tutorialResult=step==Step::Done?TutorialResult::Installed:TutorialResult::Skipped;NavHandler::instance().pop();return;}
+  if(ev.type==E::ButtonB_Tap){if(step==Step::Error)return;tutorialResult=step==Step::Done?TutorialResult::Installed:TutorialResult::Skipped;NavHandler::instance().pop();return;}
   if(step==Step::Error){
    if(ev.type==E::Scroll){tutorialSelection=ev.delta>0?1:0;hal::display::markAllDirty();}
    if(ev.type==E::ButtonC_Tap){if(tutorialSelection){tutorialResult=TutorialResult::Skipped;NavHandler::instance().pop();}else if(!ownsScanner){retryDownload=false;setStep(Step::Start);started=millis();}}
@@ -172,7 +181,8 @@ void input(hal::input::InputEvent ev){
  }
 }
 // One stable 4 px grid and two existing font roles across every install state.
-constexpr uint16_t kPaper=0xFF9A, kInk=0x1926, kMint=0xAEB5, kRose=0xFDD6, kTrack=0xD6B5;
+// White page, ink text and hairline rules; only a failure is tinted.
+constexpr uint16_t kPaper=0xFFFF, kInk=0x1926, kRule=0xDEFB, kRose=0xFB2C, kTrack=0xDEFB;
 void label(ui::scene::Scene& s,const char* id,ui::Rect bounds,const char* text,uint16_t background,bool title=false){
  auto* node=s.addLabel(id,bounds,text,kInk,background,title?2:1,ui::scene::TextAlign::TopCenter);
  if(node)node->font=title?1:2;
@@ -180,10 +190,10 @@ void label(ui::scene::Scene& s,const char* id,ui::Rect bounds,const char* text,u
 void build(ui::scene::Scene& s,int16_t,int16_t){
  s.clear();s.addRect("store.bg",{0,0,280,202},kPaper);
  const bool failed=step==Step::Error;
- const uint16_t accent=failed?kRose:kMint;
- s.addRect("store.heading",{12,12,256,44},accent,8);
+ const uint16_t rule=failed?kRose:kRule;
  const char* title=step==Step::Done?"App installed":failed?"Let's try again":"Install an app";
- label(s,"store.title",{16,24,248,24},title,accent,true);
+ label(s,"store.title",{16,24,248,24},title,kPaper,true);
+ s.addRect("store.heading",{24,60,232,1},rule);
  const char* body=step==Step::Choose?"Pick an app in the store.\nScan its QR to install.":step==Step::Confirm?"App QR found.\nReady to install?":step==Step::Done?"Ready in Custom Apps.\nYour other apps are unchanged.":failed?message:step==Step::Install?"Downloading app...":(step==Step::Release||step==Step::WaitNetwork)?"Connecting to Wi-Fi...":"Starting the camera...";
  char progressText[48];
  if(step==Step::Install){
@@ -200,14 +210,14 @@ void build(ui::scene::Scene& s,int16_t,int16_t){
  label(s,"store.body",{16,76,248,20},lines,kPaper);
  if(second)label(s,"store.body2",{16,100,248,20},second,kPaper);
  if(step==Step::Choose)label(s,"store.connection",{16,132,248,20},hal::wifi::connected()?"No account needed":"Wi-Fi needed to download",kPaper);
- s.addRect("store.footer",{24,164,232,4},accent,2);
+ s.addRect("store.footer",{24,164,232,1},rule);
  label(s,"store.hint",{16,172,248,20},step==Step::Choose?"C: scan QR   A: back":step==Step::Confirm?"C: install   A: cancel":step==Step::Done?"C: return to apps":failed?(retryDownload?"C: retry   A: cancel":"C: scan again   A: back"):"A: cancel",kPaper);
 }
 void draw(TFT_eSprite& canvas){if(bypass)return;
  if(step==Step::Start||step==Step::Prepare){ui::onboarding_scenes::scannerLoading(canvas,millis()-loadingAt);return;}
  if(tutorial){
   unsigned page=step==Step::Done?132:step==Step::Error?131:step==Step::Install||step==Step::WaitNetwork||step==Step::Release?130:129;
-  ui::onboarding_scenes::render(canvas,page,millis()-started,tutorialSelection,step==Step::Error?message:step==Step::Done?"Ready in Custom Apps":"Please wait");
+  ui::onboarding_scenes::render(canvas,page,millis()-started,tutorialSelection,step==Step::Error?message:step==Step::Done?(installedName[0]?installedName:"Ready in Custom Apps"):"Please wait");
   hal::display::markAllDirty();return;
  }
 auto& s=ui::scene::scratchScene();build(s,280,202);s.render(canvas,0,38);hal::display::markAllDirty();}
@@ -228,6 +238,14 @@ const char* installDiagnostic(){return step==Step::Done?"installed":step==Step::
 #endif
 void beginTutorial(){requestTutorial=true;tutorialResult=TutorialResult::None;NavHandler::instance().push(&app);}
 TutorialResult takeTutorialResult(){auto result=tutorialResult;tutorialResult=TutorialResult::None;return result;}
+const char* lastInstalledName(){return installedName[0]?installedName:"Ready in Custom Apps";}
 App app=[] { App descriptor=SCENE_APP_CATALOG_LIFECYCLE_POLICIES("Install app","app-store",&screen,enter,exit,"src/apps/app_store_app.cpp",screens,nullptr,policy);
- descriptor.onCover=cover;descriptor.presentation=[](){return AppPresentation{false,tutorial,tutorial?AppPresentation::StatusBar::Hidden:AppPresentation::StatusBar::Default};};return descriptor;}();
+ descriptor.onCover=cover;
+ // The scanner loading view paints and flushes the whole panel from tick, so the
+ // status bar must not be composited over it, or the two alternate every frame.
+ // The tutorial owns the whole panel too.
+ descriptor.presentation=[](){
+  const bool fullPanel=tutorial||step==Step::Start||step==Step::Prepare;
+  return AppPresentation{fullPanel,fullPanel,fullPanel?AppPresentation::StatusBar::Hidden:AppPresentation::StatusBar::Default};};
+ return descriptor;}();
 } }

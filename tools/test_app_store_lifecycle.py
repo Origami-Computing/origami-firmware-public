@@ -35,7 +35,7 @@ namespace nav {bool isBackTap(hal::input::InputEvent e){return e.type==hal::inpu
 namespace scene {struct Screen{const char* name;void(*enter)();void(*exit)();void(*tick)(uint32_t);void(*input)(hal::input::InputEvent);bool(*chord)();void(*draw)(TFT_eSprite&);const char* id;void(*build)(ui::scene::Scene&,int16_t,int16_t);const uint16_t* background;};}
 struct NavHandler {static NavHandler& instance(){static NavHandler n;return n;}void runtimePolicyChanged(){}void pop(){}void push(App*){}};
 namespace services {
-namespace custom_apps {enum class Medium{Flash,Sd};enum class Result{Ok,Missing,Unavailable,Corrupt,Invalid,Incompatible,NoMemory,NoSpace,Io,Cancelled,Uncertain,Busy,Network};const char* resultName(Result){return "IO error";}}
+namespace custom_apps {enum class Medium{Flash,Sd};enum class Result{Ok,Missing,Unavailable,Corrupt,Invalid,Incompatible,NoMemory,NoSpace,Io,Cancelled,Uncertain,Busy,Network};const char* resultName(Result){return "IO error";}struct Package{uint8_t* bytes=nullptr;size_t size=0;};struct View{char name[49]="Test installed app";};Result inspect(const uint8_t*,size_t,View&){return Result::Ok;}}
 namespace qr {std::string decoded;bool pollPayload(char* out,size_t n){if(decoded.empty())return false;snprintf(out,n,"%s",decoded.c_str());decoded.clear();return true;}}
 namespace wifi_qr {
 struct Session {
@@ -53,7 +53,7 @@ DownloadProgress reported;DownloadProgress downloadProgress(uint32_t){return rep
 
 unsigned queued=0,abandoned=0;bool complete=false,busy=false;services::custom_apps::Result result=services::custom_apps::Result::Ok;
 uint32_t requestDownload(const char*){if(busy)return 0;return ++queued;}
-bool take(uint32_t,services::custom_apps::Result& out){if(!complete)return false;out=result;complete=false;return true;}
+bool take(uint32_t,services::custom_apps::Result& out,services::custom_apps::Package*){if(!complete)return false;out=result;complete=false;return true;}
 void abandon(uint32_t id){abandoned=id;}
 }}
 '''+'\n#include "'+str(ROOT/'src/apps/app_store_app.cpp')+'"\n'+r'''
@@ -95,9 +95,18 @@ int main(){
  services::qr::decoded="not an app QR";tick(32);assert(step==Step::Error&&widgets::storage::queued==2);app.onExit();
  job=42;step=Step::Install;app.onExit();assert(job==0&&widgets::storage::abandoned==42);
  requestTutorial=true;app.onEnter();assert(step==Step::Start&&tutorial);
+ for(auto state:{Step::Start,Step::Release,Step::WaitNetwork,Step::Install,Step::Done,Step::Error}){
+  step=state;const auto presentation=app.presentation();
+  assert(presentation.contentUsesStatusArea&&presentation.hideAppOverlays&&presentation.statusBar==AppPresentation::StatusBar::Hidden);
+ }
+ step=Step::Start;
  input({ET::ButtonA_Tap});assert(tutorialResult==TutorialResult::Back);app.onExit();
  requestTutorial=true;app.onEnter();input({ET::ButtonB_Tap});assert(tutorialResult==TutorialResult::Skipped);app.onExit();
- requestTutorial=true;app.onEnter();step=Step::Done;input({ET::ButtonB_Tap});assert(tutorialResult==TutorialResult::Installed);app.onExit();
+ tutorialResult=TutorialResult::None;requestTutorial=true;app.onEnter();step=Step::Install;job=11;
+ input({ET::ButtonB_Tap});assert(step==Step::Install&&tutorialResult!=TutorialResult::Skipped);
+ widgets::storage::complete=true;tick(100);assert(step==Step::Done&&!strcmp(installedName,"Test installed app"));
+ tutorialResult=TutorialResult::None;input({ET::ButtonA_Tap});assert(tutorialResult==TutorialResult::None);
+ input({ET::ButtonB_Tap});assert(tutorialResult==TutorialResult::Installed);app.onExit();
  puts("PASS QR workflow: release before network, confirmation, Wi-Fi recovery, cover, startup failure, invalid QR and cancellation");
 }
 ''')

@@ -9,4 +9,5 @@ const char* installDiagnostic();
 #endif
 void beginTutorial();
 TutorialResult takeTutorialResult();
+const char* lastInstalledName();
 } }

@@ -104,6 +104,9 @@ public:
     // Watch before enqueue; observing a missing/failed/cancelled item is not success.
     void watchDelivery(const char* path);
     bool deliveryConfirmed(const char* path) const;
+    // Snapshot of the watched attempt; errors are retained after item retirement.
+    struct Delivery { bool confirmed=false; char error[48]={}; };
+    Delivery delivery(const char* path) const;
     bool workerRunning() const;
     const char* lastStatus() const { return m_lastStatus; }
 
@@ -158,6 +161,7 @@ public:
 private:
     char m_deliveryPath[96] = {};
     bool m_deliveryConfirmed = false;
+    char m_deliveryError[48] = {};
     enum class UploadResultKind : uint8_t {
         HttpResponse,
         RetryableFailure,

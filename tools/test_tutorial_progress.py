@@ -24,7 +24,7 @@ code+=(ROOT/'src/services/onboarding_progress.cpp').read_text()
 code+=r'''
 int main(){
  using namespace services::onboarding_progress;
- for(unsigned interest=0;interest<3;++interest)for(unsigned flags=0;flags<8;++flags)for(unsigned page=0;page<=141;++page){
+ for(unsigned interest=0;interest<3;++interest)for(unsigned flags=0;flags<8;++flags)for(unsigned page=0;page<=143;++page){
   if(page==44)continue;
   const bool done=flags&1,account=flags&2,wifi=flags&4;
   assert(save(page,done,interest,account,wifi));auto p=load();
@@ -32,7 +32,8 @@ int main(){
   if(page==12)expected=account&&interest?40:41;
   if(page==19||page==20)expected=18;
   if(page==23)expected=22;if(page==27)expected=25;
-  if(page==30||page==31||page==43)expected=40;
+  if(page==30||page==31||page==43||page==143)expected=40;
+  if(page==142)expected=120;
   if(page>=129&&page<=134)expected=128;if(page==124)expected=123;
   assert(p.page==expected&&p.completed==done&&p.interest==interest&&p.account==account&&p.joinWifi==wifi);
   unsigned before=writes;assert(save(page,done,interest,account,wifi));assert(writes==before);

@@ -458,6 +458,10 @@ void tick() {
     s_audioMode=s_restartAudio;s_restartPending=false;prepareWorkflow();enterView();return;
   }
   const auto status = hal::wifi::qrStatus();
+  if((s_tutorialMode||s_audioMode)&&s_state==State::SUCCESS&&now-s_audioPaint>=40){
+    s_audioPaint=now;ui::onboarding_scenes::render(hal::display::canvas(),106,now-s_successMs,0,s_statusLine);hal::display::markAllDirty();
+  }
+
   if(s_audioMode&&s_state==State::ERROR&&now-s_audioPaint>=40){s_audioPaint=now;drawStatusScreen(s_errorTitle,s_errorDetail,nullptr,false);}
 
 
