@@ -96,7 +96,7 @@ template<class C> void render(C& c,unsigned page,unsigned ms,unsigned selection,
 #endif
  else if(page==140){c.fillRect(0,0,280,240,0xffff);ui::onboarding_flow::promptArrows(c,ms);ui::onboarding_flow::nod(c,110,36,ms);
  ui::design::center(c,"With navigation complete",132);ui::design::center(c,"lets move on",156);}
- else if(page==126){c.fillRect(0,0,280,240,0xffff);ui::onboarding_flow::promptArrows(c,ms);ui::onboarding_flow::nod(c,110,24,ms);
+ else if(page==126){c.fillRect(0,0,280,240,0xffff);ui::onboarding_flow::promptArrows(c,ms,true,false);ui::onboarding_flow::nod(c,110,24,ms);
  ui::design::center(c,"Public apps only need Wi-Fi.",104,18);ui::design::center(c,"Set up now?",128,18);
  const char* labels[]={"Set up Wi-Fi","Skip for now"};const uint8_t* icons[]={assets::menu_icons::kWifi,ui::onboarding_proposals::kSkip};
  ui::onboarding_proposals::rows(c,labels,icons,2,selection,148,36);
@@ -139,7 +139,7 @@ template<class C> void render(C& c,unsigned page,unsigned ms,unsigned selection,
  else if(page>=120&&page<=134){
   using namespace ui::onboarding_flow;
   const uint16_t paper=page==132?kUiSuccessBg:0xffff;
-  c.fillRect(0,0,280,240,paper);if(page!=130)promptArrows(c,ms,page!=132,true,paper);
+  c.fillRect(0,0,280,240,paper);if(page!=130)promptArrows(c,ms,page!=132,page!=123,paper);
   if(page==128){qr(c,page,selection==0,ms);}
   else if(page==129){c.fillRect(0,0,280,240,0);qr_scanner_view::overlay(c);c.fillRect(0,0,280,35,0xffff);ui::design::center(c,"Hold steady over app QR",14,18);c.fillRect(0,194,280,46,0xffff);ui::design::choice(c,"A back",24,194,112,30,false);ui::design::choice(c,"B skip",144,194,112,30,false);}
   else if(page==121||page==133||page==134){
