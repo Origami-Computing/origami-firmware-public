@@ -67,6 +67,7 @@ jobs:
             --environment esp32-s3-menu-n16r8-release-review \
             --framework "$HOME/.platformio/packages/framework-arduinoespressif32" \
             --output dist/source-review.tar.gz
+          python3 tools/check_public_distribution.py --archive dist/source-review.tar.gz
           python3 - <<'PYCODE'
           import hashlib, pathlib
           root = pathlib.Path('.')

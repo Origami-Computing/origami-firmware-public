@@ -45,6 +45,7 @@ jobs:
           mkdir dist
           gh release download "$CANDIDATE_TAG" --dir dist --pattern firmware.bin --pattern latest.json --pattern REVIEW.json --pattern REVIEW.txt --pattern LICENSE --pattern THIRD_PARTY_NOTICES.md --pattern source-review.tar.gz --pattern NOTICES-REVIEW.txt --pattern SHA256SUMS.txt
           python3 tools/verify_release_candidate.py --directory dist --version "$VERSION"
+          python3 tools/check_public_distribution.py --archive dist/source-review.tar.gz
       - name: Assume existing Public-only publisher role
         uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c
         with:
