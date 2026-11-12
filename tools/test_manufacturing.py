@@ -55,7 +55,7 @@ int main(){
  assert(!verifyImage(100,"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
  assert(!verifyImage(1024,"invalid"));
  assert(verifyImage(1024,"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
- assert(markOnline(true));assert(markClean());assert(readyToArm());assert(markUnlock());
+ assert(markOnline(true));assert(!awaitingShipment());assert(markClean());assert(awaitingShipment());assert(readyToArm());assert(markUnlock());assert(!awaitingShipment());assert(markClean());assert(awaitingShipment());assert(markUnlock());
  using services::ota_client::ReleaseChannel;
  services::ota_client::channel=ReleaseChannel::Public;ota=false;
  assert(!readyToArm());assert(markPublicOnline());assert(readyToArm());

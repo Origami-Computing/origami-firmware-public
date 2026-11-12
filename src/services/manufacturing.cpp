@@ -111,7 +111,8 @@ bool verifyImage(uint32_t bytes,const char* expected){
 }
 bool markBench(){Record r;if(!read(r)||!current(r)||!r.imageVerified)return false;r.bench=1;r.clean=r.unlocked=0;return save(r);}
 bool markPublicOnline(){Record r;if(!read(r)||!current(r)||ota_client::releaseChannel()!=ota_client::ReleaseChannel::Public)return false;r.online=3;return save(r);}
-bool markClean(){Record r;if(!read(r)||!current(r))return false;r.clean=1;return save(r);}
+bool awaitingShipment(){Record r;return read(r)&&current(r)&&r.clean&&!r.unlocked;}
+bool markClean(){Record r;if(!read(r)||!current(r))return false;r.clean=1;r.unlocked=0;return save(r);}
 bool markUnlock(){Record r;if(!read(r)||!current(r)||(!r.clean&&!manualStep(3)))return false;r.unlocked=1;return save(r);}
 bool resetTutorial(){Preferences p;if(!p.begin("onboarding",false))return false;bool ok=p.clear();p.end();return ok;}
 bool tutorialReady(){Preferences p;if(!p.begin("onboarding",true))return false;bool ready=!p.getBool("offered",false)&&!p.getUInt("guide_v5",0)&&!p.getUInt("guide_v4",0)&&!p.getUInt("guide_v3",0);p.end();return ready;}

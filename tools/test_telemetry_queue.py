@@ -40,6 +40,8 @@ struct SDT {bool remove(const char*){return true;} bool rename(const char*,const
 bool deny=false;
 using namespace core::telemetry_queue;
 int main(){
+ init(false);enqueue(KIND_USAGE,"boot");enqueue(KIND_LOG,"warning");
+ Item disabled;assert(!hasPending()&&snapshot(&disabled,1)==0&&stats().queued==0);
  init();
  for(int i=0;i<kMaxItems-8;i++){char b[30];snprintf(b,sizeof(b),"event-%d",i);enqueue(KIND_VERBOSE,b);}
  enqueue(KIND_VERBOSE,"dropped"); assert(stats().droppedVerbose==1);

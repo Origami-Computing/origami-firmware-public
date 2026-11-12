@@ -19,6 +19,8 @@ bool verifyImage(uint32_t bytes, const char* expected);
 bool markOnline(bool production);
 // Distinct from private credential roles; admitted only after signed Public download.
 bool markPublicOnline();
+// Suppress new telemetry after cleanup until physical shipping unlock.
+bool awaitingShipment();
 bool markClean();
 bool markUnlock();
 bool resetTutorial();

@@ -20,3 +20,8 @@ shipping; private channels retain credential verification. Cleanup supports
 credential-free Public devices while preserving calibration, protected assets,
 and manufacturing evidence. First-boot sound-effects volume is 100%; the speaker
 gain ceiling remains 20%. Existing saved volume preferences are retained.
+
+After verified cleanup, telemetry collection stays disabled across the verification
+reboot until physical shipping unlock. This prevents boot/tutorial usage events
+from recreating personal-data files before packing. The inventory check still
+rejects any nonempty telemetry journal; no file is silently exempted.

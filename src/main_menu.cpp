@@ -80,6 +80,7 @@
 #include "core/secrets.h"
 #include "core/telemetry.h"
 #include "core/telemetry_queue.h"
+#include "services/manufacturing.h"
 #include "core/watchdog.h"
 #include "core/sleep_timer.h"
 #include "hal/hal_ble.h"
@@ -528,7 +529,9 @@ void setup() {
     // Telemetry: ring/breadcrumb first, then the SD-backed queue (SD was mounted
     // by board bringup above).
     core::telemetry::init();
-    core::telemetry_queue::init();
+    // Cleanup must stay empty through its verification reboot. Resume on the
+    // real customer shipping unlock, never just a manufacturing USB session.
+    core::telemetry_queue::init(shippingWakeAuthorized || !services::manufacturing::awaitingShipment());
     // Report a prior crash/freeze. MUST run before watchdog::init() (which clears
     // the hung-task attribution table) so a TASK_WDT reset names the stalest task.
     core::crash_report::reportBootReason();
