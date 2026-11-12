@@ -17,6 +17,8 @@ void printStatus();
 bool printImageHash(uint32_t bytes);
 bool verifyImage(uint32_t bytes, const char* expected);
 bool markOnline(bool production);
+// Distinct from private credential roles; admitted only after signed Public download.
+bool markPublicOnline();
 bool markClean();
 bool markUnlock();
 bool resetTutorial();

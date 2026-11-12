@@ -2,6 +2,7 @@
 #include "services/manufacturing.h"
 #include "services/background_network.h"
 #include "services/ota_access.h"
+#include "services/ota_client.h"
 #include "hal/hal_sd.h"
 #include "hal/hal_bus.h"
 #include "core/watchdog.h"
@@ -65,13 +66,13 @@ bool scrubNvs(const char* ota){
     Preferences factory;if(!factory.begin("factory",false))return false;
     bool ok=!factory.isKey("wifi_ssid")||factory.remove("wifi_ssid");factory.end();
     if(!ok||!ota_access::store(ota))return false;
-    char readback[ota_access::kKeySize];return ota_access::read(readback)&&!strcmp(ota,readback);
+    char readback[ota_access::kKeySize]={};bool present=ota_access::read(readback);return *ota?present&&!strcmp(ota,readback):!present&&!readback[0];
 }
 }
 void printStatus(){Preferences p;bool clean=p.begin("station",true)&&p.getBool("clean",false);p.end();Serial.printf("STATION SCRUB clean=%u schema=1\n",clean);}
 bool scrubAndRestart(){
     if(!hal::sd::mounted())return false;
-    char ota[ota_access::kKeySize];if(!ota_access::read(ota))return false;
+    char ota[ota_access::kKeySize]={};if(!ota_access::read(ota)&&ota_client::releaseChannel()!=ota_client::ReleaseChannel::Public)return false;
     background_network::RadioPause pause;
     if(pause.acquire()!=background_network::RadioPause::Result::Acquired)return false;
     // Invalidate a previous receipt before any deletion.

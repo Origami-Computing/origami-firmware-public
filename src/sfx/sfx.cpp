@@ -14,7 +14,7 @@ namespace {
 constexpr char kPrefsNs[] = "sfxvol";
 constexpr char kVolumeKey[] = "ui";
 
-int s_volume = 80;
+int s_volume = 100;
 bool s_loaded = false;
 
 int clampVolume(int v) {

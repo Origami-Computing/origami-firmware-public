@@ -31,7 +31,7 @@ struct Record {
 bool read(Record& r) {
  Preferences p; if(!p.begin("manufacturing",true))return false;
  bool ok=p.getBytesLength("report")==sizeof(r)&&p.getBytes("report",&r,sizeof(r))==sizeof(r);p.end();
- return ok&&r.schema==3&&!(r.passed&~kAll)&&!(r.failed&~kAll)&&!(r.passed&r.failed)&&r.online<=2&&r.clean<=1&&r.unlocked<=1&&r.imageVerified<=1&&r.bench<=1&&memchr(r.testedVersion,0,sizeof(r.testedVersion));
+ return ok&&r.schema==3&&!(r.passed&~kAll)&&!(r.failed&~kAll)&&!(r.passed&r.failed)&&r.online<=3&&r.clean<=1&&r.unlocked<=1&&r.imageVerified<=1&&r.bench<=1&&memchr(r.testedVersion,0,sizeof(r.testedVersion));
 }
 bool current(const Record& r){return !writeFailed&&!memcmp(r.elf,esp_ota_get_app_description()->app_elf_sha256,32);}
 bool save(const Record& r){Preferences p;if(!p.begin("manufacturing",false)){writeFailed=true;return false;}bool ok=p.putBytes("report",&r,sizeof(r))==sizeof(r);p.end();if(!ok)writeFailed=true;return ok;}
@@ -110,6 +110,7 @@ bool verifyImage(uint32_t bytes,const char* expected){
  r.imageVerified=1;r.imageBytes=bytes;memcpy(r.imageHash,digest,32);return save(r);
 }
 bool markBench(){Record r;if(!read(r)||!current(r)||!r.imageVerified)return false;r.bench=1;r.clean=r.unlocked=0;return save(r);}
+bool markPublicOnline(){Record r;if(!read(r)||!current(r)||ota_client::releaseChannel()!=ota_client::ReleaseChannel::Public)return false;r.online=3;return save(r);}
 bool markClean(){Record r;if(!read(r)||!current(r))return false;r.clean=1;return save(r);}
 bool markUnlock(){Record r;if(!read(r)||!current(r)||(!r.clean&&!manualStep(3)))return false;r.unlocked=1;return save(r);}
 bool resetTutorial(){Preferences p;if(!p.begin("onboarding",false))return false;bool ok=p.clear();p.end();return ok;}
@@ -119,7 +120,7 @@ bool readyToArm(bool testMode,bool candidateMode){
  if(!read(r)||!current(r)|| (candidateMode&&(!core::release_policy::integrationCandidate||!core::release_policy::productionOnly||testMode)))return false;
  const uint32_t m=manualSteps();
  return ((m&1u)||(r.imageVerified&&(testMode?r.bench==1:(!r.bench&&core::release_policy::productionOnly&&(ota_client::isOfficialBuild()||candidateMode)))))
- &&((m&2u)||(r.passed==kAll&&!r.failed&&r.online==2&&ota_client::hasAuthToken()))
+ &&((m&2u)||(r.passed==kAll&&!r.failed&&(ota_client::releaseChannel()==ota_client::ReleaseChannel::Public?r.online==3:(r.online==2&&ota_client::hasAuthToken()))))
  &&((m&4u)||(r.clean&&!c.apiKey[0]&&!core::secrets::hasDeviceToken()&&!core::secrets::wifiNetworkCount()));
  // The shipping control resets tutorial progress after app teardown and refuses
  // to arm if that reset fails. Prior tutorial progress must not prevent re-arm.
