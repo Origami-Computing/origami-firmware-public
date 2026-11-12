@@ -12,3 +12,6 @@ __pycache__/
 *.py[cod]
 .DS_Store
 /.cache/
+/.firmware-tool.json
+/.ota-provisioning.json
+/.origami/

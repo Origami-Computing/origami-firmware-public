@@ -11,8 +11,10 @@ from pathlib import Path
 import subprocess
 import tarfile
 import urllib.request
+from check_public_distribution import check_paths, check_tracked
 
 root = Path(__file__).resolve().parents[1]
+check_tracked()
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--environment', required=True)
 p.add_argument('--framework', type=Path, required=True)
@@ -57,6 +59,7 @@ with urllib.request.urlopen(font_url, timeout=60) as response:
 if hashlib.sha256(font_source).hexdigest() != '0d62e2e22655f841c3ac5fb8c8059a52fe2c09c695d9e8eda9903406e942657a':
     raise SystemExit('GNU FreeFont source checksum mismatch')
 manifest=[]
+check_paths(name for _, name in entries)
 a.output.parent.mkdir(parents=True,exist_ok=True)
 with tarfile.open(a.output,'w:gz') as archive:
     def put(name, data):

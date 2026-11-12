@@ -46,6 +46,31 @@ For every new dependency or asset, record origin, pinned version/hash, applicabl
 
 Use [distribution requirements](distribution.md), `third_party/dependencies.json`, `third_party/sdk-provenance.json` and the retained notices. Resolve nested SDK classification before declaring the binary cleared. Classify security advisories against the actual chip, build configuration and reachable APIs; record mitigations and unresolved exposure. A version number or a successful build alone cannot establish that a vulnerable path is absent.
 
+### Keep manufacturing tooling private
+
+The manufacturing dashboard, station credential provisioning, private-release
+retrieval, and their dedicated helpers remain in the private repository. Do not
+copy them here during promotion. Retain public firmware services, public OTA
+publishing, host tests, licenses and required build helpers. Review shared
+dependencies before excluding them. No customer updater is required.
+
+Run `python3 tools/check_public_distribution.py` before pushing a promotion
+branch. CI repeats this check. Source packaging checks its input paths; release,
+qualification and publication workflows also inspect the source archive with
+`--archive dist/source-review.tar.gz`. Update the known-path policy when internal
+tooling is renamed or added. Failures block the operation instead of silently
+omitting files.
+
+Never package the workstation directory wholesale. Local station configuration,
+`.origami` recovery data and `.pio` output must remain private. The source packager
+copies reviewed dependency material under dedicated archive paths, rather than
+copying the build directory. Ignore rules do not protect already tracked files.
+
+This path policy complements credential scanning and history review; it does not
+replace them or inspect binary contents. Review other release assets separately.
+These changes alter the source digest, so prepare a new candidate and approval
+before publication. Existing releases and the private tool remain unchanged.
+
 ## 3. Integrate and validate the public snapshot
 
 Open a PR against public `main`. Describe behavior changes, intentional exclusions, retained security differences and the checks actually run. Required CI must pass on the final revision. Keep main protection, required checks, force-push prevention and deletion prevention enabled; do not bypass a failed check to create a release.

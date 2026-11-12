@@ -17,6 +17,8 @@ jobs:
       - name: Security and architecture regressions
         run: |
           python3 tools/check_tracked_secrets.py
+          python3 tools/check_public_distribution.py
+          python3 tools/test_public_distribution.py
           python3 tools/check_architecture_dependencies.py
           python3 tools/test_architecture_dependencies.py
           python3 tools/test_security_boundaries.py
