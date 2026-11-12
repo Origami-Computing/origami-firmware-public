@@ -1,6 +1,8 @@
 #pragma once
 // Canonical onboarding copy. Kami Screen Studio edits these native constants.
 namespace ui { namespace onboarding_copy {
+static constexpr const char* build_browse = "Please follow the link on the next page to start building.";
+static constexpr const char* published_browse = "Please follow the link on the next page to view public apps.";
 static constexpr const char* welcome_title = "Hi, I'm Kami!";
 static constexpr const char* welcome_prompt_1 = "Press any button to";
 static constexpr const char* welcome_prompt_2 = "learn controls";
@@ -47,7 +49,7 @@ static constexpr const char* listen_switch = "Press C to try QR";
 static constexpr const char* scanner_title = "Hold still over QR";
 static constexpr const char* scanner_switch = "Press C to try audio";
 static constexpr const char* nav_congrats = "Congrats, you're all done!";
-static constexpr const char* nav_reminder = "Need a reminder? Open Menu > Settings > Redo Tutorial.";
+static constexpr const char* nav_reminder = "To redo this tutorial, open Menu > Settings > Redo Tutorial.";
 static constexpr const char* nav_talk = "Hold A+B together while speaking to talk to me.";
 static constexpr const char* nav_wheel = "Rotate the scroll wheel\nto open my menu";
 }}

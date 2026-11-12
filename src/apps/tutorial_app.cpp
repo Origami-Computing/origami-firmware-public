@@ -54,6 +54,25 @@ services::photos::Target s_photo;
 // service owns its own overlapping network lease; release only after receipt.
 services::agent_coordination::TransportPause s_photoTransport;
 bool s_photoQueued=false,s_reviewCached=false;
+char s_photoError[80]={};
+enum class PhotoStop { None, Review, Failure, Retake };
+PhotoStop s_photoStop=PhotoStop::None;
+// Remove only this photo's queue reference after the worker releases it. A busy
+// transfer keeps ownership; never delete or resubmit its source in the meantime.
+bool releasePhotoQueue(){
+ if(!s_photoQueued)return true;
+ auto* q=services::uploads::readyQueue();if(!q)return false;
+ UploadQueue::FileMutation mutation(*q,s_photo.path,true);
+ if(!mutation.ready())return false;
+ s_photoQueued=false;return true;
+}
+void describePhotoError(const char* reason){
+ const char* text=reason;
+ if(strstr(reason,"401")||strstr(reason,"403")||strstr(reason,"credentials"))text="Sign in again on your phone, then retry.";
+ else if(strstr(reason,"Timeout")||strstr(reason,"receipt"))text="The server did not confirm delivery. Try again.";
+ else if(strstr(reason,"Connect")||strstr(reason,"Wi-Fi"))text="Wi-Fi disconnected. Reconnect and try again.";
+ snprintf(s_photoError,sizeof(s_photoError),"%s",text);
+}
 std::string s_wrapped;
 onboarding::TextPlayback s_text;
 bool s_talkPending=false,s_agentStarted=false;
@@ -112,7 +131,7 @@ unsigned legacyReadyAt(){if(s_flow.page==8||s_flow.page==14||s_flow.page==30||s_
 void serviceSpeech(unsigned ms){
  static unsigned phase=0;
  if(s_flow.page!=124){stopSpeech();phase=0;s_speechLetters=0;return;}
- const auto speech=onboarding::DemoSpeech::at(ms);
+ const auto speech=onboarding::DemoSpeech::at(ms%11000);
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
  if(s_frozen){stopSpeech();phase=speech.phase;s_speechLetters=speech.count;return;}
 #endif
@@ -154,7 +173,7 @@ void prepareWorkflow(){
  if(!s_active){s_active=true;load();s_flow.reset();}
  else if(s_flow.page==12){if(s_flow.interest||s_flow.setupPublished)s_flow.account=core::secrets::backendConfig().apiKey[0]!=0;s_flow.wifiReturned(apps::wifi_setup::takeTutorialResult());}
  else if(s_flow.page==19){s_flow.connected=s_flow.connected||hal::wifi::connected();s_flow.menuReturned();}
- else if(s_flow.page==129){auto result=apps::app_store::takeTutorialResult();s_flow.installed=result==apps::app_store::TutorialResult::Installed;s_flow.setPage(result==apps::app_store::TutorialResult::Back?128:133);}
+ else if(s_flow.page==129){auto result=apps::app_store::takeTutorialResult();s_flow.installed|=result==apps::app_store::TutorialResult::Installed;s_flow.setPage(result==apps::app_store::TutorialResult::Back?128:133);}
  else if(s_flow.page==30){auto photo=apps::camera_menu::takeTutorialPhoto();if(photo.valid()){s_photo=photo;s_photoQueued=false;s_flow.page=31;Serial.println("[tutorial-photo] review camera_released=1 reconnect_requested=1 queued=0");}else{s_photoTransport.release();s_flow.page=40;}}
  refreshCopy();
  save();
@@ -205,8 +224,18 @@ void tick(uint32_t now){
  if(s_flow.page==34){if(elapsed()>=6500){s_flow.outroFinished();finish();}return;}
  if(s_flow.page==30){if(s_photoTransport.pollAcquire())apps::camera_menu::beginTutorialCapture();return;}
  if(s_flow.page==Flow::kSending){
-  const auto* queue=services::uploads::readyQueue();
-  if(queue&&queue->deliveryConfirmed(s_photo.path)){Serial.println("[tutorial-photo] server receipt confirmed");s_photoTransport.release();s_flow.photoDelivered();s_photo={};s_photoQueued=false;changed();}return;
+  auto* queue=services::uploads::readyQueue();
+  const auto delivery=queue?queue->delivery(s_photo.path):UploadQueue::Delivery{};
+  if(delivery.confirmed){Serial.println("[tutorial-photo] server receipt confirmed");s_photoTransport.release();s_photoStop=PhotoStop::None;s_flow.photoDelivered();s_photo={};s_photoQueued=false;changed();return;}
+  if(s_photoStop==PhotoStop::None){
+   const char* reason=delivery.error[0]?delivery.error:!hal::wifi::connected()&&elapsed()>15000?"Wi-Fi disconnected":elapsed()>90000?"Timeout":nullptr;
+   if(reason){describePhotoError(reason);s_photoStop=PhotoStop::Failure;}
+  }
+  if(s_photoStop!=PhotoStop::None&&releasePhotoQueue()){
+   const auto action=s_photoStop;s_photoStop=PhotoStop::None;
+   s_flow.setPage(action==PhotoStop::Failure?Flow::kPhotoError:31);changed();
+  }
+  return;
  }
  // Speech is serviced after painting, synchronized to the visible text.
  // QR scan begins on explicit B after the instructions, as approved.
@@ -238,7 +267,7 @@ void onInput(hal::input::InputEvent ev){
   case ET::Scroll:if(!ev.delta)return;input=Input::Rotate;break;
   default:return;
  }
- if(s_flow.page==Flow::kSending)return;
+ if(s_flow.page==Flow::kSending){if(input==Input::A)s_photoStop=PhotoStop::Review;return;}
  if(input==Input::Rotate){
   if(s_flow.turn(ev.delta)){services::vibration::navigationFeedback(services::vibration::Cue::Select);changed();
    if(s_flow.page==19){s_backCount=0;NavHandler::instance().push(&apps::menu::app);}
@@ -246,12 +275,21 @@ void onInput(hal::input::InputEvent ev){
   }
   if(s_flow.page==22){s_text.turn(ev.delta,ui::onboarding_intro::lineCount(dialogueCopy()),textRows(),0);s_dirty=true;}return;
  }
- if(s_flow.page==31){
-  if(input==Input::B&&!s_photoQueued){
+ if(s_flow.page==31||s_flow.page==Flow::kPhotoError){
+  const bool retry=s_flow.page==31?input==Input::B:input==Input::C&&s_flow.selection==0;
+  const bool retake=input==Input::A||(s_flow.page==Flow::kPhotoError&&input==Input::C&&s_flow.selection==1);
+  if(retry){
+   if(!s_photo.valid()){describePhotoError("Photo unavailable. Retake it.");s_flow.setPage(Flow::kPhotoError);changed();return;}
    auto& q=services::uploads::queue();q.watchDelivery(s_photo.path);
-   if(!services::photos::enqueue(s_photo)){ui::design::instruction(hal::display::tft(),"Queue full. B retries");hal::display::markAllDirty();return;}
-   s_photoQueued=true;Serial.println("[tutorial-photo] queued; waiting for server receipt");
-  }else if(input==Input::A){if(s_photo.valid()&&!s_photoQueued)hal::sd::removeFile(s_photo.path);s_photo={};s_photoQueued=false;}
+   if(!services::photos::enqueue(s_photo)){describePhotoError("Upload queue unavailable. Try again.");s_flow.setPage(Flow::kPhotoError);changed();return;}
+   s_photoQueued=true;s_photoError[0]=0;s_photoStop=PhotoStop::None;
+   s_flow.setPage(Flow::kSending);changed();return;
+  }
+  if(retake){
+   if(!releasePhotoQueue())return;
+   if(s_photo.valid())hal::sd::removeFile(s_photo.path);
+   s_photo={};s_flow.setPage(30);changed();return;
+  }
  }
  if(s_flow.page==Flow::kLogin&&input==Input::B&&(s_flow.interest||s_flow.setupPublished))s_flow.account=core::secrets::backendConfig().apiKey[0]!=0;
  if(!s_flow.input(input)){services::vibration::suppressInputFeedback();return;}
@@ -329,12 +367,15 @@ void draw(TFT_eSprite& c){
   if(onboarding::Controls::accepts(s_flow.page))snprintf(detail,sizeof(detail),"%.1f,%u,%u",s_controls.angleDegrees(),s_controls.held,s_controls.success);
   if(s_flow.page==Flow::kBuildConnect)selection=s_usbSuccessAt?1:0;
   if(s_flow.page>=40&&s_flow.page<=42||s_flow.page==128)selection=ORIGAMI_STAGING_BUILD?0:1;
+  if(s_flow.page==Flow::kPhotoError)snprintf(detail,sizeof(detail),"%s",s_photoError);
+  if(s_flow.page==Flow::kPhotoSent)snprintf(detail,sizeof(detail),"Available in your account");
+  if(s_flow.page==132)snprintf(detail,sizeof(detail),"%s",apps::app_store::lastInstalledName());
   if(s_flow.page==133||s_flow.page==134)selection=s_flow.installed?1:0;
   if(s_flow.page==133||s_flow.page==134){
    const char* names[services::custom_apps::kCatalogEntries];
    const unsigned count=s_apps?s_apps->count:0;
    for(unsigned i=0;i<count;++i)names[i]=s_apps->entries[i].name;
-   ui::onboarding_scenes::customMenu(c,s_flow.installed,s_flow.page==134,names,count);
+   ui::onboarding_scenes::customMenu(c,s_flow.installed,s_flow.page==134,ms,names,count);
   }else ui::onboarding_scenes::render(c,s_flow.page,ms,selection,detail);
  }
  serviceSpeech(ms);
@@ -449,7 +490,7 @@ bool restartForTesting(){
 }
 void printStatus(){Serial.printf("[tutorial] compositedHints=%u\n",s_compositedHints);Serial.printf("[tutorial-route] interest=%u account=%u wifi=%u selection=%u\n",s_flow.interest,s_flow.account,s_flow.joinWifi,s_flow.selection);const auto audio=sfx::typewriterStats();Serial.printf("[tutorial] page=%u elapsed=%u ready=%u active=%u practiced=%u completed=%u reveal=%u scroll=%u agent=%u recording=%u thinking=%u reply=%u error=%u drawUs=%lu fps=%.1f saved=%08lx speechOpen=%u speechBlips=%u audioBlips=%lu audioAvgGap=%lu audioMaxGap=%lu motion=%u\n",s_flow.page,elapsed(),readyAt(),isActive(),s_flow.practiced,s_completed,s_text.offset,s_text.scroll,s_talkPending,apps::agent::isRecording(),apps::agent::isSending(),apps::agent::isOnReplyScreen(),apps::agent::isShowingError(),(unsigned long)s_drawUs,hal::display::currentFps(),(unsigned long)services::onboarding_progress::savedRecordForDevelopment(),s_speechOpen,s_speechBlips,(unsigned long)audio.played,(unsigned long)(audio.played>1?audio.totalGapMs/(audio.played-1):0),(unsigned long)audio.maxGapMs,s_motionReady);}
 bool debugSeek(unsigned page,unsigned ms){
- if(!isActive()||page>141||(page>=12&&page<=15)||page==19||page==20||page==23||page==27||page==30||page==31)return false;
+ if(!isActive()||page>143||(page>=12&&page<=15)||page==19||page==20||page==23||page==27||page==30||page==31)return false;
  s_preview=false;stopSpeech();s_speechLetters=s_speechBlips=0;releaseDialogue();s_text.reset();s_scrollFrom=s_scrollTarget=0;s_scrollAt=millis();s_flow.setPage(page==26?25:page);s_controls.reset(s_flow.page);s_controlSuccessDrawn=false;refreshCopy();s_scanAfter=readyAt()+kScanReadingPauseMs;s_text.scroll=0;s_frozen=true;s_frozenMs=ms;prepareMotion();s_dirty=true;return true;
 }
 bool debugPreview(unsigned page,unsigned ms,unsigned selection,const char* detail){

@@ -16,9 +16,7 @@
 #include "widgets/app.h"
 #include "services/vibration.h"
 #include "apps/app_store_app.h"
-#include "apps/steps_app.h"
 #include "assets/menu_icons.h"
-#include "builtin_muni5.h"
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
@@ -55,38 +53,6 @@ namespace {
 // buffers are not resident while a widget is foreground.
 constexpr size_t kMemCeilingBytes = 128u * 1024u;
 
-// Built-in fallback widget: a rotary-adjusted counter. Always listed last in
-// the picker so the app works with no SD card at all.
-const char kSampleWidget[] = R"LUA(
-local count = 0
-local bg     = kami.draw.rgb(12, 14, 20)
-local accent = kami.draw.rgb(120, 200, 255)
-local muted  = kami.draw.rgb(120, 128, 140)
-
-function widget.start()
-  count = 0
-  kami.log("counter widget started")
-end
-
-function widget.draw(now)
-  kami.draw.rect("bg", 0, 0, kami.W, kami.H, bg)
-  kami.draw.label("title", 0, 18, kami.W, 24, "Lua Counter", 0xFFFF, bg, 2, 1)
-  kami.draw.label("val", 0, 86, kami.W, 56, tostring(count), accent, bg, 4, 2)
-  kami.draw.progress("bar", 30, 160, kami.W - 60, 14, count % 50, 50,
-                kami.draw.rgb(40, 44, 56), accent)
-  kami.draw.label("hint", 0, kami.H - 28, kami.W, 20,
-             "rotate +/-    press: reset    LB: back", muted, bg, 1, 1)
-end
-
-function widget.input(ev)
-  if ev.type == "scroll" then
-    count = count + ev.delta
-  elseif ev.type == "A" then
-    count = 0
-  end
-end
-)LUA";
-
 constexpr int kMaxWidgets        = services::custom_apps::kCatalogEntries;
 constexpr int kSlugLen           = 32;
 
@@ -122,14 +88,11 @@ ui::ListView s_list;
 // Result of the last "sync from kami" action, shown under the picker title.
 char s_syncMsg[40] = "";
 
-// Install first, then external apps, built-ins, Steps and account sync.
-int pickerCount() { return s_sdCount + 5; }
+// App Downloader first, then the user's installed and synced apps, then sync.
+int pickerCount() { return s_sdCount + 2; }
 const char* pickerLabel(int idx) {
     if(idx==0)return "App Downloader";
     if(idx>0 && idx<=s_sdCount)return s_catalog->entries[idx-1].name;
-    if(idx==s_sdCount+1)return "Counter";
-    if(idx==s_sdCount+2)return "Muni 5 Fulton";
-    if(idx==s_sdCount+3)return "Steps";
     return "Sync apps";
 }
 
@@ -157,25 +120,20 @@ DrawStats s_drawStats{};
 ui::FrameDamage s_frameDamage;
 widgets::LuaVm s_vm;
 bool s_running = false;
-bool s_muniSelected = false;
 
-// Load the owned external snapshot or selected built-in. Keep the snapshot
+// Load the owned external snapshot. Keep the snapshot
 // for overlay reloads. Data must be injected before loadScript runs
 // the chunk: scripts may read kami.data at top level.
 void loadWidgetScript() {
     if(s_readyPackage.bytes){s_currentPackage.reset();s_currentPackage.bytes=s_readyPackage.bytes;s_currentPackage.size=s_readyPackage.size;
         s_readyPackage.bytes=nullptr;s_readyPackage.size=0;}
-    if (s_muniSelected) {
-        s_vm.loadScript(kMuni5Widget, sizeof(kMuni5Widget)-1, "=muni-5");
-        return;
-    }
     if(s_externalSelected){
         custom::View view;auto result=custom::inspect(s_currentPackage.bytes,s_currentPackage.size,view);
         if(result!=custom::Result::Ok){s_vm.fail(custom::resultName(result));return;}
         if(view.dataBytes && !s_vm.setDataJson(view.data,view.dataBytes)){s_vm.fail("invalid app data");return;}
         s_vm.loadScript(view.source,view.sourceBytes,"=widget");return;
     }
-    s_vm.loadScript(kSampleWidget, strlen(kSampleWidget), "=counter");
+    s_vm.fail("no app selected");
 }
 
 // Built in the content coordinate space (280 x 240-kBarH); rendered offset
@@ -333,7 +291,6 @@ char s_loadingErr[80] = "";
 uint32_t s_loadingErrMs = 0;
 
 void loadingEnter() {
-    s_muniSelected = false;
     snprintf(s_loadingTitle, sizeof(s_loadingTitle), "%s", widgets::launch::title());
     s_loadingStartMs = millis();
     s_loadingErr[0] = '\0';
@@ -376,7 +333,7 @@ void loadingTick(uint32_t now) {
                     return;
                 }
 #endif
-                s_muniSelected=false;s_externalSelected=true;showWidgetScreen(&kScreenLua);
+                s_externalSelected=true;showWidgetScreen(&kScreenLua);
             }
             else {s_readyPackage.reset();snprintf(s_loadingErr,sizeof(s_loadingErr),"%s",custom::resultName(result));s_loadingErrMs=now;hal::display::markAllDirty();}
         }
@@ -404,18 +361,18 @@ void buildLoadingScene(ui::scene::Scene& scene, int16_t, int16_t) {
     scene.clear();
     scene.addRect("ld.bg", {0, 0, 280, h}, kUiBg);
     if (s_loadingErr[0]) {
-        scene.addLabel("ld.title", {0, 40, 280, 24}, "Couldn't build it",
+        scene.addLabel("ld.title", {0, 40, 280, 24}, "Couldn't load it",
                        0xF800, kUiBg, 2, ui::scene::TextAlign::TopCenter);
         scene.addLabel("ld.msg", {12, 84, 256, 60}, s_loadingErr,
                        kUiMuted, kUiBg, 1, ui::scene::TextAlign::TopCenter);
         return;
     }
-    // Animated "Building <title>" with 0-3 trailing dots (~400ms/step).
+    // Animated "Loading <title>" with 0-3 trailing dots (~400ms/step).
     const int dots = ((millis() - s_loadingStartMs) / 400u) % 4u;
     char line[64];
-    snprintf(line, sizeof(line), "Building %s%s", s_loadingTitle,
+    snprintf(line, sizeof(line), "Loading %s%s", s_loadingTitle,
              dots == 0 ? "" : dots == 1 ? "." : dots == 2 ? ".." : "...");
-    scene.addLabel("ld.building", {0, 78, 280, 20}, "MAKING", kUiMuted, kUiBg, 1,
+    scene.addLabel("ld.building", {0, 78, 280, 20}, "LOADING", kUiMuted, kUiBg, 1,
                    ui::scene::TextAlign::TopCenter);
     scene.addLabel("ld.title", {8, 100, 264, 30}, line, kUiFg, kUiBg, 2,
                    ui::scene::TextAlign::TopCenter);
@@ -462,7 +419,7 @@ ui::ListItem pickerItemFn(int idx, void*) {
     item.label = (idx >= 0 && idx < pickerCount()) ? pickerLabel(idx) : "";
     item.fg    = kUiFg;
     namespace icons=assets::menu_icons;
-    item.icon=idx==0?icons::kInstall:idx==s_sdCount+3?icons::kSteps:idx==s_sdCount+4?icons::kTools:icons::kSdCard;
+    item.icon=idx==0?icons::kInstall:idx==s_sdCount+1?icons::kTools:icons::kSdCard;
     if(idx>0 && idx<=s_sdCount && s_catalog->entries[idx-1].native){
         const auto& entry=s_catalog->entries[idx-1];
         item.icon=entry.hasIcon&&s_icons?s_icons+(idx-1)*200:icons::kGames;
@@ -561,24 +518,23 @@ void pickerInput(hal::input::InputEvent ev) {
     }
 
     if (ui::nav::isEnterTap(ev)) {
-        if(s_sel==s_sdCount+3){closeAppWork();NavHandler::instance().push(&apps::steps::app);return;}
         if(s_sel==0){closeAppWork();NavHandler::instance().push(&apps::app_store::app);return;}
-        if (s_sel == s_sdCount + 4) {
+        if (s_sel == s_sdCount + 1) {
             // Queue the existing worker; keep input and presentation responsive.
             runSync();
             s_needRedraw = true;
             hal::display::markAllDirty();
             return;
         }
+        if(s_sel<=0 || s_sel>s_sdCount)return;
         closeAppWork();
-        s_muniSelected = s_sel == s_sdCount + 2;
-        s_externalSelected=s_sel>0&&s_sel<=s_sdCount;
-        if(s_externalSelected){
+        s_externalSelected=true;
+        {
             s_selected=s_catalog->entries[s_sel-1].identity;
             showWidgetScreen(&kScreenLoading);
             s_loadRequested=true;
             snprintf(s_loadingTitle,sizeof(s_loadingTitle),"%s",s_catalog->entries[s_sel-1].name);
-        } else showWidgetScreen(&kScreenLua);
+        }
         return;
     }
 
@@ -639,7 +595,9 @@ const ::scene::Screen kScreenPicker = {
 
 }  // namespace
 
-static void exitWorkflow(){closeAppWork();stopWidget();heap_caps_free(s_icons);s_icons=nullptr;heap_caps_free(s_catalog);s_catalog=nullptr;s_sdCount=0;}
+// Keep the last app list (about 7 KB of PSRAM) across exits, so reopening Custom
+// Apps shows the installed apps at once; pickerEnter's rescan refreshes it.
+static void exitWorkflow(){closeAppWork();stopWidget();}
 
 static const ::scene::Screen* const kScreens[] = {&kScreenPicker, &kScreenLua, &kScreenLoading};
 App app = {"Custom Apps", &kScreenPicker, nullptr, nullptr, exitWorkflow, "lua",

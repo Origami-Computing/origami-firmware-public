@@ -5,7 +5,7 @@ enum class Input { A, B, C, Rotate };
 enum class WifiResult { None, Back, Skipped, Failed, Joined };
 // Stable IDs retain the existing camera/menu/service handoff contracts.
 struct Flow {
- static constexpr unsigned kSelect=36,kInterest=37,kAccount=38,kWifiChoice=39,kLogin=40,kWifiWebsite=41,kProjects=42,kSending=43,kFinished=44,kBuildIntro=45,kBuildSetup=46,kBuildConnect=47,kBuildBrowse=48,kBuildDone=49;
+ static constexpr unsigned kSelect=36,kInterest=37,kAccount=38,kWifiChoice=39,kLogin=40,kWifiWebsite=41,kProjects=42,kSending=43,kFinished=44,kBuildIntro=45,kBuildSetup=46,kBuildConnect=47,kBuildBrowse=48,kBuildDone=49,kPhotoSent=142,kPhotoError=143;
  unsigned page=0,origin=kProjects,selection=0,interest=0;
  bool account=false,joinWifi=false,practiced=false,wifiOnly=false,connected=false,setupPublished=false,installed=false;
  void reset(){*this=Flow{};}
@@ -16,7 +16,7 @@ struct Flow {
  bool turn(int delta){
   if(!delta)return false;
   if(page==18)return input(Input::Rotate);
-  if(page!=kSelect&&page!=kInterest&&page!=kAccount&&page!=kWifiChoice&&page!=126&&page!=131)return false;
+  if(page!=kSelect&&page!=kInterest&&page!=kAccount&&page!=kWifiChoice&&page!=126&&page!=131&&page!=kPhotoError)return false;
   const int max=page==kInterest?3:1,next=int(selection)+(delta>0?1:-1);
   selection=unsigned(next<0?0:next>max?max:next);return true;
  }
@@ -41,8 +41,11 @@ struct Flow {
    case kBuildSetup:if(i==Input::A)setPage(kProjects);else if(i==Input::B)setPage(kBuildDone);break;
    case kBuildBrowse:if(i==Input::A)setPage(kBuildConnect);else if(i==Input::B)setPage(kProjects);break;
    case kBuildDone:if(i==Input::A)setPage(kBuildSetup);else if(i==Input::B)setPage(125);break;
-   case 120:if(i==Input::B)setPage(18);else if(i==Input::A)setPage(interest?31:joinWifi?kWifiWebsite:kWifiChoice);break;
+   case 120:if(i==Input::B)setPage(18);else if(i==Input::A)setPage(interest?kPhotoSent:joinWifi?kWifiWebsite:kWifiChoice);break;
    case 18:if(i==Input::Rotate){practiced=false;setPage(19);}else if(i==Input::A)setPage(120);break;
+   case kSending:if(i==Input::A)setPage(31);break;
+   case kPhotoSent:if(i==Input::B)setPage(120);break;
+   case kPhotoError:if(i==Input::A||(i==Input::C&&selection))setPage(30);else if(i==Input::C)setPage(kSending);break;
    case 31:if(i==Input::A)setPage(30);else if(i==Input::B)setPage(kSending);break;
    case 21:if(i==Input::B)setPage(22);break;
    case 22:if(i==Input::B)setPage(23);else if(i==Input::A)setPage(21);break;
@@ -67,7 +70,8 @@ struct Flow {
   if(r==WifiResult::Joined){connected=true;joinWifi=true;origin=kWifiWebsite;setPage(wifiOnly?kFinished:setupPublished?127:interest?30:120);}
   else setPage(setupPublished?kWifiWebsite:interest?kLogin:kWifiWebsite);
  }
- void photoDelivered(){origin=kLogin;setPage(120);}
+ void photoDelivered(){if(page==kSending){origin=kLogin;setPage(kPhotoSent);}}
+ void photoFailed(){if(page==kSending||page==31)setPage(kPhotoError);}
  void menuReturned(){setPage(practiced?afterPractice():18);}
  bool beginTalk(){if(page==123){setPage(124);return false;}if(page!=25||!account||!connected)return false;setPage(27);return true;}
  void agentReturned(){setPage(140);}

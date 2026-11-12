@@ -32,8 +32,8 @@ template<class C> void scannerLoading(C& canvas,unsigned elapsed){
  loading(canvas,elapsed);
  ui::design::center(canvas,"Loading",124,24);
 }
-template<class C> void customMenu(C& c,bool installed,bool more,const char* const* names=nullptr,unsigned count=0){
- c.fillRect(0,0,280,240,0xffff);onboarding_wifi::arrows(c,true,true);ui::design::center(c,"Custom Apps",16);
+template<class C> void customMenu(C& c,bool installed,bool more,unsigned ms,const char* const* names=nullptr,unsigned count=0){
+ c.fillRect(0,0,280,240,0xffff);ui::onboarding_flow::promptArrows(c,ms);ui::design::center(c,"Custom Apps",16);
  struct Rows {const char* const* names;unsigned count;};
  const char* example[]={"Recipe Timer"};if(!names){names=example;count=installed?1:0;}Rows rows{names,count};
  ui::ListView list;list.totalItems=count+1;list.selected=more?list.totalItems-1:0;list.dialogueFrame=false;
@@ -71,7 +71,7 @@ template<class C> void render(C& c,unsigned page,unsigned ms,unsigned selection,
  else if(page==36)ui::onboarding_flow::selection(c,selection);
  else if(page>=37&&page<=39)ui::onboarding_flow::menu(c,page,selection);
 #ifdef STUDIO_QR_VARIANTS
- else if(page>=40&&page<=42)ui::onboarding_flow::qr(c,page,selection==0);
+ else if(page>=40&&page<=42)ui::onboarding_flow::qr(c,page,selection==0,ms);
 #else
  else if(page>=40&&page<=42)ui::onboarding_flow::qr(c,page);
 #endif
@@ -94,24 +94,32 @@ template<class C> void render(C& c,unsigned page,unsigned ms,unsigned selection,
  else if(page==138){agent_transition_preview::render(c,800,3,0);c.fillRect(112,120,60,32,0xffff);loading(c,ms,136);}
 
 #endif
- else if(page==140){c.fillRect(0,0,280,240,0xffff);onboarding_wifi::arrows(c,true,true);ui::onboarding_flow::nod(c,110,36,ms);
+ else if(page==140){c.fillRect(0,0,280,240,0xffff);ui::onboarding_flow::promptArrows(c,ms);ui::onboarding_flow::nod(c,110,36,ms);
  ui::design::center(c,"With navigation complete",132);ui::design::center(c,"lets move on",156);}
- else if(page==126){c.fillRect(0,0,280,240,0xffff);onboarding_wifi::arrows(c,true,true);ui::onboarding_flow::nod(c,110,24,ms);
+ else if(page==126){c.fillRect(0,0,280,240,0xffff);ui::onboarding_flow::promptArrows(c,ms);ui::onboarding_flow::nod(c,110,24,ms);
  ui::design::center(c,"Public apps only need Wi-Fi.",104,18);ui::design::center(c,"Set up now?",128,18);
  const char* labels[]={"Set up Wi-Fi","Skip for now"};const uint8_t* icons[]={assets::menu_icons::kWifi,ui::onboarding_proposals::kSkip};
  ui::onboarding_proposals::rows(c,labels,icons,2,selection,148,36);
  }
  else if(page==135||page==136){
- c.fillRect(0,0,280,240,0xffff);onboarding_wifi::arrows(c,true,true);ui::onboarding_flow::nod(c,110,36,ms);
+ c.fillRect(0,0,280,240,0xffff);ui::onboarding_flow::promptArrows(c,ms);ui::onboarding_flow::nod(c,110,36,ms);
  if(page==135){ui::design::center(c,"That's okay, we can",132);ui::design::center(c,"set this up later.",156);}
  else{ui::design::center(c,"Scan a QR code on the",120);ui::design::center(c,"Published Apps website",144);ui::design::center(c,"to download an app.",168);}
  }
- else if(page==133||page==134){customMenu(c,selection!=0,page==134);}
+ else if(page==133||page==134){customMenu(c,selection!=0,page==134,ms);}
  else if(page==124){
+ const unsigned promptMs=ms;ms%=11000;
  using namespace ui::onboarding_flow;
- c.fillRect(0,0,280,240,0xffff);onboarding_wifi::arrows(c,true,true);
+ c.fillRect(0,0,280,240,0xffff);ui::onboarding_flow::promptArrows(c,promptMs);
  if(ms<2100){
-  listeningBorder(c,ms);onboarding_wifi::arrows(c,true,true);
+  listeningBorder(c,ms);
+  // Fade against the live listening gradient, not white. Snapshot before drawing
+  // so overlapping arrow strokes cannot accumulate opacity.
+  uint16_t paper[32*24];for(int y=0;y<24;++y)for(int x=0;x<32;++x)paper[y*32+x]=c.readPixel(224+x,8+y);
+  struct GradientArrow {C& c;const uint16_t* paper;unsigned alpha;
+   void fillRect(int x,int y,int w,int h,uint16_t ink){for(int yy=y;yy<y+h;++yy)for(int xx=x;xx<x+w;++xx)c.fillRect(xx,yy,1,1,ui::proportional::blend(ink,paper[(yy-8)*32+xx-224],alpha));}
+  } gradient{c,paper,unsigned((1+cos(promptMs*.002244))*64)};
+  onboarding_wifi::backArrow(c,kUiFg);ui::onboarding_intro::Mirror<GradientArrow> mirrored{gradient};onboarding_wifi::backArrow(mirrored,kUiFg);
   ui::design::center(c,"Listening...",26);
   for(int i=0;i<19;++i){int h=6+int(26*(1+std::sin(ms*.011+i*.8))*.5);c.fillRect(65+i*8,86-h/2,3,h,0xf945);}
   const auto speech=apps::onboarding::DemoSpeech::at(ms);
@@ -130,20 +138,22 @@ template<class C> void render(C& c,unsigned page,unsigned ms,unsigned selection,
  }
  else if(page>=120&&page<=134){
   using namespace ui::onboarding_flow;
-  c.fillRect(0,0,280,240,0xffff);onboarding_wifi::arrows(c,true,true);
-  if(page==128){qr(c,page,selection==0);}
+  const uint16_t paper=page==132?kUiSuccessBg:0xffff;
+  c.fillRect(0,0,280,240,paper);if(page!=130)promptArrows(c,ms,page!=132,true,paper);
+  if(page==128){qr(c,page,selection==0,ms);}
   else if(page==129){c.fillRect(0,0,280,240,0);qr_scanner_view::overlay(c);c.fillRect(0,0,280,35,0xffff);ui::design::center(c,"Hold steady over app QR",14,18);c.fillRect(0,194,280,46,0xffff);ui::design::choice(c,"A back",24,194,112,30,false);ui::design::choice(c,"B skip",144,194,112,30,false);}
   else if(page==121||page==133||page==134){
    ui::design::center(c,page==121?"Menu":"Custom Apps",18);
    if(page==121){pill(c,56,"Camera",true);pill(c,96,"Photos",false);ui::design::instruction(c,"Continue back to Home",24,160,232,32);ui::design::center(c,"Press A+B together",202);}
    else{if(selection)pill(c,56,"Recipe Timer",false);pill(c,102,"App Downloader",page==134);ui::design::center(c,page==134?"Install more apps here":"Installed apps appear here",160,18);ui::design::center(c,page==134?"C: Open   B: Continue":"B: Continue",192,18);}
-  }else if(page==131){wifiError(c,"App could not install",detail&&detail[0]?detail:"Check the app QR and connection.",false,selection);
+  }else if(page==131){wifiError(c,"App could not install",detail&&detail[0]?detail:"Check the app QR and connection.",false,selection,80);
  c.fillRect(0,148,280,92,0xffff);const char* labels[]={"Try again","Skip"};const uint8_t* icons[]={ui::onboarding_proposals::kRestart,ui::onboarding_proposals::kSkip};ui::onboarding_proposals::rows(c,labels,icons,2,selection,148,36);
  }
-  else if(page==130||page==132){ui::design::center(c,page==130?"Installing app...":"App installed!",92,24);ui::design::center(c,detail&&detail[0]?detail:"Recipe Timer",134);if(page==132)ui::design::center(c,"B: Continue",190);}
+  else if(page==130){loading(c,ms);ui::design::center(c,"Installing App",124,24);}
+  else if(page==132){ui::design::center(c,"App installed!",92,24,0,paper);ui::design::center(c,detail&&detail[0]?detail:"Recipe Timer",134,18,0,paper);}
   else if(page==123){nod(c,110,48,ms,60);backPrompt(c,true);}
   else{
-   const int kamiX=page==127?140+(ui::proportional::width("Follow this link to",ui::design::standard)+1)/2-60:page==120?180:110;
+   const int kamiX=(page==127||page==120)?180:110;
    nod(c,kamiX,42,ms,60);
    if(page==120||page==127){
     struct HandPosition {C& c;int dx;void fillRect(int x,int y,int w,int h,uint16_t ink){c.fillRect(x+dx,y,w,h,ink);}} positionedHand{c,kamiX-180};
@@ -151,14 +161,14 @@ template<class C> void render(C& c,unsigned page,unsigned ms,unsigned selection,
    }
    const char* l1=page==120?"Let's get started with":page==122?"You'll need an account":page==124?"Try a quick rice bowl.":page==125?"You can also download":page==126?"You need Wi-Fi and":"Follow this link to";
    const char* l2=page==120?"a tour of my navigation.":page==122?"to speak with me.":page==124?"Cook rice, add vegetables":page==125?"apps published on the web.":page==126?"an account. Set up now?":"view public apps.";
-   ui::design::center(c,l1,120);ui::design::center(c,l2,144);
+   if(page==127)centeredCopy(c,ui::onboarding_copy::published_browse,120);else{ui::design::center(c,l1,120);ui::design::center(c,l2,144);}
    if(page==122)ui::design::center(c,"Let's start with a demo.",172);
    if(page==124)ui::design::center(c,"and a fried egg. Enjoy!",168);
    if(page==126){ui::design::choice(c,"Set up",24,184,112,36,selection==0);ui::design::choice(c,"Skip",144,184,112,36,selection==1);}
   }
  }
  else if(page==141){
- c.fillRect(0,0,280,240,kUiBg);onboarding_wifi::arrows(c,true,true);
+ c.fillRect(0,0,280,240,kUiBg);ui::onboarding_flow::promptArrows(c,ms);
  ui::onboarding_flow::nod(c,110,36,ms,60);
  ui::design::center(c,"To get started, please",120);
  ui::design::center(c,"follow the link on the",144);
@@ -187,8 +197,12 @@ template<class C> void render(C& c,unsigned page,unsigned ms,unsigned selection,
 
 #endif
  else if(page==104){const std::string message(detail);const auto split=message.find('\n');ui::onboarding_flow::wifiError(c,message.substr(0,split).c_str(),split==std::string::npos?"":message.c_str()+split+1,false,selection);}
- else if(page==105||page==106){
-  const uint16_t bg=page==106?kUiSuccessBg:0xffff;c.fillRect(0,0,280,240,bg);onboarding_wifi::arrows(c,true,page==106);
+ else if(page==143){
+ ui::onboarding_flow::wifiError(c,"Photo could not send",detail,false,selection,80);
+ c.fillRect(0,148,280,92,0xffff);const char* labels[]={"Try again","Retake photo"};const uint8_t* icons[]={ui::onboarding_proposals::kRestart,assets::menu_icons::kCamera};ui::onboarding_proposals::rows(c,labels,icons,2,selection,148,36);
+ }
+ else if(page==105||page==106||page==142){
+  const uint16_t bg=page!=105?kUiSuccessBg:0xffff;c.fillRect(0,0,280,240,bg);ui::onboarding_flow::promptArrows(c,ms,page!=142,page!=105,bg);
   if(page==105)loading(c,ms);
   else{
    circle(c,140,86,23,0,bg);circle(c,140,86,21.5f,bg,0);
@@ -199,7 +213,7 @@ template<class C> void render(C& c,unsigned page,unsigned ms,unsigned selection,
     float a=std::max(0.f,std::min(1.f,2.1f-d));if(a)c.fillRect(x,y,1,1,ui::proportional::blend(0,bg,unsigned(a*255)));
    }
   }
-  ui::design::center(c,page==105?"Connecting...":"Connected",124,24,0,bg);
+  ui::design::center(c,page==105?"Connecting...":page==142?"Photo sent":"Connected",124,24,0,bg);
   ui::design::center(c,detail,160,18,0,bg);
  }
  else if(page==18){c.fillRect(0,0,280,240,kUiBg);

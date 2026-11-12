@@ -14,6 +14,15 @@
 // Shared device/host composition for the November branching onboarding flow.
 #include "ui/onboarding_proposals.h"
 namespace ui { namespace onboarding_flow {
+// Studio candidate: same 2.8-second opacity curve as the welcome prompt.
+inline uint16_t promptInk(unsigned ms,uint16_t bg=0xffff){return ui::proportional::blend(0,bg,unsigned((1+cos(ms*.002244))*64));}
+template<class C> void promptArrows(C& c,unsigned ms,bool back=true,bool next=true,uint16_t bg=0xffff){
+ if(back)onboarding_wifi::backArrow(c,kUiFg);
+ if(next){ui::onboarding_intro::Mirror<C> mirrored{c};onboarding_wifi::backArrow(mirrored,promptInk(ms,bg));}
+}
+template<class C> void centeredCopy(C& c,const char* text,int top){
+ while(*text){auto line=ui::proportional::line(text,232,18);std::string row(text,line.bytes);ui::design::center(c,row.c_str(),top);if(!line.next)break;text+=line.next;top+=24;}
+}
 template<class C> void pill(C& c,int y,const char* text,bool selected,int height=36){
  ui::design::choice(c,text,24,y,232,height,selected);
 }
@@ -48,7 +57,7 @@ template<class C> void hand(C& c,unsigned ms){
  }
 }
 template<class C> void speaking(C& c,unsigned page,unsigned ms){
- c.fillRect(0,0,280,240,0xffff);onboarding_wifi::arrows(c,page==22,true);
+ c.fillRect(0,0,280,240,0xffff);promptArrows(c,ms,page==22);
  nod(c,110,24,ms);
  const char* text=page==21?ui::onboarding_copy::nav_congrats:ui::onboarding_copy::nav_reminder;
  char lines[5][160]{};int count=0;
@@ -61,7 +70,7 @@ template<class C> void welcome(C& c,unsigned ms){
  nod(c,110,20,ms);
  ui::design::center(c,ui::onboarding_copy::welcome_title,104);
  // Alpha is 0..255: a 2.8-second fade from readable gray to white and back.
- const auto ink=ui::proportional::blend(0,0xffff,unsigned((1+cos(ms*.002244))*64));
+ const auto ink=promptInk(ms);
  ui::design::center(c,ui::onboarding_copy::welcome_prompt_1,170,18,ink);
  ui::design::center(c,ui::onboarding_copy::welcome_prompt_2,194,18,ink);
 }
@@ -167,10 +176,10 @@ template<class C> void menu(C& c,unsigned page,unsigned selected){
  if(page==38){ui::design::center(c,"Use account to sync",168,16,kUiMuted);ui::design::center(c,"media online",190,16,kUiMuted);}
 }
 // Consistent title / QR / URL zones. QR matrices retain four quiet modules.
-template<class C> void qr(C& c,unsigned page,bool staging=true){
+template<class C> void qr(C& c,unsigned page,bool staging=true,unsigned ms=0){
  using namespace studio_qr;
  const bool store=page==128;
- c.fillRect(0,0,280,240,0xffff);onboarding_wifi::arrows(c,true,true);
+ c.fillRect(0,0,280,240,0xffff);promptArrows(c,ms);
  ui::design::center(c,store?"Published Apps":page==40?ui::onboarding_copy::login_title:page==41?ui::onboarding_copy::wifi_page_title:ui::onboarding_copy::projects_title,16,18);
  const auto& link=(staging?staging_links:production_links)[store?3:page-40];
  const int size=link.size,scale=4,x0=(280-size*scale)/2,y0=36;
@@ -184,7 +193,7 @@ template<class C> void qr(C& c,unsigned page,bool staging=true){
 // Shared by the firmware and the host preview; all copy is visible immediately.
 template<class C> void build(C& c,unsigned page,unsigned ms=0,bool connected=false){
  const uint16_t bg=page==47&&connected?0x364a:0xffff;
- c.fillRect(0,0,280,240,bg);onboarding_wifi::arrows(c,true,true);
+ c.fillRect(0,0,280,240,bg);if(page==47)onboarding_wifi::arrows(c,true,true);else promptArrows(c,ms);
  if(page==45||page==49){
   int kamiX=110;
   if(page==45){
@@ -222,11 +231,11 @@ template<class C> void build(C& c,unsigned page,unsigned ms=0,bool connected=fal
  }
  else if(page==48){
   ui::design::center(c,"02.",12,24);
-  const char* line="Browse to the following link";
-  const int kamiX=140+(ui::proportional::width(line,ui::design::standard)+1)/2-60;
+  const char* line=ui::onboarding_copy::build_browse;
+  const int kamiX=180;
   nod(c,kamiX,44,ms);
   struct HandPosition {C& c;int dx;void fillRect(int x,int y,int w,int h,uint16_t ink){c.fillRect(x+dx,y,w,h,ink);}} positionedHand{c,kamiX-180};hand(positionedHand,ms);
-  ui::design::center(c,line,144);
+  centeredCopy(c,line,124);
  }
  else{
   if(page==46||page==48)studio_copy::draw(c,ms);
@@ -251,10 +260,10 @@ template<class C> void build(C& c,unsigned page,unsigned ms=0,bool connected=fal
  }
 
 }
-template<class C> void wifiError(C& c,const char* title,const char* detail,bool audio,unsigned selected){
+template<class C> void wifiError(C& c,const char* title,const char* detail,bool audio,unsigned selected,int detailTop=88){
  c.fillRect(0,0,280,240,0xffff);onboarding_wifi::arrows(c,true,false);
  ui::design::center(c,title,48,18);
- ui::design::paragraph(c,detail,24,88,232,3);
+ ui::design::paragraph(c,detail,24,detailTop,232,3);
  const char* labels[]={ui::onboarding_copy::try_again,audio?ui::onboarding_copy::try_qr:ui::onboarding_copy::try_audio};
  const uint8_t* icons[]={ui::onboarding_proposals::kRestart,audio?assets::menu_icons::kCamera:assets::menu_icons::kVolume};
  ui::onboarding_proposals::rows(c,labels,icons,2,selected,148,36);

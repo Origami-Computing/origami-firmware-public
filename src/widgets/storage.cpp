@@ -2,6 +2,7 @@
 #include "services/native_apps.h"
 #endif
 #include "widgets/storage.h"
+#include "config/backend_host.h"
 #include "widgets/sync.h"
 #include <atomic>
 #include <esp_heap_caps.h>
@@ -26,6 +27,21 @@ struct DownloadJob { core::app_store::Download source; DownloadTarget target; };
 char backendId[80]={},backendSlug[32]={};
 bool (*workerPause)()=nullptr;
 bool stopping(){return cancelled.load() || (workerPause&&workerPause());}
+// Worker-only. Uninstall an app copy only when one exists, so no empty
+// tombstone is written onto a medium that never held the app.
+void dropIfPresent(const Identity& id){Package existing;if(load(id,existing)==Result::Ok)(void)uninstall(id,stopping);}
+// After a store-scoped install, remove copies an earlier install left under a
+// different identity: the other storage medium, and the URL-scoped origin that
+// earlier firmware derived from this same download URL.
+void removeEarlierCopies(const Identity& current,const char* originUrl){
+    Identity other=current;
+    other.medium=current.medium==Medium::Flash?Medium::Sd:Medium::Flash;
+    dropIfPresent(other);
+    Identity urlScoped=current;
+    if(!accountOrigin(originUrl,"public-app-store",urlScoped.origin)||!strcmp(urlScoped.origin,current.origin))return;
+    const Medium media[]={Medium::Flash,Medium::Sd};
+    for(Medium medium:media){urlScoped.medium=medium;dropIfPresent(urlScoped);}
+}
 bool nativePrepared=false;
 void cleanup(){
 #ifdef ORIGAMI_NATIVE_APPS
@@ -99,11 +115,19 @@ void process(bool (*pause)()){
             selected.medium=download.target==DownloadTarget::ByKind ? (view.native && hal::app_storage::hasFlashStore()?Medium::Flash:Medium::Sd) :
                 download.target==DownloadTarget::Flash?Medium::Flash:Medium::Sd;
             strcpy(selected.id,view.id);
-            // URL-scoped public packages cannot overwrite local or account apps.
+            // Public packages never overwrite local or account apps. A package
+            // from Kami's store, or one carrying a valid publisher signature, is
+            // one app per id: downloading it again replaces the installed copy,
+            // whatever store host, URL or storage medium the earlier copy used.
+            // Unsigned packages from other URLs stay URL-scoped.
             char originUrl[192];
-            if(!core::app_store::identityUrl(downloadRequest.url,originUrl)||
-               !accountOrigin(originUrl,"public-app-store",selected.origin))outcome=Result::Invalid;
+            const bool fromStore=!strncmp(downloadRequest.url,KAMI_APP_STORE_URL "/",sizeof(KAMI_APP_STORE_URL));
+            const bool storeScoped=view.native||fromStore;
+            const bool urlOk=core::app_store::identityUrl(downloadRequest.url,originUrl);
+            if(!urlOk||!accountOrigin(storeScoped?"kami-app-store":originUrl,"public-app-store",selected.origin))
+                outcome=Result::Invalid;
             else outcome=install(selected,fetched.bytes,fetched.size,stopping);
+            if(outcome==Result::Ok && storeScoped)removeEarlierCopies(selected,originUrl);
         }
         retryDownload=outcome==Result::Cancelled&&!cancelled.load();
         if(!retryDownload){payload.reset();payload.bytes=fetched.bytes;payload.size=fetched.size;fetched.bytes=nullptr;fetched.size=0;}
