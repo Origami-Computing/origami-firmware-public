@@ -139,7 +139,26 @@ extern "C" char nativeSymbol136[] asm("strstr");
 extern "C" char nativeSymbol137[] asm("strtof");
 extern "C" char nativeSymbol138[] asm("tanf");
 extern "C" char nativeSymbol139[] asm("toupper");
+// Native HTTP clients use the shared app worker and its owned request tokens.
+extern "C" char networkAppImport0[] asm("_ZN7widgets4sync11requestPollEv");
+extern "C" char networkAppImport1[] asm("_ZN8services8app_http4stopEj");
+extern "C" char networkAppImport2[] asm("_ZN8services8app_http4takeEjRNS0_8ResponseE");
+extern "C" char networkAppImport3[] asm("_ZN8services8app_http5readyEj");
+extern "C" char networkAppImport4[] asm("_ZN8services8app_http7requestERKNS0_7RequestE");
+extern "C" char networkAppImport5[] asm("free");
+extern "C" char networkAppImport6[] asm("malloc");
+extern "C" char networkAppImport7[] asm("realloc");
+extern "C" char networkAppImport8[] asm("strcmp");
 static const esp_elfsym kSymbols[] = {
+    {"_ZN7widgets4sync11requestPollEv", reinterpret_cast<void*>(networkAppImport0)},
+    {"_ZN8services8app_http4stopEj", reinterpret_cast<void*>(networkAppImport1)},
+    {"_ZN8services8app_http4takeEjRNS0_8ResponseE", reinterpret_cast<void*>(networkAppImport2)},
+    {"_ZN8services8app_http5readyEj", reinterpret_cast<void*>(networkAppImport3)},
+    {"_ZN8services8app_http7requestERKNS0_7RequestE", reinterpret_cast<void*>(networkAppImport4)},
+    {"free", reinterpret_cast<void*>(networkAppImport5)},
+    {"malloc", reinterpret_cast<void*>(networkAppImport6)},
+    {"realloc", reinterpret_cast<void*>(networkAppImport7)},
+    {"strcmp", reinterpret_cast<void*>(networkAppImport8)},
     {"Serial", reinterpret_cast<void*>(nativeSymbol0)},
     {"_Z24setSceneChromeBackgroundtb", reinterpret_cast<void*>(nativeSymbol1)},
     {"_ZN10NavHandler3popEv", reinterpret_cast<void*>(nativeSymbol2)},

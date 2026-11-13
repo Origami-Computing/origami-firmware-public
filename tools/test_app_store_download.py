@@ -36,9 +36,16 @@ int liveSecure=0,yields=0;
 void yieldBetweenRequests(){assert(liveSecure==0);++yields;if(cancelDuringYield)cancelled=true;}
 struct WiFiClientSecure {WiFiClientSecure(){assert(liveSecure==0);++liveSecure;}~WiFiClientSecure(){--liveSecure;}void setHandshakeTimeout(int){}void stop(){stopped=true;}};
 struct HTTPClient {
- void addHeader(const char* name,const char* value){assert(!strcmp(name,"X-Kami-App-Protocol")&&!strcmp(value,"2"));}
+ void addHeader(const char* name,const char* value){assert((!strcmp(name,"X-Kami-App-Protocol")&&!strcmp(value,"2")) || (!strcmp(name,"X-Kami-Native-HTTP")&&!strcmp(value,"1")));}
  void setConnectTimeout(int){}void setTimeout(int){}void setFollowRedirects(int mode){assert(mode==HTTPC_DISABLE_FOLLOW_REDIRECTS);}
- bool begin(WiFiClientSecure&,const char* url){assert(rootBundle);return strncmp(url,"https://",8)==0;}
+ bool begin(WiFiClientSecure&,const char* url){
+  assert(rootBundle);
+  if(strstr(url,"/api/app-store/code/")){
+   const char* prefix=strstr(url,"/code/0")?KAMI_TEST_INSTALL_STORE_URL "/":KAMI_APP_STORE_URL "/";
+   assert(!strncmp(url,prefix,strlen(prefix)));
+  }
+  return strncmp(url,"https://",8)==0;
+ }
  int GET(){++requests;int status=response;if(!statuses.empty()){status=statuses.front();statuses.erase(statuses.begin());}if(!replies.empty()){bytes=replies.front();replies.erase(replies.begin());}return status;}int getSize(){return declared;}void end(){}
  int writeToStream(Stream* sink){
   if(streamFailures>0){--streamFailures;sink->write(reinterpret_cast<const uint8_t*>(bytes.data()),3);return -1;}
@@ -52,10 +59,10 @@ namespace services {
 namespace tls {void useRootBundle(WiFiClientSecure&){rootBundle=true;}}
 namespace custom_apps {
 using Cancel=bool(*)();constexpr size_t kPackageBytes=42000;
-enum class Result{Ok,Invalid,Cancelled,Unavailable,Io,Corrupt,NoMemory,Network};
+enum class Result{Ok,Invalid,Cancelled,Unavailable,Io,Corrupt,NoMemory,Network,Incompatible,Missing};
 struct Package{uint8_t* bytes=nullptr;size_t size=0;void reset(){free(bytes);bytes=nullptr;size=0;}~Package(){reset();}};
-struct View{};
-Result inspect(const uint8_t* p,size_t n,View&){return n>=4&&!memcmp(p,"KAPP",4)?Result::Ok:Result::Invalid;}
+bool nativePackage=true;struct View{bool native;};
+Result inspect(const uint8_t* p,size_t n,View& v){v.native=nativePackage;return n>=4&&!memcmp(p,"KAPP",4)?Result::Ok:Result::Invalid;}
 }}
 int mbedtls_sha256_ret(const uint8_t* p,size_t n,uint8_t* out,int){
 #ifdef __APPLE__
@@ -111,6 +118,17 @@ int main(){
  assert(widgets::sync::download(request,out,cancel)==Result::Network&&requests==before+2&&!out.bytes);
  out.reset();bytes.back()='!';assert(widgets::sync::download(request,out,cancel)==Result::Corrupt&&!out.bytes);
  cancelled=true;int previous=requests;assert(widgets::sync::download(request,out,cancel)==Result::Cancelled&&requests==previous);cancelled=false;
+ response=426;assert(widgets::sync::download(request,out,cancel)==Result::Incompatible);
+ response=404;assert(widgets::sync::download(request,out,cancel)==Result::Missing);
+ response=200;bytes=original;nativePackage=false;
+ assert(!strcmp(KAMI_APP_STORE_URL,"https://kami-device-store-production-production.up.railway.app"));
+ assert(core::app_store::parse("101001",shortCode));
+ replies={std::string("origami-app:https://apps.example.com/test.kapp#sha256=")+request.sha256,original};
+ assert(widgets::sync::download(shortCode,out,cancel)==Result::Incompatible && !out.bytes);
+ assert(core::app_store::parse("000001",shortCode));
+ replies={std::string("origami-app:https://apps.example.com/test.kapp#sha256=")+request.sha256,original};
+ assert(widgets::sync::download(shortCode,out,cancel)==Result::Ok);out.reset();
+ nativePackage=true;
  response=302;assert(widgets::sync::download(request,out,cancel)==Result::Network);response=200;
  declared=42001;assert(widgets::sync::download(request,out,cancel)==Result::Invalid);declared=-1;
  bytes=std::string(42001,'x');assert(widgets::sync::download(request,out,cancel)==Result::Invalid);
@@ -129,4 +147,6 @@ int main(){
 ''')
  cmd=['c++','-std=c++17','-fsanitize=address,undefined','-Wno-deprecated-declarations','-I'+str(ROOT/'include'),str(p/'test.cpp'),'-o',str(p/'test')]
  if sys.platform!='darwin':cmd.append('-lcrypto')
- subprocess.run(cmd,check=True);subprocess.run([str(p/'test')],check=True)
+ for flags in (['-DORIGAMI_PRODUCTION_BUILD=1'],['-DORIGAMI_STAGING_BUILD=1']):
+  subprocess.run(cmd+flags+['-DORIGAMI_NATIVE_APPS'],check=True)
+  subprocess.run([str(p/'test')],check=True)
