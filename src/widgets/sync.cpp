@@ -160,6 +160,8 @@ static services::custom_apps::Result publicGet(const char* url,Body& body,
             http.addHeader("X-Kami-App-Protocol","2");
 #ifdef ORIGAMI_NATIVE_APPS
             http.addHeader("X-Kami-Native-HTTP","1");
+            http.addHeader("X-Kami-Local-Play","1");
+            http.addHeader("X-Kami-Catalog-Services","1");
 #endif
             code=http.GET();ok=code==200&&body.receive(http);http.end();secure.stop();
         }
