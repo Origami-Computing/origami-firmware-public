@@ -36,7 +36,7 @@ int liveSecure=0,yields=0;
 void yieldBetweenRequests(){assert(liveSecure==0);++yields;if(cancelDuringYield)cancelled=true;}
 struct WiFiClientSecure {WiFiClientSecure(){assert(liveSecure==0);++liveSecure;}~WiFiClientSecure(){--liveSecure;}void setHandshakeTimeout(int){}void stop(){stopped=true;}};
 struct HTTPClient {
- void addHeader(const char* name,const char* value){assert((!strcmp(name,"X-Kami-App-Protocol")&&!strcmp(value,"2")) || (!strcmp(name,"X-Kami-Native-HTTP")&&!strcmp(value,"1")));}
+ void addHeader(const char* name,const char* value){assert((!strcmp(name,"X-Kami-App-Protocol")&&!strcmp(value,"2")) || ((!strcmp(name,"X-Kami-Native-HTTP") || !strcmp(name,"X-Kami-Local-Play") || !strcmp(name,"X-Kami-Catalog-Services"))&&!strcmp(value,"1")));}
  void setConnectTimeout(int){}void setTimeout(int){}void setFollowRedirects(int mode){assert(mode==HTTPC_DISABLE_FOLLOW_REDIRECTS);}
  bool begin(WiFiClientSecure&,const char* url){
   assert(rootBundle);
