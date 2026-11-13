@@ -1,6 +1,6 @@
 # Public firmware acceptance — 2026-11-13
 
-Branch: `fix/public-shipping-acceptance`. Latest `origin/main` fetched and merged locally. No remote push requested.
+Branch: `fix/public-shipping-acceptance`. Latest `origin/main` fetched and merged locally. Subsequently published at user request through PR #27.
 
 A checked item means the stated verification was completed, not that every possible interaction is proven. Host and device evidence are reported separately. Credentials and raw device logs remain in ignored `.origami/private/`.
 
@@ -60,7 +60,7 @@ A checked item means the stated verification was completed, not that every possi
 - [x] OTA download resume, validation and boot-health regressions. — HOST: download policy/probe/resume and boot-health suites pass. DEVICE: final application digest/boot verified. No remote OTA activation replacing this candidate.
 - [x] Manufacturing/factory handoff and Public shipping evidence. — HOST PASS: manufacturing, factory test and handoff suites. Destructive shipping cleanup not run on account-linked device.
 - [x] Shipping cleanup keeps telemetry disabled until physical unlock. — HOST PASS: shipping and device handoff suites retain branch cleanup protection.
-- [x] Final firmware health, source status and verification gaps recorded. — DEVICE: Wi-Fi connected, account retained, SD mounted/upload-ready, upload queue empty, Public OTA confirmation retained, timer/deep wake confirmed. Repeated healthy heartbeats; no crash signature in final capture. Source fixes are local; no remote push. Coverage limits below.
+- [x] Final firmware health, source status and verification gaps recorded. — DEVICE: Wi-Fi connected, account retained, SD mounted/upload-ready, upload queue empty, Public OTA confirmation retained, timer/deep wake confirmed. Repeated healthy heartbeats; no crash signature in final capture. Source fixes submitted to public main through PR #27. Coverage limits below.
 
 ## Findings and evidence
 1. The attached board was erased (confirmed by user and all-FF factory-region read). Installed the verified four-component factory recipe before application QA; no erase-all.
@@ -83,6 +83,9 @@ A checked item means the stated verification was completed, not that every possi
 ## Additional camera findings
 - Under speaker/camera/microphone churn, the SDK camera buffer contained two JPEGs: 17,048 bytes, first complete envelope ending at byte 7,833. A previous session rejected all 204 submitted frames. The HAL now exposes the first complete structural JPEG, retaining its DMA timestamp. Strict file/writer validation still rejects joined/trailing payloads. New host tests cover joined, truncated, malformed, borrowed and non-JPEG frames. DEVICE: normalized an actual 6,613-byte DMA buffer to its 2,514-byte first JPEG; three subsequent recordings saved with zero invalid/dropped frames.
 - Leaving Camera while recording saved a valid 81-frame clip but left upload count zero. Stop and navigation teardown now share finalized-video enqueue, guarded by the existing pending flag. Tests cover success/failure and repeated teardown with exactly one enqueue. DEVICE: navigation exit saved a 114-frame microphone video and queued it; sound playback reached the end with 3,770 ms audio, then all uploads drained.
+
+## Publication validation
+GitHub CI caught a stale shutter fixture after the final camera helper change: the extracted teardown referenced `camQueueSavedVideo` without a test stub. Updated the fixture to assert the enqueue handoff and reran shutter and real teardown regression tests successfully. Firmware source and flashed image are unchanged by this fixture correction.
 
 ## Coverage limits
 - Full spoken Agent question/reply and over-air BLE transfer were not exercised.
