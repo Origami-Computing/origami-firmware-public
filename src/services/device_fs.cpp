@@ -357,7 +357,14 @@ void doManifest(const char* opId) {
   // The backend must not interpret paths omitted by the bounded walk as
   // device-side deletions.
   doc["truncated"] = !complete;
-  if (services::net_poll::stopRequested()) return;
+  if (services::net_poll::stopRequested()) {
+    if (!opId) {
+      portENTER_CRITICAL(&s_statusMux);
+      s_syncRequested = true;
+      portEXIT_CRITICAL(&s_statusMux);
+    }
+    return;
+  }
   LOGI("device_fs", "manifest: %d file(s)", count);
   String body; serializeJson(doc, body);
   setStatus("Sending manifest", "Posting file list", (uint32_t)count, (uint32_t)(count > 0 ? count : 1));
@@ -439,7 +446,16 @@ void doPush(const char* path, const char* opId) {
   WiFiClientSecure sec; WiFiClient plain;
   if (https) { services::tls::useRootBundle(sec); sec.setHandshakeTimeout(8); }
   WiFiClient& client = https ? static_cast<WiFiClient&>(sec) : static_cast<WiFiClient&>(plain);
-  if (!client.connect(host, port, 4000)) {
+  bool connected = client.connect(host, port, 4000);
+  // A failed handshake has sent no file bytes. Retry once before leaving the
+  // operation on its server lease, while checking foreground cancellation.
+  if (!connected && https && !services::net_poll::stopRequested() &&
+      !core::device_agent_text::hasPendingRequest()) {
+    client.stop();
+    core::watchdog::feed();
+    connected = client.connect(host, port, 4000);
+  }
+  if (!connected) {
     LOGW("device_fs", "Upload connect failed tls=%d heap=%u largest=%u", https ? sec.lastError(nullptr, 0) : 0,
          (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
@@ -711,7 +727,7 @@ bool poll() {
   if (!ok2xx(code)) return false;
   JsonArray ops = doc["ops"].as<JsonArray>();
   if (ops.isNull()) {
-    finishPollStatus(0, 0);
+    finishPollStatus(0, doc["pending"] | 0u);
     return true;
   }
 

@@ -29,7 +29,7 @@ struct String : std::string {
  int toInt()const{return std::atoi(c_str());}
 };
 enum Fault {None, Excluded, Active, PauseTimeout, StopBefore, StopDuringPause,
- BadUrl, Missing, Connect, Allocation, Read, Write, CancelWrite, Http500, Http401,
+ BadUrl, Missing, Connect, ConnectOnce, CancelConnect, Allocation, Read, Write, CancelWrite, Http500, Http401,
  TextBefore, TextDuringPause, TextDuringWrite, SlowResponse};
 Fault fault;
 bool held=false, stopping=false, opened=false, locked=false, textPending=false;
@@ -84,7 +84,7 @@ struct SDType {File open(const String&,int){assert(locked&&held);return {};}} SD
 struct WiFiClient {
  bool live=false;
  virtual ~WiFiClient(){if(live){assert(held);opened=false;}}
- bool connect(const char*,unsigned,unsigned){assert(held&&!locked);++connects;if(fault==Connect)return false;opened=live=true;return true;}
+ bool connect(const char*,unsigned,unsigned){assert(held&&!locked);++connects;if(fault==CancelConnect){stopping=true;return false;}if(fault==Connect||(fault==ConnectOnce&&connects==1))return false;opened=live=true;return true;}
  void setNoDelay(bool){}
  template<class... A> void printf(const char*,A...) {assert(held);}
  void print(const char*){assert(held);}
@@ -109,6 +109,9 @@ int main(){
   else assert(releases==1);
   if(fault==StopDuringPause||fault==BadUrl||fault==Missing||fault==TextDuringPause)assert(connects==0);
   if(fault==None||fault==Http500||fault==Http401)assert(written==2500);
+  if(fault==ConnectOnce)assert(connects==2&&written==2500);
+  if(fault==Connect)assert(connects==2&&!written);
+  if(fault==CancelConnect)assert(connects==1&&!written);
   if(fault==CancelWrite||fault==TextDuringWrite)assert(written==1024);
   if(fault>=TextBefore)assert(reports==0);
   if(fault==SlowResponse)assert(clockMs>=15000&&clockMs<15030&&written==2500);

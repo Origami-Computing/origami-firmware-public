@@ -42,13 +42,12 @@ enum QueueItemStatus:uint8_t{QSTATUS_PENDING,QSTATUS_UPLOADING,QSTATUS_COMPLETED
  QueueItem items[20]{};QueueItem* m_items=items;int m_count=0,m_mutex=0;bool m_initialized=true;
  char m_inFlightId[24]{},m_mutationPath[96]{},m_lastStatus[64]{};
  VideoEnqueue enqueueVideo(const char*);
- bool enqueue(const char*,const char*,const char*,bool=true);
+ bool enqueue(const char*,const char*,const char*,bool=true,uint32_t=0);
  bool mutationBlocksUnlocked(const char*)const;
- bool makeRoomForOneUnlocked(){assert(false);return false;}
  bool saveManifestUnlocked(){++manifests;events.push_back("manifest");assert(m_count>0);return manifestOk;}
  void notifyWorker(){++notifies;events.push_back("notify");}
 };
-'''+block(source,'bool withinUploadPath(')+'\n'+block(source,'bool UploadQueue::mutationBlocksUnlocked(')+'\n'+block(source,'UploadQueue::VideoEnqueue UploadQueue::enqueueVideo(')+'\n'+block(source,'bool UploadQueue::enqueue(')+r'''
+'''+block(source,'static void clearRetryState(')+'\n'+block(source,'bool withinUploadPath(')+'\n'+block(source,'bool UploadQueue::mutationBlocksUnlocked(')+'\n'+block(source,'UploadQueue::VideoEnqueue UploadQueue::enqueueVideo(')+'\n'+block(source,'bool UploadQueue::enqueue(')+r'''
 void reset(){assert(!allocations);mounted=eraseOk=saveOk=manifestOk=true;noMemory=haveState=false;allocations=erases=saves=manifests=notifies=0;fileBytes=123;backend={};strcpy(backend.apiKey,"account");strcpy(backend.url,"https://fixture.invalid");persisted={};events.clear();}
 int main(){
  using E=UploadQueue::VideoEnqueue;const char* path="/videos/VID_test.avi";
@@ -57,13 +56,16 @@ int main(){
  assert(!q.items[0].deleteAfterUpload&&!strcmp(q.items[0].type,"video")&&!strcmp(q.items[0].filePath,path));
  assert(!persisted.media.bytes&&!persisted.media.sha256[0]&&!persisted.session[0]);
  assert(q.enqueueVideo(path)==E::AlreadyQueued&&saves==1&&manifests==1);
+ q.items[0].status=QSTATUS_FAILED;q.items[0].attempts=20;
+ manifestOk=false;assert(q.enqueueVideo(path)==E::StorageUnavailable&&q.items[0].status==QSTATUS_FAILED&&q.items[0].attempts==20);
+ manifestOk=true;assert(q.enqueueVideo(path)==E::Queued&&q.items[0].status==QSTATUS_PENDING&&!q.items[0].attempts&&notifies==2);
  strcpy(backend.apiKey,"other");assert(q.enqueueVideo(path)==E::AccountChanged&&saves==1);
  }
  reset();{UploadQueue q;strcpy(q.m_inFlightId,"VID_test.avi");assert(q.enqueueVideo(path)==E::Busy&&events.empty());
  assert(!q.enqueue("image",path,"image/jpeg",false)&&events.empty());}
  reset();{UploadQueue q;strcpy(q.m_mutationPath,"/VIDEOS");assert(q.enqueueVideo(path)==E::Busy&&events.empty());assert(!q.enqueue("image",path,"image/jpeg",false));}
  reset();{UploadQueue q;q.m_count=20;assert(q.enqueueVideo(path)==E::Full&&events.empty());}
- for(const char* bad:{"/other/VID_test.avi","/videos/../bad.avi","/videos/.hidden.avi","/videos/overly_long_recording_name.avi","/videos/VID_test.wav"}){
+ for(const char* bad:{"/other/VID_test.avi","/videos/../bad.avi","/videos/.hidden.avi","/videos/overly_long_recording_name_beyond_limit.avi","/videos/VID_test.wav"}){
  reset();UploadQueue q;assert(q.enqueueVideo(bad)==E::Invalid&&events.empty());}
  reset();{UploadQueue q;assert(!q.enqueue("video",path,"video/x-msvideo",true)&&events.empty());assert(q.enqueue("video",path,"video/x-msvideo",false)&&q.m_count==1);}
  reset();{UploadQueue q;backend.apiKey[0]=0;assert(q.enqueueVideo(path)==E::AccountRequired&&events.empty());}
@@ -76,6 +78,15 @@ int main(){
  manifestOk=true;assert(q.enqueueVideo(path)==E::Queued&&q.m_count==1);}
  reset();{UploadQueue q;noMemory=true;assert(q.enqueueVideo(path)==E::StorageUnavailable&&events.empty());}
  reset();{UploadQueue q;haveState=true;persisted.media.bytes=123;strcpy(persisted.session,"old");assert(q.enqueueVideo(path)==E::Queued&&!persisted.media.bytes&&!persisted.session[0]);}
+ for(const char* type:{"audio","image"}){
+  reset();UploadQueue q;const bool audio=!strcmp(type,"audio");
+  const char* file=audio?"/recordings/REC_20261112_123000_01.wav":"/photos/IMG_00001.jpg";
+  const char* mime=audio?"audio/wav":"image/jpeg";
+  manifestOk=false;assert(!q.enqueue(type,file,mime,false)&&!q.m_count&&!notifies);
+  manifestOk=true;assert(q.enqueue(type,file,mime,false)&&q.m_count==1&&notifies==1);
+  assert(!strcmp(q.items[0].id,strrchr(file,'/')+1));
+  q.m_count=20;assert(!q.enqueue(type,"/test/another",mime,false)&&q.m_count==20&&notifies==1);
+ }
  reset();puts("PASS actual video enqueue: bound publication ordering, no original ownership, ID fencing, rehash on requeue, full queue and persistence faults");
 }
 '''

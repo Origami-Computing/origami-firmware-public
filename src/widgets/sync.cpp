@@ -158,10 +158,15 @@ static services::custom_apps::Result publicGet(const char* url,Body& body,
             http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
             if(!http.begin(secure,url))return apps::Result::Network;
             http.addHeader("X-Kami-App-Protocol","2");
+#ifdef ORIGAMI_NATIVE_APPS
+            http.addHeader("X-Kami-Native-HTTP","1");
+#endif
             code=http.GET();ok=code==200&&body.receive(http);http.end();secure.stop();
         }
         if(cancel&&cancel())return apps::Result::Cancelled;
         if(ok)return apps::Result::Ok;
+        if(code==426)return apps::Result::Incompatible;
+        if(code==404 || code==410)return apps::Result::Missing;
         Serial.printf("[app-store] GET failed status=%d bytes=%u attempt=%u\n",code,unsigned(body.size()),attempt+1);
         const bool transient=code<0||code==408||code==429||code==500||code==502||code==503||code==504||code==200;
         if(body.overflowed())return apps::Result::Invalid;
@@ -313,7 +318,7 @@ services::custom_apps::Result download(core::app_store::Download& request,
         core::app_store::Download package;
         {
             char url[192];snprintf(url,sizeof(url),
-                KAMI_APP_STORE_URL "/api/app-store/code/%s",code.code);
+                "%s/api/app-store/code/%s",code.code[0]=='0'?KAMI_TEST_INSTALL_STORE_URL:KAMI_APP_STORE_URL,code.code);
             Body body(255,cancel);
             const auto fetched=publicGet(url,body,cancel);
             if(fetched!=apps::Result::Ok)return fetched;
@@ -324,6 +329,14 @@ services::custom_apps::Result download(core::app_store::Download& request,
         } // Release all resolver transport objects before the next TLS handshake.
         yieldBetweenRequests();
         auto result=download(package,out,cancel);
+        if(result==apps::Result::Ok && code.code[0]!='0'){
+            // Public catalog codes install signed native apps. Private test codes
+            // and the separate Talk to App workflow retain their own contracts.
+            apps::View view;
+            result=apps::inspect(out.bytes,out.size,view);
+            if(result==apps::Result::Ok && !view.native)result=apps::Result::Incompatible;
+            if(result!=apps::Result::Ok)out.reset();
+        }
         if(result==apps::Result::Ok)request=package; // Preserve URL-scoped install identity.
         return result;
     }
