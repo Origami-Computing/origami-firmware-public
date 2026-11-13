@@ -176,5 +176,5 @@ code=code.replace('TLS_CONFIGURATION',block(tls_source,'void useRootBundle('))
 code=code.replace('NEGATIVE','true' if args.negative_control else 'false')
 with tempfile.TemporaryDirectory() as directory:
  path=Path(directory);(path/'test.cpp').write_text(code)
- subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(ROOT/'include'),'-I'+os.environ.get('ARDUINOJSON_SRC',str(ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src')),str(path/'test.cpp'),'-o',str(path/'test')],check=True)
+ subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(ROOT/'include'),'-I'+os.environ.get('ARDUINOJSON_SRC',str(ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src')),str(path/'test.cpp'),'-o',str(path/'test')],check=True)
  subprocess.run([str(path/'test')],check=True)

@@ -73,7 +73,7 @@ bool wakeButtonHeld(){return false;}int wakeAfterCycles=0;bool sleepWakeRequeste
 unsigned s_shallowTestMs=0;unsigned s_sleepTestWakeAt=99;void notifyUserActivity(){note("activity");}
 void enterDeepSleep(long long wake){armedWake=wake;note("deep-sleep");wakeAfterCycles=0;}
 static constexpr uint32_t kShallowSleepMs=1800000;
-bool deepSleepWakeTarget(long long* w){time_t f=0;*w=0;if(!services::automation::nextScheduledFire(&f))return true;if(core::time::scheduledWakeStageSeconds((long long)f-nowEpoch)<=0)return false;*w=f;return true;}
+bool deepSleepWakeTarget(int64_t* w){time_t f=0;*w=0;if(!services::automation::nextScheduledFire(&f))return true;if(core::time::scheduledWakeStageSeconds((long long)f-nowEpoch)<=0)return false;*w=f;return true;}
 '''+function+r'''
 int main(){
  doBatterySleep();

@@ -27,6 +27,7 @@ constexpr char kTmp[]     = "/telemetry_queue/journal.tmp";
 // allocation starved esp_wifi_init of the contiguous internal heap it needs to re-init the radio
 // after a WiFi drop (observed NO_MEM → device stuck offline). PSRAM has MBs free
 // and this buffer is only touched by tasks (no ISR/DMA), so PSRAM is safe here.
+bool              s_enabled = true;
 Item*             s_items = nullptr;
 int               s_count = 0;
 // Retained, already acknowledged journal records; usage identities deduplicate replay.
@@ -37,7 +38,7 @@ std::atomic<uint32_t> s_droppedVerbose{0}, s_droppedDurable{0}, s_journalFailure
 
 bool lock(uint32_t timeoutMs = 200) {
   // s_items null = PSRAM alloc failed at init → treat queue as unavailable.
-  return s_items && s_mutex && xSemaphoreTake(s_mutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
+  return s_enabled && s_items && s_mutex && xSemaphoreTake(s_mutex, pdMS_TO_TICKS(timeoutMs)) == pdTRUE;
 }
 void unlock() {
   if (s_mutex) xSemaphoreGive(s_mutex);
@@ -107,7 +108,9 @@ void pushUnlocked(uint8_t kind, const char* json) {
 
 }  // namespace
 
-void init() {
+void init(bool enabled) {
+  s_enabled = enabled;
+  if (!enabled) return;
   core::usage::init();
   if (!s_mutex) s_mutex = xSemaphoreCreateMutex();
   // Allocate the ring in PSRAM (keeps internal DRAM free for WiFi re-init). If
@@ -167,6 +170,7 @@ void init() {
 }
 
 void enqueue(Kind kind, const char* json) {
+  if (!s_enabled) return;
   auto& dropped = kind == KIND_VERBOSE ? s_droppedVerbose : s_droppedDurable;
   if (!json || strlen(json)>=kItemJsonCap) { ++dropped; return; }
   if (!lock(kind == KIND_VERBOSE ? 0 : 200)) { ++dropped; return; }

@@ -26,7 +26,7 @@ extern bool failAllocation;
 inline void* heap_caps_malloc(size_t n,int){return failAllocation?nullptr:malloc(n);}
 inline void heap_caps_free(void* p){free(p);}
 ''')
-    write('ui/qr_scanner_view.h', '#pragma once\nnamespace qr_scanner_view {template<class T> void overlay(T&) {}}\n')
+    write('ui/qr_scanner_view.h', '#pragma once\nnamespace qr_scanner_view {template<class T> void overlay(T&) {} template<class T> void appOverlay(T&) {}}\n')
     write('hal/hal_display.h', '''#pragma once
 #include <cstdint>
 struct TFT_eSprite {

@@ -20,7 +20,7 @@ struct SerialStub{void println(const char*){}template<class... T>void printf(con
 }
 for name,content in stubs.items():
  p=out/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(content)
-arduino=root/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'
+arduino=root/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src'
 subprocess.run(['g++','-std=c++17','-Wall','-Wextra','-I'+str(out),'-I'+str(root/'include'),'-I'+str(arduino),
  str(root/'tests/recipe_alerts_test.cpp'),str(root/'src/services/automation.cpp'),'-o',str(out/'test')],check=True)
 result=subprocess.run([str(out/'test')],check=True,capture_output=True,text=True)

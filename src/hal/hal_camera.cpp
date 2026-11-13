@@ -11,12 +11,16 @@
 #include "hal/hal_io.h"
 #include "hal/hal_sd.h"
 #include "core/telemetry.h"
+#include "core/jpeg_envelope.h"
 #include "camera_event_diagnostics.h"
 
 namespace hal {
 namespace camera {
 
 static bool s_initialized = false;
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+static bool s_reportedJoinedFrame = false;
+#endif
 static uint16_t s_detectedPid = 0;
 bool supportsAutofocus() { return s_detectedPid == 0x5640; }
 static camera_fb_t* s_lastFb = nullptr;
@@ -249,6 +253,9 @@ static bool initAttempt(int frameSize, int pixelFormat, const Tuning* tuning,
                 detectedSensor ? (unsigned)detectedSensor->id.PID : 0u);
 
   s_initialized = true;
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+  s_reportedJoinedFrame = false;
+#endif
 #if defined(ORIGAMI_CAMERA_EVENT_DIAGNOSTICS)
   // Read only during initialization under the accessory I2C lock, before a
   // caller can acquire frames. OV3660 datasheet v1.3 DVP/VFIFO controls let
@@ -363,8 +370,24 @@ bool getFrame(CameraFrame* out) {
   if (s_lastFb->format == PIXFORMAT_JPEG)
     cameraEventObserve(s_lastFb->buf, s_lastFb->len);
 #endif
+  size_t bytes=s_lastFb->len;
+  if (s_lastFb->format == PIXFORMAT_JPEG) {
+    // The SDK searches backward for EOI and can return concatenated sensor
+    // images under concurrent microphone/SD load. Its DMA timestamp belongs
+    // to the first image. Expose only that complete, structurally valid JPEG;
+    // leave strict file/package validation unchanged and release bad buffers.
+    bytes=core::images::jpegEnvelopeBytes(s_lastFb->buf,bytes);
+    if (!bytes) { returnFrame(); return false; }
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+    if (bytes!=s_lastFb->len && !s_reportedJoinedFrame) {
+      s_reportedJoinedFrame=true;
+      Serial.printf("[camera-jpeg] bounded frame bytes=%u dma_bytes=%u\n",
+          unsigned(bytes),unsigned(s_lastFb->len));
+    }
+#endif
+  }
   out->buf = s_lastFb->buf;
-  out->len = s_lastFb->len;
+  out->len = bytes;
   out->width = s_lastFb->width;
   out->height = s_lastFb->height;
   out->format = s_lastFb->format;

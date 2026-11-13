@@ -36,6 +36,8 @@ struct NavHandler {static NavHandler& instance(){static NavHandler n;return n;}
  void runtimePolicyChanged(){} void invalidateChrome(){assert(!direct);++chromeInvalidations;}};
 struct {void stop(){assert(!s_video.active);}}s_camera;
 struct {void println(const char*){}}Serial;
+int enqueueCalls=0;
+void camQueueSavedVideo(){assert(!s_video.active&&s_videoPending);++enqueueCalls;}
 void delay(unsigned){} void camReleasePreviewBuffers(){} void camReportVideoResult(){}
 ''' + state + function('static void camStopViewfinder()') + function('static bool camShutterInput(') + function('static void camTickShutter()') + r'''
 bool event(ET e){return camShutterInput({e});}
@@ -63,7 +65,7 @@ int main(){
  assert(s_quickVideo&&s_videoPending&&release());reset();
  for(int mode:{1,2}){s_shootMode=mode;press();now+=1300;camTickShutter();assert(!release()&&starts==3);}
  reset();s_quickVideo=true;s_shootMode=2;s_video.active=true;s_videoPending=true;
- camStopViewfinder();assert(chromeInvalidations==1&&!s_videoPending&&!s_quickVideo&&s_shootMode==0);
+ camStopViewfinder();assert(enqueueCalls==1&&chromeInvalidations==1&&!s_videoPending&&!s_quickVideo&&s_shootMode==0);
  reset();s_tutorialCapture=true;press();now+=1300;camTickShutter();assert(!release()&&starts==3);
 }
 '''

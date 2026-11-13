@@ -44,6 +44,7 @@ def main():
 #include <cstdio>
 #include <mutex>
 #include <thread>
+namespace widgets {namespace storage {bool cancelRequested(){return false;}}}
 using TaskHandle_t = void*;
 int workerIdentity;
 thread_local TaskHandle_t self = nullptr;

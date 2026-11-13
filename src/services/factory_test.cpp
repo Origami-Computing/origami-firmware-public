@@ -158,9 +158,9 @@ void Session::tick(uint32_t now) {
         core::time::service(now);
         if(hal::wifi::connected()&&core::time::isSynced()){
             if(check_==Check::Ota){
-                if(phase_==0){ota_client::ReleaseInfo release{};core::watchdog::unsubscribe();bool ok=ota_client::fetchLatestRelease(ota_client::ReleaseChannel::Production,&release);core::watchdog::subscribe();
-                    if(ok)ok=ota_client::beginFlash(release);failed_=!ok;phase_=1;snprintf(detail_,sizeof(detail_),"%s",ok?"Verifying signed production download":ota_client::lastError());}
-                if(!failed_){int written=0,total=0;bool busy=ota_client::pumpFlash(&written,&total);if(!busy){passed_=total>0&&written==total&&!ota_client::lastError()[0];failed_=!passed_;if(passed_)manufacturing::markOnline(ota_access::role()==ota_access::Role::Production);}}
+                if(phase_==0){otaChannel_=ota_client::releaseChannel();ota_client::ReleaseInfo release{};core::watchdog::unsubscribe();bool ok=ota_client::fetchLatestRelease(otaChannel_,&release);core::watchdog::subscribe();
+                    if(ok)ok=ota_client::beginFlash(release);failed_=!ok;phase_=1;snprintf(detail_,sizeof(detail_),"%s",ok?"Verifying signed firmware download":ota_client::lastError());}
+                if(!failed_){int written=0,total=0;bool busy=ota_client::pumpFlash(&written,&total);if(!busy){passed_=total>0&&written==total&&!ota_client::lastError()[0];failed_=!passed_;if(passed_){bool saved=ota_client::releaseChannel()==otaChannel_&&(otaChannel_==ota_client::ReleaseChannel::Public?manufacturing::markPublicOnline():manufacturing::markOnline(ota_access::role()==ota_access::Role::Production));passed_=saved;failed_=!saved;}}}
             }else if(phase_==0){
                 WiFiClientSecure client;tls::useRootBundle(client);HTTPClient http;http.setConnectTimeout(5000);http.setTimeout(5000);http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
                 const auto backend=core::secrets::backendConfig();String url=check_==Check::Backend?String(backend.url)+"/health":String(OTA_BASE_URL)+"/access";

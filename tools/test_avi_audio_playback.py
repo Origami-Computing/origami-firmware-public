@@ -38,6 +38,7 @@ code+='class WavPlayer {public:\n'+function(header,'struct ParsedHeader')+';\n'
 code+=r'''
  static bool parseHeader_(hal::sd::StreamReader&,ParsedHeader&);
  bool prepareAviAudioChunk_();bool failAviStream_();bool pumpFileToRing_();bool atEndOfFile_();bool recoverSdFile_();
+ const int16_t* memoryPcm_=nullptr;size_t memoryFrames_=0,memoryPosition_=0;bool memoryLoop_=false;
  hal::sd::StreamReader file_;bool fileOpen_=true;char currentPath_[192]="/test.avi";
  uint32_t dataStart_=0,dataEnd_=0,bytesPerFrame_=2,lastGoodFilePos_=0;
  core::avi::Info avi_{};uint32_t aviChunkEnd_=0,aviSamplesRead_=0;

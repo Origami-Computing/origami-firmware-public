@@ -9,7 +9,7 @@ original=source.replace('const struct crypto_bignum *b, *prime;\n\tstruct crypto
 manifest=json.loads((ROOT/'vendor/wpa3-sae/upstream-sha256.json').read_text())
 assert hashlib.sha256(original.encode()).hexdigest()==manifest['files']['src/common/sae.c'], 'Unexpected upstream SAE changes'
 for file,digest in manifest['files'].items():
- if file!='src/common/sae.c':assert hashlib.sha256((ROOT/'vendor/wpa3-sae'/file).read_bytes()).hexdigest()==digest,file
+ if file!='src/common/sae.c':assert hashlib.sha256((ROOT/'vendor/wpa3-sae'/file).read_bytes().replace(b'\r\n',b'\n')).hexdigest()==digest,file
 start=source.index('static struct crypto_ec_point * sswu(')
 end=source.index('static int sae_pwd_seed',start)
 function=source[start:end]

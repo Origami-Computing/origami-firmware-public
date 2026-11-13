@@ -52,6 +52,7 @@ private:
     char recordingPath_[128] = {};
     uint8_t phase_ = 0;
     bool operatorReady_ = false;
+    ota_client::ReleaseChannel otaChannel_ = ota_client::ReleaseChannel::Public;
     uint32_t elapsed_ = 0;
 };
 } }

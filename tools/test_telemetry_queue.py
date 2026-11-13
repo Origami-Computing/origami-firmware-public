@@ -40,6 +40,8 @@ struct SDT {bool remove(const char*){return true;} bool rename(const char*,const
 bool deny=false;
 using namespace core::telemetry_queue;
 int main(){
+ init(false);enqueue(KIND_USAGE,"boot");enqueue(KIND_LOG,"warning");
+ Item disabled;assert(!hasPending()&&snapshot(&disabled,1)==0&&stats().queued==0);
  init();
  for(int i=0;i<kMaxItems-8;i++){char b[30];snprintf(b,sizeof(b),"event-%d",i);enqueue(KIND_VERBOSE,b);}
  enqueue(KIND_VERBOSE,"dropped"); assert(stats().droppedVerbose==1);
@@ -56,5 +58,5 @@ int main(){
  puts("PASS burst retention, durable reserve, loss counters, in-flight prefix and recovery");
 }
 ''')
-    subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(p),'-I'+str(ROOT/'include'),'-I'+os.environ.get('ARDUINOJSON_SRC',str(ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src')),str(ROOT/'src/core/telemetry_queue.cpp'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
+    subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(p),'-I'+str(ROOT/'include'),'-I'+os.environ.get('ARDUINOJSON_SRC',str(ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src')),str(ROOT/'src/core/telemetry_queue.cpp'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
     subprocess.run([str(p/'test')],check=True)
