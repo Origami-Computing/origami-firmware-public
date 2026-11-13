@@ -6,7 +6,7 @@ from pathlib import Path
 import os, subprocess, tempfile, sys, argparse
 parser=argparse.ArgumentParser(description=__doc__);parser.add_argument("--thread-sanitizer",action="store_true");args=parser.parse_args()
 ROOT=Path(__file__).resolve().parents[1]
-JSON=Path(os.environ.get('ARDUINOJSON_SRC', ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'))
+JSON=Path(os.environ.get('ARDUINOJSON_SRC', ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src'))
 with tempfile.TemporaryDirectory() as directory:
     p=Path(directory)
     def write(name,text):
@@ -79,12 +79,13 @@ int writes=0,failWrite=0,cancelPoint=0,checkpoints=0;
 size_t cut=SIZE_MAX;uint64_t space=1024*1024;
 namespace hal { namespace app_storage {
 std::string key(Medium m,const char* path){return std::to_string(int(m))+":"+path;}
+bool hasFlashStore(){return false;}
 Result initializeBlankFlash(Cancel){return Result::Ok;}
 Result mount(Medium){return offline?Result::Unavailable:Result::Ok;}
 Result mkdir(Medium,const char*){return Result::Ok;}
 Result freeBytes(Medium,uint64_t& n){n=space;return Result::Ok;}
 Result read(Medium m,const char* path,uint8_t* out,size_t cap,size_t& n){n=0;if(ioRead)return Result::Io;auto it=files.find(key(m,path));if(it==files.end())return Result::Missing;
- if(it->second.size()>cap)return Result::TooLarge;n=it->second.size();memcpy(out,it->second.data(),n);return Result::Ok;}
+ if(it->second.size()>cap)return Result::TooLarge;n=it->second.size();if(n)memcpy(out,it->second.data(),n);return Result::Ok;}
 Result write(Medium m,const char* path,const uint8_t* in,size_t n,Cancel cancel){if(cancel&&cancel())return Result::Cancelled;
  ++writes;auto& bytes=files[key(m,path)];size_t actual=writes==failWrite?std::min(n,cut):n;bytes.assign(in,in+actual);
  if(corruptWrite&&actual)bytes.back()^=1;

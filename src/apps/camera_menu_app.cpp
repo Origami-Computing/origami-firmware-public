@@ -626,6 +626,19 @@ static bool camStartViewfinder() {
   return true;
 }
 
+// Both Stop and navigation teardown publish the same finalized original.
+// The caller consumes s_videoPending once, so a repeated close cannot requeue.
+static bool camQueueSavedVideo() {
+  if (s_video.state() != services::camera::VideoRecording::State::Saved) return false;
+  using E = UploadQueue::VideoEnqueue;
+  const E result = services::uploads::ensureInit()
+      ? services::uploads::queue().enqueueVideo(s_video.path()) : E::StorageUnavailable;
+  const bool queued = result == E::Queued || result == E::AlreadyQueued;
+  Serial.printf("[video-upload] enqueue=%d queued=%d path=%s\n", (int)result,
+                queued ? 1 : 0, s_video.path());
+  return queued;
+}
+
 // Report terminal recordings from both normal Stop and workflow teardown.
 // Caller has observed completion or close() has acknowledged all workers.
 static void camReportVideoResult() {
@@ -666,7 +679,7 @@ static void camStopViewfinder() {
   s_video.close();
   camFinishQuickVideo();
   s_shutterSkipTap = false;
-  if (s_videoPending) camReportVideoResult();
+  if (s_videoPending) { camQueueSavedVideo(); camReportVideoResult(); }
   s_videoPending = s_videoStopping = false;
   NavHandler::instance().runtimePolicyChanged();
   hal::display::exitOptimizedRender();
@@ -1329,15 +1342,7 @@ static void camTick() {
       const bool saved = s_video.state() == VideoState::Saved;
       // Queue the finalized original like a photo, through the same request as
       // Photos' Upload. It stays on SD either way; Photos can retry a failure.
-      bool queued = false;
-      if (saved) {
-        using E = UploadQueue::VideoEnqueue;
-        const E result = services::uploads::ensureInit()
-            ? services::uploads::queue().enqueueVideo(s_video.path()) : E::StorageUnavailable;
-        queued = result == E::Queued || result == E::AlreadyQueued;
-        Serial.printf("[video-upload] enqueue=%d queued=%d path=%s\n", (int)result,
-                      queued ? 1 : 0, s_video.path());
-      }
+      const bool queued = camQueueSavedVideo();
       snprintf(s_videoNotice, sizeof(s_videoNotice), "%s", !saved ? s_video.error() :
           !queued ? "SAVED, NOT QUEUED" :
           s_video.hasAudio() ? "VIDEO + MIC SAVED" : "VIDEO SAVED TO SD");

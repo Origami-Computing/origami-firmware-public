@@ -1,4 +1,5 @@
 #include "services/wifi_provision.h"
+#include "services/background_network.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <cstring>
@@ -6,8 +7,18 @@
 #include "hal/hal_wifi.h"
 
 namespace services { namespace wifi_provision {
+namespace {
+background_network::RadioPause forgetPause;
+bool forgetPending=false; // UI-task owner; held across the manager's radio change.
+}
+void service() {
+  if (forgetPending && !hal::wifi::credentialsChangePending()) {
+    forgetPending=false;
+    forgetPause.release();
+  }
+}
 bool saveAndConnect(const Credentials& creds, bool keepApUp) {
-  if (!creds.ssid[0]) return false;
+  if (forgetPending || !creds.ssid[0]) return false;
 
   if (!core::secrets::addWifiNetwork(creds.ssid, creds.pass)) {
     Serial.println("[wifi_provision] NVS add failed (full?)");
@@ -37,7 +48,7 @@ bool saveAndConnect(const Credentials& creds, bool keepApUp) {
 }
 
 bool connectSaved(const char* ssid) {
-  if (!ssid || !ssid[0]) return false;
+  if (forgetPending || !ssid || !ssid[0]) return false;
   // Settings passes a pointer into the saved list, which promotion reorders.
   char selected[sizeof(Credentials{}.ssid)];
   const size_t length = strnlen(ssid, sizeof(selected));
@@ -54,9 +65,18 @@ bool connectSaved(const char* ssid) {
 }
 
 bool forgetSaved(int index) {
-  if (!core::secrets::removeWifiNetwork(index)) return false;
-  // Cache/radio reconciliation belongs to the Core-0 manager, including after
-  // removal of the connected network. Retain the existing success-only policy.
+  service();
+  if (forgetPending) return false;
+  // Wi-Fi RX pbufs can remain owned by TLS sockets after disconnect. Every
+  // network owner must acknowledge cleanup before the manager deinitializes
+  // Wi-Fi; otherwise a later recv/free dereferences the destroyed driver.
+  if (forgetPause.acquire() != background_network::RadioPause::Result::Acquired)
+    return false;
+  if (!core::secrets::removeWifiNetwork(index)) {
+    forgetPause.release();
+    return false;
+  }
+  forgetPending=true;
   hal::wifi::requestCredentialsChanged();
   return true;
 }

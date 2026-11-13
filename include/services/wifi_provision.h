@@ -28,10 +28,14 @@ bool connectSaved(const char* ssid);
 
 /** Remove the selected saved entry and, on reported success, ask wifi_mgr to
  * reconcile its credential cache/radio state. UI-task operation; never performs
- * a radio mode change here. Preserves the existing storage result: false may
+ * a radio mode change here. Acquires the shared radio pause first; a busy
+ * consumer returns false without removing credentials. Preserves the existing storage result: false may
  * follow RAM mutation, and true does not certify every NVS key deletion.
  * Callers must re-read the list rather than assuming failure left it unchanged.
  */
 bool forgetSaved(int index);
+/** UI-task tick: release network ownership only after Core-0 reconciliation.
+ * Must continue across Settings exit; never releases an in-flight radio change. */
+void service();
 
 } }

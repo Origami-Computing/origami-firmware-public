@@ -38,7 +38,8 @@ struct Item {
 
 /** Create the mutex, ensure the SD dir, and replay any journaled (unsent)
  *  events into the RAM ring. Safe to call once at boot. */
-void init();
+// Disabled boots neither replay nor create telemetry; serial diagnostics remain available.
+void init(bool enabled=true);
 
 /** Append one event. `json` is the payload for `kind`. Thread-safe; drops the
  *  incoming event if its capacity is exhausted. Durable events get a best-effort SD journal append. */

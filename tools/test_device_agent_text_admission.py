@@ -42,6 +42,6 @@ int main(){
 }
 ''')
  subprocess.run(['c++','-std=c++17','-fsanitize=address,undefined','-I',str(p),'-I',str(root/'include'),
-  '-I',str(root/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'),str(root/'src/core/device_agent_text.cpp'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
+  '-I',str(root/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src'),str(root/'src/core/device_agent_text.cpp'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)
 print('PASS actual Agent text admission: queued, disconnected, in-flight, completed, canceled, unsupported and timeout states')

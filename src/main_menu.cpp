@@ -80,6 +80,7 @@
 #include "core/secrets.h"
 #include "core/telemetry.h"
 #include "core/telemetry_queue.h"
+#include "services/manufacturing.h"
 #include "core/watchdog.h"
 #include "core/sleep_timer.h"
 #include "hal/hal_ble.h"
@@ -98,6 +99,7 @@
 #endif
 #include "nav_handler.h"
 #include "services.h"
+#include "services/wifi_provision.h"
 #include "services/wifi_qr_session.h"
 #include "sfx/sfx_lib.h"
 #include "ui/automation_alert.h"
@@ -248,6 +250,7 @@ static void uiTask(void*) {
         // Release Pomodoro sound/motor when covered; system alarms take priority.
         apps::pomodoro::serviceFeedback(now);
         services::vibration::servicePulse(now,!services::automation::wantsInputCapture() && !apps::pomodoro::isAlerting());
+        services::wifi_provision::service();
         services::vibration::servicePreview(now,!services::automation::wantsInputCapture() && !apps::pomodoro::isAlerting());
         services::vibration::serviceEffect(now,!services::automation::wantsInputCapture() && !apps::pomodoro::isAlerting());
         if (nav.systemScreenActive()) {
@@ -528,7 +531,9 @@ void setup() {
     // Telemetry: ring/breadcrumb first, then the SD-backed queue (SD was mounted
     // by board bringup above).
     core::telemetry::init();
-    core::telemetry_queue::init();
+    // Cleanup must stay empty through its verification reboot. Resume on the
+    // real customer shipping unlock, never just a manufacturing USB session.
+    core::telemetry_queue::init(shippingWakeAuthorized || !services::manufacturing::awaitingShipment());
     // Report a prior crash/freeze. MUST run before watchdog::init() (which clears
     // the hung-task attribution table) so a TASK_WDT reset names the stalest task.
     core::crash_report::reportBootReason();

@@ -10,6 +10,7 @@ with tempfile.TemporaryDirectory() as d:
 #include <stdint.h>
 #include <stddef.h>
 #include <atomic>
+#include <cstdlib>
 #include <thread>
 #include <chrono>
 extern std::atomic<bool> decoding,hold,failDecode;
@@ -30,6 +31,7 @@ namespace hal {namespace tasks {enum class Id {VideoPreview};void* spawn(Id,void
  put('esp_heap_caps.h',r'''#pragma once
 #include <cstdlib>
 #include <atomic>
+#include <cstdlib>
 constexpr int MALLOC_CAP_SPIRAM=1,MALLOC_CAP_8BIT=2;
 extern unsigned allocAttempt,failAllocation;extern std::atomic<int> allocations;
 inline void* heap_caps_malloc(size_t n,int){if(++allocAttempt==failAllocation)return nullptr;auto*p=malloc(n);if(p)++allocations;return p;}

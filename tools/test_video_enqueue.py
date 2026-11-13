@@ -3,7 +3,7 @@ from pathlib import Path
 import os,subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[1]
 source=(ROOT/'src/upload_queue.cpp').read_text();header=(ROOT/'include/upload_queue.h').read_text()
-JSON=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'))
+JSON=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src'))
 def block(text,marker):
  a=text.index(marker);b=text.index('{',a)+1;depth=1
  while depth:depth+=(text[b]=='{')-(text[b]=='}');b+=1

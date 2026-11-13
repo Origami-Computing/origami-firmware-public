@@ -2,15 +2,16 @@
 
 Requires the normal target's installed JPEGDEC dependency, c++, FFmpeg and cjpeg.
 Synthetic quadrant JPEGs check colors, orientation, HD tail rows and letterboxing.
-Host CPU codec execution is not ESP32 SIMD/performance acceptance.
+Use the portable decoder path: x86 SIMD has different byte-order behavior and
+is not the ESP32 decoder. This remains host pixel correctness, not device timing.
 """
 from pathlib import Path
 import subprocess, tempfile
 ROOT=Path(__file__).resolve().parents[1]
-LIB=ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/JPEGDEC/src'
+LIB=ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/JPEGDEC/src'
 with tempfile.TemporaryDirectory() as directory:
  p=Path(directory)
- (p/'Arduino.h').write_text('#pragma once\nstruct SerialStub{template<class...T>void printf(const char*,T...) {}};extern SerialStub Serial;\n')
+ (p/'Arduino.h').write_text('#pragma once\n#include <stdint.h>\n#include <string.h>\nstruct SerialStub{template<class...T>void printf(const char*,T...) {}};extern SerialStub Serial;\n')
  (p/'esp_heap_caps.h').write_text('''#pragma once
 #include <cstdlib>
 constexpr int MALLOC_CAP_INTERNAL=1,MALLOC_CAP_SPIRAM=2,MALLOC_CAP_8BIT=4;
@@ -62,7 +63,7 @@ int main(int argc,char**argv){assert(argc==3||argc==4);
  assert(jpeg==original);for(int i=0;i<8;++i)assert(pixels[i]==0xabcd&&pixels[8+D::kPixels+i]==0xabcd);
  std::ofstream out(argv[2],std::ios::binary);out.write(reinterpret_cast<char*>(pixels.data()+8),D::kPixels*2);
 }''')
- subprocess.run(['c++','-std=c++17','-fsanitize=address','-DORIGAMI_REDUCED_VIDEO_DECODE_TRIAL','-I'+str(p),'-I'+str(ROOT/'include'),'-I'+str(LIB),str(ROOT/'src/core/preview_decoder.cpp'),str(LIB/'JPEGDEC.cpp'),str(p/'main.cpp'),'-o',str(p/'decode')],check=True)
+ subprocess.run(['c++','-std=c++17','-fsanitize=address','-DORIGAMI_REDUCED_VIDEO_DECODE_TRIAL','-DNO_SIMD','-I'+str(p),'-I'+str(ROOT/'include'),'-I'+str(LIB),str(ROOT/'src/core/preview_decoder.cpp'),str(LIB/'JPEGDEC.cpp'),str(p/'main.cpp'),'-o',str(p/'decode')],check=True)
  colors=[(255,0,0),(0,255,0),(0,0,255),(255,255,255)]
  for w,h,sampling in [(w,h,s) for w,h in [(320,240),(640,480),(1280,720)] for s in ('yuvj420p','yuvj422p')]:
   data=b''.join(bytes(max(0,c-(x*y%17)) for c in colors[(y>=h//2)*2+(x>=w//2)]) for y in range(h) for x in range(w))
@@ -81,7 +82,7 @@ int main(int argc,char**argv){assert(argc==3||argc==4);
   for i,(x,y) in enumerate([(w//4,h//4),(3*w//4,h//4),(w//4,3*h//4),(3*w//4,3*h//4)]):
    v=int.from_bytes(full[(y*w+x)*2:(y*w+x)*2+2],'big')
    rgb=((v>>11)*255//31,((v>>5)&63)*255//63,(v&31)*255//31)
-   assert max(abs(a-b) for a,b in zip(rgb,colors[i]))<35
+   assert max(abs(a-b) for a,b in zip(rgb,colors[i]))<35,(w,h,sampling,i,rgb,colors[i])
   height=280*h//w;top=(240-height)//2
   def pixel(x,y):
    at=((279-x)*240+y)*2;v=int.from_bytes(raw[at:at+2],'big')

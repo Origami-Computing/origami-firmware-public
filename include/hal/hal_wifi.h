@@ -139,12 +139,16 @@ void requestConnect(wifi_mode_t mode);
 void servicePendingConnect();
 
 /**
- * Notify wifi_mgr that core::secrets credentials changed. Safe from any core.
+ * Notify wifi_mgr that core::secrets credentials changed after all network
+ * consumers acknowledge a radio pause. One outstanding request at a time.
  * The manager performs the HAL cache reload and any required radio transition
  * on Core 0; callers must not call reloadCredentialsFromSecrets(), disconnect(),
  * or connect() directly afterward.
  */
 void requestCredentialsChanged();
+/** True until the manager finishes cache/radio reconciliation. The caller must
+ * hold acknowledged network quiescence from request through completion. */
+bool credentialsChangePending();
 /** wifi_mgr (Core 0) only: consume requestCredentialsChanged(). */
 void servicePendingCredentialsChanged();
 

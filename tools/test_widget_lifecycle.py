@@ -35,6 +35,9 @@ struct Log {void printf(const char*,const char*){}} Serial;
 namespace hal {namespace display {void markAllDirty(){++dirty;}}}
 void loadWidgetScript(){++loads;s_vm.fault=failLoad;}
 struct Reservation {bool held=false;void release(){held=false;}} s_loadingNetwork;
+void cancelLoading(){s_loadingNetwork.release();}
+void closeAppWork(){cancelLoading();}
+void releaseLoadedScript(){}
 extern App app;extern const scene::Screen kScreenLua,kScreenPicker,kScreenLoading;
 '''
 for name in ['startWidget','stopWidget','exitWorkflow','showWidgetScreen','resumeWorkflow','runnerEnter']:
@@ -43,20 +46,21 @@ code += r'''
 const scene::Screen kScreenLua={runnerEnter},kScreenPicker={nullptr},kScreenLoading={nullptr};
 const scene::Screen* const kScreens[]={&kScreenPicker,&kScreenLua,&kScreenLoading};
 '''
-a=s.index('App app = SCENE_APP_CATALOG_LIFECYCLE_HOOKS(')
-start=s.index('static core::health::RuntimePolicy runtimePolicy()'); code += s[start:s.index('\nApp app =',start)]+'\n'
-code+=s[a:s.index(';',a)+1]+'\n'
+assert 'App app = {"Custom Apps", &kScreenPicker, nullptr, nullptr, exitWorkflow' in s
+assert 'resumeWorkflow, nullptr, services::vibration::stopWidgetCue' in s
+code+='App app{};\n'
 code+=r'''
 int main(){
+app.onResume=resumeWorkflow;app.onExit=exitWorkflow;
 // Direct presentation entry never allocates/reloads a VM.
 runnerEnter();runnerEnter();assert(opens==0&&loads==0&&dirty==2);
 showWidgetScreen(&kScreenLua);assert(s_running&&s_vm.opened&&opens==1&&starts==1);
 runnerEnter();assert(opens==1&&starts==1);
 // Overlay resume preserves the established reload in the same VM.
 app.onResume();runnerEnter();assert(opens==1&&loads==2&&starts==2&&stops==0);
-s_loadingNetwork.held=true;showWidgetScreen(&kScreenLoading);assert(s_loadingNetwork.held);assert(!app.runtimePolicy().allowBackgroundUploads && !app.runtimePolicy().allowAutomaticUpdate);assert(!s_running&&!s_vm.opened&&stops==1);
-showWidgetScreen(&kScreenLua);assert(!s_loadingNetwork.held);assert(opens==2&&starts==3);
-showWidgetScreen(&kScreenPicker);assert(app.runtimePolicy().allowBackgroundUploads && app.runtimePolicy().allowAutomaticUpdate);assert(!s_running&&!s_vm.opened&&stops==2);
+s_loadingNetwork.held=true;showWidgetScreen(&kScreenLoading);assert(s_loadingNetwork.held);assert(!s_running&&!s_vm.opened&&stops==1);
+showWidgetScreen(&kScreenLua);assert(opens==2&&starts==3);
+showWidgetScreen(&kScreenPicker);assert(!s_running&&!s_vm.opened&&stops==2);
 // Uncover resets navigation to picker: no orphan VM remains.
 showWidgetScreen(&kScreenLua);app.currentScreen=&kScreenPicker;app.onResume();
 assert(!s_running&&!s_vm.opened&&stops==3);

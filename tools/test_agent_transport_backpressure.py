@@ -30,7 +30,7 @@ if not args.negative_control:
     assert heartbeat, 'Missing production heartbeat configuration'
     interval, timeout, misses = map(int, heartbeat.groups())
     assert interval == 8000 and timeout == 3000 and 1 <= misses <= 3
-    library = ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/WebSockets/src/WebSockets.cpp'
+    library = ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/WebSockets/src/WebSockets.cpp'
     library_source = library.read_text()
     saved_source = source
     source = library_source
