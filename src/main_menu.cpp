@@ -99,6 +99,7 @@
 #endif
 #include "nav_handler.h"
 #include "services.h"
+#include "services/wifi_provision.h"
 #include "services/wifi_qr_session.h"
 #include "sfx/sfx_lib.h"
 #include "ui/automation_alert.h"
@@ -249,6 +250,7 @@ static void uiTask(void*) {
         // Release Pomodoro sound/motor when covered; system alarms take priority.
         apps::pomodoro::serviceFeedback(now);
         services::vibration::servicePulse(now,!services::automation::wantsInputCapture() && !apps::pomodoro::isAlerting());
+        services::wifi_provision::service();
         services::vibration::servicePreview(now,!services::automation::wantsInputCapture() && !apps::pomodoro::isAlerting());
         services::vibration::serviceEffect(now,!services::automation::wantsInputCapture() && !apps::pomodoro::isAlerting());
         if (nav.systemScreenActive()) {

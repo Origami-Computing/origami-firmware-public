@@ -2,7 +2,7 @@
 from pathlib import Path
 import subprocess,tempfile,os
 ROOT=Path(__file__).resolve().parents[1]
-JSON=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'))
+JSON=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src'))
 with tempfile.TemporaryDirectory() as directory:
  p=Path(directory)
  (p/'esp_heap_caps.h').write_text('''#pragma once

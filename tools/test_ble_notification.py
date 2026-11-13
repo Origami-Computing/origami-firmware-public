@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 ROOT=Path(__file__).resolve().parents[1]
-headers=ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'
+headers=ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src'
 assert (headers/'ArduinoJson.h').exists(), 'Run the N16R8 build first'
 source=(ROOT/'src/hal/hal_ble.cpp').read_text()
 callback=source[source.index('class NotifyWriteCB'):source.index('class FileWriteCB')]

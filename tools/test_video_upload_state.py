@@ -5,7 +5,7 @@ No device/media changes. Uses pinned ArduinoJson through the protocol validator.
 from pathlib import Path
 import os, subprocess, tempfile, sys
 ROOT=Path(__file__).resolve().parents[1]
-JSON=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'))
+JSON=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src'))
 with tempfile.TemporaryDirectory() as directory:
     p=Path(directory)
     def write(name,text):

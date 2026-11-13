@@ -18,10 +18,10 @@ static constexpr Spec kSpecs[] = {
     { "ui",           CORE_UI,    PRIO_REALTIME,    12288 },  // measured minFree 4204B at 14336
     { "wifi_mgr",     CORE_SVC,   PRIO_SERVICE,      4096 },  // Id::WifiMgr
     { "svc",          CORE_SVC,   PRIO_SERVICE,      6144 },  // quote persistence needs SD/JSON call depth; replaces 16KB quote worker
-    // The former 4 KB stack buffer now lives on the heap. 10 KB retains 2 KB
-    // more call-depth room than the old overflowing 8 KB layout while leaving
-    // a contiguous internal-RAM block for TLS/AES allocations.
-    { "uploadq",      CORE_SVC,   PRIO_BACKGROUND,  10240 },  // Id::UploadQ
+    // Live video receipt/TLS handling left only 92 B at 10 KiB. Use the
+    // existing 12 KiB shared network slot; this adds headroom without another
+    // internal-RAM allocation or increasing the reserved stack pool.
+    { "uploadq",      CORE_SVC,   PRIO_BACKGROUND,  12288 },  // Id::UploadQ
     { "kami_ws",      CORE_SVC,   PRIO_NETWORK,      7168 },  // measured minFree 3668B at 8192
     { "qr_scan",      CORE_SVC,   PRIO_SERVICE,      8192 },  // Id::QrScan: 22KB decode scratch moved to PSRAM
     // Decoder input/PCM buffers live in PSRAM/static storage. 3584 B leaves

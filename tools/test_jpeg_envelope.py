@@ -8,6 +8,7 @@ source=r'''
 #include <cassert>
 #include <vector>
 using core::images::singleJpegEnvelope;
+using core::images::jpegEnvelopeBytes;
 int main(){
  std::vector<uint8_t> image={255,216,255,192,0,11,8,1,224,2,128,1,1,17,0,
   255,218,0,8,1,1,0,0,63,0,42,255,0,42,255,208,42,255,217};
@@ -18,7 +19,9 @@ int main(){
  assert(singleJpegEnvelope(metadata.data(),metadata.size()));
  auto joined=image;joined.insert(joined.end(),image.begin(),image.end());
  assert(!singleJpegEnvelope(joined.data(),joined.size()));
+ assert(jpegEnvelopeBytes(joined.data(),joined.size())==image.size());
  auto trailing=image;trailing.push_back(0);assert(!singleJpegEnvelope(trailing.data(),trailing.size()));
+ assert(jpegEnvelopeBytes(trailing.data(),trailing.size())==image.size());
  auto bad=image;bad[4]=255;bad[5]=255;assert(!singleJpegEnvelope(bad.data(),bad.size()));
  bad=image;bad[4]=bad[5]=0;assert(!singleJpegEnvelope(bad.data(),bad.size()));
  const uint8_t empty[]={255,216,255,217};assert(!singleJpegEnvelope(empty,sizeof empty));

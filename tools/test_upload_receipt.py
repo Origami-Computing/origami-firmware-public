@@ -5,7 +5,7 @@ No network or device writes. Uses the pinned ArduinoJson dependency and sanitize
 from pathlib import Path
 import os, subprocess, tempfile
 ROOT=Path(__file__).resolve().parents[1]
-json_src=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'))
+json_src=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src'))
 if not (json_src/'ArduinoJson.h').exists():
     raise SystemExit('Install the project ArduinoJson dependency, or set ARDUINOJSON_SRC (7.4.3)')
 code=r'''

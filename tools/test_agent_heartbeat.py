@@ -7,7 +7,7 @@ import re
 import subprocess
 import tempfile
 ROOT = Path(__file__).resolve().parents[1]
-source = (ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/WebSockets/src/WebSockets.cpp').read_text()
+source = (ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/WebSockets/src/WebSockets.cpp').read_text()
 def function(signature):
     a=source.index(signature); b=source.index('{',a)+1; depth=1
     while depth:

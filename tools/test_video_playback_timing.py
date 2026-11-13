@@ -86,6 +86,12 @@ void check(){
   assert(displayed.size()+s_skipped==200);
   uint32_t elapsed=playbackTimeMs(clockMs);clockMs+=1000;step();assert(playbackTimeMs(clockMs)==elapsed);
  }
+ // Input dispatch can start playback after the UI loop captured its tick time.
+ // A stale tick must not wrap elapsed time and request the final frame.
+ reset(1000);step();clockMs+=10;
+ const uint32_t staleTick=clockMs-2;assert(setPlaying(true));tick(staleTick);
+ assert(s_number==0 && s_skipped==0);
+ clockMs+=80;tick(clockMs);assert(s_number>0 && s_number<10);
  // A producer two intervals behind the clock must still make visual progress.
  // The former exact-target loop discarded every available image until EOF.
  reset(0);step();assert(setPlaying(true));uint32_t lagStarted=clockMs;

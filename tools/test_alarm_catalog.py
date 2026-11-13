@@ -13,7 +13,7 @@ def block(source,marker):
  return source[a:b]
 old={}
 for item in json.loads((BASELINE/'manifest.json').read_text())['files']:
- data=(BASELINE/item['path']).read_bytes()
+ data=(BASELINE/item['path']).read_bytes().replace(b'\r\n',b'\n')
  if hashlib.sha256(data).hexdigest()!=item['sha256']:
   raise RuntimeError('Frozen alarm reference changed: '+item['path'])
  old[item['name']]=data.decode()

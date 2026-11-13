@@ -25,3 +25,13 @@ The N16R8 partition layout preserves NVS at `0x9000`, application slots at `0x10
 This is an ownership-level inspection, not a comprehensive runtime/security audit. Embedded artwork, fonts, cloud endpoints and backend protocol implementation remain subject to publication approval.
 
 The OTA owner overrides Arduino's weak `verifyRollbackLater()` startup hook so `initArduino()` cannot accept a pending image before setup. Only `serviceBootHealth()` accepts it after 30 seconds with a responsive UI and healthy setup; an unhealthy setup requests rollback. The SDK integration regression compiles the actual Arduino startup block with this owner.
+
+
+Saved-network deletion is owned by `services::wifi_provision`. Before changing
+credentials it acquires the existing `background_network::RadioPause`, draining
+all network consumers (including telemetry TLS sockets) before Wi-Fi teardown.
+The pause remains owned across the asynchronous Core-0 manager operation; the UI
+composition tick releases it only after the manager publishes completion. A busy
+consumer leaves the credential untouched and returns failure. Provisioning and
+another deletion are refused while this handoff is pending. USB text and JSON
+provisioning both use the same deferred owner as Settings/QR setup.

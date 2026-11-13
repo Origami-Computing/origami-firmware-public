@@ -247,8 +247,11 @@ static void tick(uint32_t now) {
     if (s_frame && !s_playing) return;
     if (finishIfDone()) {present();NavHandler::instance().runtimePolicyChanged();return;}
     const auto& info=s_library.info();
+    // Input dispatch may have started/resumed playback after this UI tick's
+    // timestamp was sampled. Use a fresh clock so unsigned elapsed time cannot
+    // wrap and make the reader skip straight to the final frame.
     const uint32_t target=s_frame && info.intervalUs ?
-        std::min(uint32_t(info.frames-1),uint32_t(uint64_t(playbackTimeMs(now))*1000/info.intervalUs)) : 0;
+        std::min(uint32_t(info.frames-1),uint32_t(uint64_t(playbackTimeMs(millis()))*1000/info.intervalUs)) : 0;
     if (s_frame && target<=s_number) return;
     services::video::Library::Frame frame;
     // Consume the newest frame already due, not a future image. Requiring

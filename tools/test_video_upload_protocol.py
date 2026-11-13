@@ -9,7 +9,7 @@ parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--backend-fixture",type=Path,help="Synthetic responses exported by backend device-video-uploads.test.ts")
 args=parser.parse_args()
 ROOT=Path(__file__).resolve().parents[1]
-JSON=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src'))
+JSON=Path(os.environ.get('ARDUINOJSON_SRC',ROOT/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src'))
 code=r'''
 #include "core/video_upload_protocol.h"
 #include <cassert>

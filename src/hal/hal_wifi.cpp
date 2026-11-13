@@ -87,7 +87,7 @@ static bool s_deferWifiRestore = false;
 // after the WiFi-off-UI-core refactor.
 static volatile bool s_connectPending     = false;
 static wifi_mode_t   s_pendingConnectMode = WIFI_MODE_STA;
-static volatile bool s_credentialsChangedPending = false;
+static std::atomic<bool> s_credentialsChangedPending{false};
 static std::atomic<bool> s_reconnectPending{false};
 
 enum class QrCommand : uint8_t { None, Scan, Join, Release };
@@ -824,13 +824,16 @@ void requestCredentialsChanged() {
   s_credentialsChangedPending = true;
 }
 
+bool credentialsChangePending() { return s_credentialsChangedPending.load(); }
+
 void servicePendingCredentialsChanged() {
-  if (!s_credentialsChangedPending) return;
+  if (!s_credentialsChangedPending.load()) return;
+  struct Completion {
+    ~Completion() { s_credentialsChangedPending.store(false); }
+  } completion;
   if (!s_initialized) {
-    s_credentialsChangedPending = false;
     return;
   }
-  s_credentialsChangedPending = false;
 
   // If camera/photos already own the radio, only refresh the manager's cache.
   // The later restore request will choose WiFi or BLE from the new count.

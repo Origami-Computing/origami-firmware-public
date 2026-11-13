@@ -2236,15 +2236,6 @@ static void printWifiUsage() {
   Serial.println("[wifi-dev] usage: wifi status | list | add SSID PASS | add JSON | connect");
 }
 
-static bool ensureStaCapableMode() {
-  const wifi_mode_t mode = hal::wifi::getMode();
-  if (mode == WIFI_MODE_STA || mode == WIFI_MODE_APSTA) return true;
-  const wifi_mode_t target = mode == WIFI_MODE_AP ? WIFI_MODE_APSTA : WIFI_MODE_STA;
-  const bool ok = hal::wifi::setMode(target);
-  hal::wifi::applyModemSleepPolicy();
-  return ok;
-}
-
 static void printWifiStatus() {
   const esp_ip4_addr_t ip = hal::wifi::getSTAIP();
   Serial.printf("[wifi-dev] mode=%s connected=%u connecting=%u ssid=\"%s\" ip=" IPSTR "\n",
@@ -2268,9 +2259,8 @@ static void printWifiList() {
 }
 
 static bool connectSavedWifi() {
-  hal::wifi::reloadCredentialsFromSecrets();
-  if (!ensureStaCapableMode()) return false;
-  return hal::wifi::connect();
+  if (core::secrets::wifiNetworkCount() == 0) return false;
+  return services::wifi_provision::connectSaved(core::secrets::wifiNetworkSSID(0));
 }
 
 static bool handleWifiCommand(const char* rawLine) {
@@ -2374,23 +2364,18 @@ static bool handleWifiCommand(const char* rawLine) {
       Serial.printf("[wifi-dev] provision accepted=%u\n", ok ? 1u : 0u);
       return true;
     }
-    char ssid[33];
-    char password[65];
-    if (!nextToken(line, ssid, sizeof(ssid)) || !nextToken(line, password, sizeof(password))) {
+    services::wifi_provision::Credentials credentials{};
+    if (!nextToken(line, credentials.ssid, sizeof(credentials.ssid)) ||
+        !nextToken(line, credentials.pass, sizeof(credentials.pass))) {
+      memset(&credentials, 0, sizeof(credentials));
+      memset(raw, 0, sizeof(raw));
       printWifiUsage();
       return true;
     }
-
-    const bool saved = core::secrets::addWifiNetwork(ssid, password);
-    if (saved) {
-      (void)core::secrets::promoteWifiNetworkToFront(ssid);
-    }
-    const bool started = saved && connectSavedWifi();
-    Serial.printf("[wifi-dev] add ssid=\"%s\" saved=%u connect_started=%u\n",
-                  ssid,
-                  saved ? 1 : 0,
-                  started ? 1 : 0);
-    printWifiStatus();
+    const bool accepted = services::wifi_provision::saveAndConnect(credentials);
+    memset(&credentials, 0, sizeof(credentials));
+    memset(raw, 0, sizeof(raw));
+    Serial.printf("[wifi-dev] provision accepted=%u\n", accepted ? 1u : 0u);
     return true;
   }
 

@@ -83,5 +83,5 @@ int main(){
  puts("PASS durable replay, volatile exclusion, short-write preservation, interrupted promotion recovery, committed ack and re-entry");
 }
 ''')
- subprocess.run(['c++','-std=c++17','-fsanitize=address,undefined','-I'+str(p),'-I'+str(root/'include'),'-I'+os.environ.get('ARDUINOJSON_SRC',str(root/'.pio/libdeps/esp32-s3-menu-n16r8/ArduinoJson/src')),str(root/'src/core/telemetry_queue.cpp'),str(p/'main.cpp'),'-o',str(p/'test')],check=True)
+ subprocess.run(['c++','-std=c++17','-fsanitize=address,undefined','-I'+str(p),'-I'+str(root/'include'),'-I'+os.environ.get('ARDUINOJSON_SRC',str(root/'.pio/libdeps/esp32-s3-menu-n16r8-production/ArduinoJson/src')),str(root/'src/core/telemetry_queue.cpp'),str(p/'main.cpp'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)
