@@ -1,10 +1,11 @@
 {
   "approved": true,
-  "reviewed_tree_sha256": "223d539fb3ebcbc430efc9f9befb765ea5f94126f88607abf340412f32e222b3",
-  "approved_by": "Vaibhav Maloo (wireless Public recovery authorized in Codex, 2026-10-31); Codex reviewed legacy signed-metadata correction and 24 OTA tests; firmware bytes unchanged",
+  "reviewed_tree_sha256": "4f12c241f32fd96c461b5336848d6268ed8c4992f4f229ba47e3c6f3b63477a6",
+  "approved_by": "Vaibhav Maloo authorized public v1.0.8 release after the outstanding test gaps were reported (2026-11-13). Codex checked the merged source, candidate signature, source companion, retained notices and security contact.",
   "source_review_complete": true,
   "license_review_complete": true,
   "security_contact_ready": true,
   "artwork_font_ownership_confirmed": true,
-  "ownership_confirmation_date": "2026-10-21"
+  "ownership_confirmation_date": "2026-10-21",
+  "qualification": "public-review.3 booted on rev4. Anonymous native Gravity Four install and host screen verified. Physical multiplayer, paired production media upload and an in-field OTA upgrade on these exact bytes remain unverified."
 }
