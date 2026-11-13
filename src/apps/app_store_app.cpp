@@ -65,7 +65,9 @@ bool frame(const hal::camera::CameraFrame& f){
  }
  return grayReady;
 }
-void tick(uint32_t now){
+void tick(uint32_t){
+ // Input may start a new step after the navigation loop sampled its clock.
+ const uint32_t now=millis();
  if(tutorial && now-lastLoadingPaint>=40 && (step==Step::Install||step==Step::WaitNetwork||step==Step::Release||step==Step::Done)){lastLoadingPaint=now;hal::display::markAllDirty();}
  if(step==Step::Error){if(ownsScanner&&scanner.releaseStopped())ownsScanner=false;return;}
  if(step==Step::Start){
