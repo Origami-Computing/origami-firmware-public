@@ -13,7 +13,7 @@ int enqueued=0;bool initialized=true;
 namespace services {namespace uploads {
  bool ensureInit(){return initialized;}
  struct Q {bool enqueue(const char* type,const char* path,const char* mime,bool owned){
-  assert(!owned);assert(!strncmp(path,!strcmp(type,"video")?"/videos/test-":"/upload_queue/test-",!strcmp(type,"video")?13:19));
+  assert(!owned);assert(!strncmp(path,"/recordings/test-",17)||!strncmp(path,"/photos/test-",13)||!strncmp(path,!strcmp(type,"video")?"/videos/test-":"/upload_queue/test-",!strcmp(type,"video")?13:19));
   assert(!strcmp(mime,!strcmp(type,"image")?"image/jpeg":!strcmp(type,"video")?"video/x-msvideo":"audio/wav"));++enqueued;return true;
  }}q;Q& queue(){return q;}
 }}
@@ -28,6 +28,7 @@ int main(){
  command("queue enqueue audio /upload_queue/test-a.wav");assert(enqueued==2);
  command("queue enqueue video /videos/test-av.avi");assert(enqueued==3);
  initialized=false;command("queue enqueue audio /upload_queue/test-b.wav");assert(enqueued==3);
+ initialized=true;command("queue enqueue image /photos/test-a.jpg");command("queue enqueue audio /recordings/test-a.wav");assert(enqueued==5);
  puts("PASS development fixture delegates to production queue and rejects unrelated paths/types");
 }
 '''

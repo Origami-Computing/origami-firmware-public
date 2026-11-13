@@ -248,21 +248,23 @@ static void onDraw(TFT_eSprite& canvas) {
         const auto sync = s_library.syncStatus();
         const int pend = sync.pending;
         const int failed = sync.failed;
-        int done = s_syncTotal - pend - failed;
-        if (done < 0) done = 0;
-        if (done > s_syncTotal) done = s_syncTotal;
+        const int done = s_syncTotal > 0 && sync.confirmed >= (uint32_t)s_syncTotal
+            ? s_syncTotal : (int)sync.confirmed;
         const bool finished = (pend == 0);
 
         b.clearContent(kUiBg);
         b.panelHeader("sync.title", "Sync to cloud");
         char line[40];
-        if (s_syncTotal == 0) {
+        if (s_syncTotal < 0) {
+            b.labelCenterMuted("sync.msg", "Upload queue unavailable");
+        } else if (s_syncTotal == 0) {
             b.labelCenterMuted("sync.msg", "Nothing to sync");
         } else if (!sync.connected && !finished) {
             b.statusLine("sync.msg", "Connecting Wi-Fi...", kUiMuted);
         } else if (finished) {
             if (failed > 0) snprintf(line, sizeof(line), "Synced %d, %d failed", done, failed);
-            else            snprintf(line, sizeof(line), "All synced (%d)", s_syncTotal);
+            else if (done == s_syncTotal) snprintf(line, sizeof(line), "All synced (%d)", done);
+            else snprintf(line, sizeof(line), "%d uploads confirmed", done);
             b.statusLine("sync.msg", line, kUiFg);
         } else {
             snprintf(line, sizeof(line), "Uploading %d / %d", done, s_syncTotal);

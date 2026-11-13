@@ -46,7 +46,7 @@ struct Scratch {
 };
 bool pathFor(const char* id,unsigned slot,char* path,size_t capacity) {
     if(!id)return false;
-    const size_t n=strnlen(id,24);if(!n||n>=24)return false;
+    const size_t n=strnlen(id,kQueueIdCapacity);if(!n||n>=kQueueIdCapacity)return false;
     for(size_t i=0;i<n;++i) {
         const char c=id[i];
         if(!((c>='a'&&c<='z')||(c>='A'&&c<='Z')||(c>='0'&&c<='9')||c=='_'||c=='-'||(c=='.'&&i>0)))return false;

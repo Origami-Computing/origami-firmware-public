@@ -48,18 +48,23 @@ int Library::beginSync() {
     browseReady_=false;
     browseAgentPause_.release();
     active_=true;
-    (void)uploads::ensureInit();
+    if (!uploads::ensureInit()) {
+        hal::wifi::scheduleRestore();
+        reservation_.release();
+        return -1;
+    }
     auto& queue=uploads::queue();
     queue.setUploadPaused(false);
-    const int pending=queue.counts().pending;
+    const auto counts = queue.counts();
+    syncStartConfirmed_ = counts.confirmed;
     hal::wifi::scheduleRestore();
     reservation_.release();
-    return pending;
+    return counts.pending + counts.active + counts.failed;
 }
 Library::SyncStatus Library::syncStatus() const {
     auto& queue=uploads::queue();
     const auto counts=queue.counts();
-    return {counts.pending,counts.failed,hal::wifi::connected()};
+    return {counts.pending + counts.active,counts.failed,hal::wifi::connected(),counts.confirmed - syncStartConfirmed_};
 }
 void Library::close() {
     browseReady_=false;

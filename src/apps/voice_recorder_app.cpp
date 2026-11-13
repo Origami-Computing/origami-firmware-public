@@ -114,12 +114,12 @@ static const char* s_recordingError = nullptr;
 
 // --- WAV plumbing ----------------------------------------------------------
 
-static void enqueueCurrentRecording() {
-  if (!s_currentRecordingPath[0]) return;
+static bool enqueueCurrentRecording() {
+  if (!s_currentRecordingPath[0]) return false;
   if (!core::recording_files::hasAudio(s_currentRecordingPath)) {
     Serial.printf("[recorder] Not queueing empty WAV: %s\n", s_currentRecordingPath);
     s_currentRecordingPath[0] = '\0';
-    return;
+    return false;
   }
 
   const bool queued = services::uploads::queue().enqueue(
@@ -128,6 +128,7 @@ static void enqueueCurrentRecording() {
                 queued ? "Queued" : "Failed to queue",
                 s_currentRecordingPath);
   s_currentRecordingPath[0] = '\0';
+  return queued;
 }
 
 // --- Timing ----------------------------------------------------------------
@@ -162,7 +163,9 @@ static bool closeCaptureHardware() {
 static bool saveCurrentRecording() {
   if (closeCaptureHardware()) {
     s_recordingError = core::recording_files::hasAudio(s_currentRecordingPath) ? nullptr : "No audio saved";
-    enqueueCurrentRecording();
+    if (!enqueueCurrentRecording() && !s_recordingError) {
+      s_recordingError = "Saved locally. Upload not queued.";
+    }
   } else {
     Serial.printf("[recorder] WAV finalization failed; file retained, not queued: %s\n",
                   s_currentRecordingPath);

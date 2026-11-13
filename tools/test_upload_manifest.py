@@ -91,6 +91,9 @@ int main(){
  resetFaults();disk.clear();strcpy(item.type,"video");item.deleteAfterUpload=true;disk[item.filePath]="media";
  assert(q.saveManifestUnlocked());UploadQueue videoBoot;assert(videoBoot.loadManifestUnlocked());
  assert(videoBoot.m_count==1&&!videoBoot.m_items[0].deleteAfterUpload);
+ item.status=QSTATUS_FAILED;strcpy(item.lastError,"HTTP 413");assert(q.saveManifestUnlocked());
+ UploadQueue failedBoot;assert(failedBoot.loadManifestUnlocked()&&failedBoot.m_count==1);
+ assert(failedBoot.m_items[0].status==QSTATUS_FAILED&&!strcmp(failedBoot.m_items[0].lastError,"HTTP 413"));
  printf("PASS actual manifest: %zu cut boundaries, %d I/O failures, short writes, recovery and counters\n",snapshots.size(),saveOps);
 }
 '''
