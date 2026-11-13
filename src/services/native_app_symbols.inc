@@ -149,7 +149,37 @@ extern "C" char networkAppImport5[] asm("free");
 extern "C" char networkAppImport6[] asm("malloc");
 extern "C" char networkAppImport7[] asm("realloc");
 extern "C" char networkAppImport8[] asm("strcmp");
+extern "C" char storeImport0[] asm("_ZN8services10local_play4openEv");
+extern "C" char storeImport1[] asm("_ZN8services10local_play4sendEjRA64_Kh");
+extern "C" char storeImport2[] asm("_ZN8services10local_play5closeEj");
+extern "C" char storeImport3[] asm("_ZN8services10local_play7receiveEjRA64_h");
+extern "C" char storeImport4[] asm("_ZN8services4muni4stopEj");
+extern "C" char storeImport5[] asm("_ZN8services4muni5watchEPKc");
+extern "C" char storeImport6[] asm("_ZN8services4muni8snapshotEv");
+extern "C" char storeImport7[] asm("_ZN8services9countdown5pauseEv");
+extern "C" char storeImport8[] asm("_ZN8services9countdown5resetEv");
+extern "C" char storeImport9[] asm("_ZN8services9countdown5startEjNS_10automation10AlertSoundEh");
+extern "C" char storeImport10[] asm("_ZN8services9countdown6resumeEv");
+extern "C" char storeImport11[] asm("_ZN8services9countdown8snapshotEv");
+extern "C" char storeImport12[] asm("_ZN8services9vibration13stopWidgetCueEv");
+extern "C" char storeImport13[] asm("_ZN8services9vibration9widgetCueEPKc");
+extern "C" char storeImport14[] asm("time");
 static const esp_elfsym kSymbols[] = {
+    {"_ZN8services10local_play4openEv", reinterpret_cast<void*>(storeImport0)},
+    {"_ZN8services10local_play4sendEjRA64_Kh", reinterpret_cast<void*>(storeImport1)},
+    {"_ZN8services10local_play5closeEj", reinterpret_cast<void*>(storeImport2)},
+    {"_ZN8services10local_play7receiveEjRA64_h", reinterpret_cast<void*>(storeImport3)},
+    {"_ZN8services4muni4stopEj", reinterpret_cast<void*>(storeImport4)},
+    {"_ZN8services4muni5watchEPKc", reinterpret_cast<void*>(storeImport5)},
+    {"_ZN8services4muni8snapshotEv", reinterpret_cast<void*>(storeImport6)},
+    {"_ZN8services9countdown5pauseEv", reinterpret_cast<void*>(storeImport7)},
+    {"_ZN8services9countdown5resetEv", reinterpret_cast<void*>(storeImport8)},
+    {"_ZN8services9countdown5startEjNS_10automation10AlertSoundEh", reinterpret_cast<void*>(storeImport9)},
+    {"_ZN8services9countdown6resumeEv", reinterpret_cast<void*>(storeImport10)},
+    {"_ZN8services9countdown8snapshotEv", reinterpret_cast<void*>(storeImport11)},
+    {"_ZN8services9vibration13stopWidgetCueEv", reinterpret_cast<void*>(storeImport12)},
+    {"_ZN8services9vibration9widgetCueEPKc", reinterpret_cast<void*>(storeImport13)},
+    {"time", reinterpret_cast<void*>(storeImport14)},
     {"_ZN7widgets4sync11requestPollEv", reinterpret_cast<void*>(networkAppImport0)},
     {"_ZN8services8app_http4stopEj", reinterpret_cast<void*>(networkAppImport1)},
     {"_ZN8services8app_http4takeEjRNS0_8ResponseE", reinterpret_cast<void*>(networkAppImport2)},
