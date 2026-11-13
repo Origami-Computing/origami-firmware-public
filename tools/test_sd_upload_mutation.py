@@ -18,7 +18,7 @@ bool held=false,locked=false,admit=true,initOk=true,dirOk=true,openOk=true;
 int acquires=0,releases=0,opens=0,removes=0,closes=0;
 class UploadQueue{public:class FileMutation{bool acquired;public:FileMutation(UploadQueue&,const char*,bool remove):acquired(admit){assert(!remove&&!held);++acquires;if(acquired)held=true;}~FileMutation(){if(acquired){assert(!locked&&held);held=false;++releases;}}bool ready()const{return acquired;}};};
 namespace services{namespace uploads{UploadQueue q;bool ensureInit(){return initOk;}UploadQueue& queue(){return q;}}}
-namespace hal{namespace sd{bool mounted(){return true;}}namespace bus{void lockSpi(){assert(held&&!locked);locked=true;}void unlockSpi(){assert(locked);locked=false;}}}
+namespace hal{namespace app_storage{bool protectedSdPath(const char* p){return !strcmp(p,"/protected");}}namespace sd{bool mounted(){return true;}}namespace bus{void lockSpi(){assert(held&&!locked);locked=true;}void unlockSpi(){assert(locked);locked=false;}}}
 struct File{bool alive=false;explicit operator bool()const{return alive;}void close(){assert(held&&locked);alive=false;++closes;}};
 constexpr int FILE_WRITE=1;constexpr size_t kSdPathCap=96;
 struct {bool remove(const char*){assert(held&&locked);++removes;return true;}File open(const char*,int){assert(held&&locked);++opens;File f;f.alive=openOk;return f;}}SD;
@@ -29,6 +29,7 @@ void copyLine(char* out,size_t cap,const char* text){snprintf(out,cap,"%s",text)
 '''+block('struct SdUploadState {')+';\nstatic SdUploadState s_sdUpload;\n'+'\n'.join(block(m) for m in ['static void abortSdUpload(', 'static void finishSdUpload(', 'static bool startSdUpload('])+r'''
 void reset(){assert(!held&&!locked&&!s_sdUpload.active&&!s_sdUpload.mutation);admit=initOk=dirOk=openOk=true;acquires=releases=opens=removes=closes=0;}
 int main(){
+ reset();startSdUpload("/protected",1,0);assert(!acquires&&!opens);
  for(int fault=0;fault<4;++fault){reset();if(fault==0)admit=false;if(fault==1)initOk=false;if(fault==2)dirOk=false;if(fault==3)openOk=false;
   assert(startSdUpload("/videos/test.avi",1,0));assert(!s_sdUpload.active&&!held&&!s_sdUpload.mutation);
   if(fault<3)assert(!opens&&!removes);

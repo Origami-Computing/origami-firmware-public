@@ -19,7 +19,7 @@ enum QueueItemStatus : uint8_t {
 };
 
 struct QueueItem {
-    char id[24];
+    char id[32];
     char type[8];           // "image" or "audio"
     char filePath[96];
     char mimeType[24];
@@ -35,7 +35,7 @@ struct QueueItem {
     char lastError[48];
 };
 
-static_assert(sizeof(QueueItem) == 252,
+static_assert(sizeof(QueueItem) == 260,
               "QueueItem growth permanently increases PSRAM usage");
 
 namespace services { namespace uploads { bool ensureInit(); void tick(); } }
@@ -95,7 +95,7 @@ public:
     };
 
     // One mutex-protected observation; pending excludes active transfers.
-    struct Counts { int total = 0, pending = 0, failed = 0, active = 0; };
+    struct Counts { int total = 0, pending = 0, failed = 0, active = 0; uint32_t confirmed = 0; };
     Counts counts() const;
     int  size()         const { return counts().total; }
     int  pendingCount() const { return counts().pending; }
@@ -193,10 +193,10 @@ private:
   uint32_t m_nextNetworkRetryAt = 0;
   /** Worker spawn backoff when internal RAM cannot allocate the task stack. */
   uint32_t m_nextWorkerStartAt = 0;
-    char m_forcedItemId[24] = {};
+    char m_forcedItemId[sizeof(QueueItem::id)] = {};
     // Retained through cancel/removal until doUpload returns. Prevents a new
     // item or resume record reusing the identity of an in-flight completion.
-    char m_inFlightId[24] = {};
+    char m_inFlightId[sizeof(QueueItem::id)] = {};
     char m_inFlightPath[96] = {};
     char m_mutationPath[96] = {};
     bool m_resetAfterFlight = false;
@@ -225,6 +225,7 @@ private:
     NetworkAcquireCallback m_networkAcquire = nullptr;
     NetworkReleaseCallback m_networkRelease = nullptr;
 
+    uint32_t m_confirmedCount = 0; // Validated receipts since boot, guarded by m_mutex.
     Counts countsUnlocked() const; // Caller holds m_mutex.
     bool loadManifestUnlocked();
     bool loadManifestFileUnlocked(const char* path);
@@ -241,7 +242,6 @@ private:
      * Returns true if a slot was freed (or already free), false if the queue can't make room.
      * Caller MUST hold `m_mutex`. The evicted file's SD copy is also deleted to reclaim space.
      */
-    bool makeRoomForOneUnlocked();
     UploadResult doUpload(QueueItem& item);
     UploadResult doVideoUpload(QueueItem& item);
     bool mutationBlocksUnlocked(const char* path) const;

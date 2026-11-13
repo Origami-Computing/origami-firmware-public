@@ -8,6 +8,7 @@ namespace services { namespace video_upload {
 // Backend video routes also require the key and bearer to identify the same user.
 // Output is lowercase SHA-256 on success, empty on failure; never log inputs.
 bool binding(const core::secrets::BackendConfig& backend,char (&out)[65]);
+constexpr size_t kQueueIdCapacity = 24;
 // Owns the two-slot SD resume record. One serialized caller (UploadQ, or initial
 // enqueue while that item is not active); operations block briefly on SD and
 // must not run in a painter/tick. No worker, network access or media deletion.

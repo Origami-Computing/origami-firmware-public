@@ -3566,7 +3566,9 @@ static void handleLine(char* line, uint32_t nowMs) {
     char type[8] = {}, path[96] = {}, extra = 0;
     const bool valid = sscanf(line + 14, "%7s %95s %c", type, path, &extra) == 2 &&
         (((!strcmp(type, "image") || !strcmp(type, "audio")) && !strncmp(path, "/upload_queue/test-", 19)) ||
-         (!strcmp(type,"video") && !strncmp(path,"/videos/test-",13))) && !strstr(path, "..");
+         (!strcmp(type,"video") && !strncmp(path,"/videos/test-",13)) ||
+          (!strcmp(type,"audio") && !strncmp(path,"/recordings/test-",17)) ||
+          (!strcmp(type,"image") && !strncmp(path,"/photos/test-",13))) && !strstr(path, "..");
     if (!valid || !services::uploads::ensureInit()) {
       Serial.println("QUEUE ENQUEUE ERR args_or_storage");
       return;

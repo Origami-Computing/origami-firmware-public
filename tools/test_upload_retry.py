@@ -43,6 +43,7 @@ class UploadQueue {public:
  void watchDelivery(const char*);Delivery delivery(const char*)const;
  uint32_t m_nextNetworkRetryAt=0;
  char m_forcedItemId[24]{},m_inFlightId[24]{},m_inFlightPath[96]{},m_lastStatus[64]{};
+ uint32_t m_confirmedCount=0;
  int requests=0,saves=0;std::function<void()> duringUpload;
  UploadResult result{UploadResultKind::HttpResponse,200,true,0};
  UploadResult doUpload(QueueItem& item){++requests;assert(!strcmp(m_inFlightId,item.id));if(duringUpload)duringUpload();assert(!strcmp(m_inFlightId,item.id));strcpy(item.lastError,"injected");return result;}
@@ -76,7 +77,7 @@ using Kind=UploadQueue::UploadResultKind;
  }
  for(int code:{200,201,204})for(bool owned:{false,true}){
   SD.deleted.clear();UploadQueue q;q.add("a",owned);strcpy(q.m_deliveryPath,"a");q.result={Kind::HttpResponse,code,true,0};
-  assert(q.processOnePending()&&q.m_count==0&&q.m_deliveryConfirmed);assert(SD.deleted.size()==(owned?1:0));
+  assert(q.processOnePending()&&q.m_count==0&&q.m_deliveryConfirmed&&q.m_confirmedCount==1);assert(SD.deleted.size()==(owned?1:0));
   assert(q.delivery("a").confirmed&&!q.delivery("other").confirmed);
  }
  SD.deleted.clear();
@@ -107,7 +108,7 @@ using Kind=UploadQueue::UploadResultKind;
   assert(q.processOnePending());assert(q.m_count==1&&q.m_items[0].attempts==1&&SD.deleted.empty());}
  for(int code:{400,404,413,415}){
   UploadQueue q;q.add("a",true);q.result={Kind::HttpResponse,code,true,0};
-  assert(q.processOnePending()&&q.m_count==0&&SD.deleted.empty());
+  assert(q.processOnePending()&&q.m_count==1&&q.m_items[0].status==QSTATUS_FAILED&&SD.deleted.empty());
  }
  for(int code:{408,429,500,503}){
   UploadQueue q;q.add("a");q.add("b");q.result={Kind::HttpResponse,code,true,0};
@@ -129,7 +130,7 @@ using Kind=UploadQueue::UploadResultKind;
   assert(!q.processOnePending()&&q.requests==1);
  }
  {UploadQueue q;q.add("a",true);q.m_items[0].attempts=19;q.result={Kind::RetryableFailure,-1,true,0};
-  assert(q.processOnePending()&&q.m_count==0&&SD.deleted.empty());}
+  assert(q.processOnePending()&&q.m_count==1&&q.m_items[0].status==QSTATUS_FAILED&&SD.deleted.empty());}
  {UploadQueue q;q.add("a");q.duringUpload=[&]{q.add("b");};assert(q.processOnePending());
   assert(q.m_count==1&&!strcmp(q.m_items[0].id,"b"));}
  {UploadQueue q;q.add("a");q.add("b");q.duringUpload=[&]{q.removeItemAtUnlocked(0);};

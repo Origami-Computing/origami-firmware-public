@@ -266,7 +266,7 @@ static hal::audio::OutputRoute musicOutRouteFromRow(int row) {
 }
 
 static UploadQueue::View s_uploadView;
-static char s_uploadId[24] = {}, s_uploadNotice[64] = {};
+static char s_uploadId[sizeof(QueueItem::id)] = {}, s_uploadNotice[64] = {};
 static int s_uploadField = 0;
 static bool s_uploadEditing = false, s_uploadBlink = true;
 static uint32_t s_uploadTickMs = 0, s_uploadNoticeMs = 0;
@@ -1168,6 +1168,7 @@ static void buildSettingsScene(ui::scene::Scene& scene, int16_t width, int16_t h
       else if(s_uploadEditing) snprintf(detail,sizeof(detail),"Item %d of %d\nTurn to pick. C: Done",v.index+1,v.count);
       else if(!v.count) strlcpy(detail,"New recordings and\nphotos appear here",sizeof(detail));
       else if(v.item.status==QSTATUS_UPLOADING) strlcpy(detail,v.resetPending?"Uploading; reset\nafter completion":"Uploading to Agent",sizeof(detail));
+      else if(v.item.status==QSTATUS_FAILED) snprintf(detail,sizeof(detail),"Failed | Force to retry\n%s",v.item.lastError);
       else if(v.paused) strlcpy(detail,"Waiting for device\nto finish audio/I/O",sizeof(detail));
       else if(!hal::wifi::connected()) strlcpy(detail,"Waiting for Wi-Fi",sizeof(detail));
       else if(v.forced) strlcpy(detail,"Force send scheduled",sizeof(detail));
