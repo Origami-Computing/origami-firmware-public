@@ -52,6 +52,7 @@ int mbedtls_base64_encode(unsigned char*,size_t,size_t*,const unsigned char*,siz
 ''')
  write('main.cpp',r'''
 #include "services/video_upload_transfer.h"
+#include "services/media_upload_progress.h"
 #include "WiFiClientSecure.h"
 #include "hal/hal_sd.h"
 #include <cassert>
@@ -64,7 +65,7 @@ using namespace core::video_upload;
 std::vector<std::string> replies,sent;
 bool connectOk=true,writeOk=true,trusted=false,saveOk=true,loadOk=true,noMemory=false,readOk=true,cancel=false;
 size_t fragment=SIZE_MAX,seeked=0,cancelAfter=SIZE_MAX;int opened=0,allocations=0,saves=0,allocationCalls=0,failAllocation=0;
-uint32_t replyDelay=0;bool keepConnection=false;int connects=0;
+uint32_t replyDelay=0,bodyDelay=0;bool keepConnection=false;int connects=0;
 uint32_t ticks=0;bool pressure=false,permanentPressure=false,cancelPressure=false;
 size_t heap_caps_get_free_size(int){return permanentPressure|| (pressure&&ticks<40)?1000:20000;}
 size_t heap_caps_get_largest_free_block(int){return heap_caps_get_free_size(4);}
@@ -77,7 +78,7 @@ int WiFiClientSecure::connect(const char* host,uint16_t port,int timeout){
  ++connects;assert(trusted&&std::string(host)=="fixture.invalid"&&port==443&&timeout==5000);trusted=false;
  if(!connectOk)return 0;index=sent.size();assert(size_t(index)<replies.size());sent.emplace_back();at=0;return 1;
 }
-size_t WiFiClientSecure::write(const uint8_t* p,size_t n){assert(n<=8192);if(keepConnection&&index>=0&&at==replies[index].size()&&n>=6&&!memcmp(p,"PATCH ",6)){index=sent.size();sent.emplace_back();at=0;}if(!writeOk)return 0;n=std::min(n,fragment);sent[index].append((const char*)p,n);return n;}
+size_t WiFiClientSecure::write(const uint8_t* p,size_t n){assert(n<=8192);if(n==8192)ticks+=bodyDelay;if(keepConnection&&index>=0&&at==replies[index].size()&&n>=6&&!memcmp(p,"PATCH ",6)){index=sent.size();sent.emplace_back();at=0;}if(!writeOk)return 0;n=std::min(n,fragment);sent[index].append((const char*)p,n);return n;}
 int mbedtls_base64_encode(unsigned char* out,size_t cap,size_t* used,const unsigned char* in,size_t n){
  const char* alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
  *used=4*((n+2)/3);if(cap<=*used)return -1;
@@ -110,7 +111,8 @@ int main(){
  replies={creation};assert(run()==Transfer::Progress&&saves==1&&r.location[0]);
  assert(sent[0].find("Content-Length: 0\r\n")!=std::string::npos&&sent[0].find("x-signature: synthetic.scoped.token\r\n")!=std::string::npos);
  assert(sent[0].find("Authorization:")==std::string::npos&&sent[0].find("X-Api-Key:")==std::string::npos);
- reset();replies={head(0),ack(kChunkBytes)};assert(run()==Transfer::Progress&&sent.size()==2);
+ reset();bodyDelay=250;replies={head(0),ack(kChunkBytes)};assert(run()==Transfer::Progress&&sent.size()==2&&ticks>180000);bodyDelay=0;
+ auto bytes=services::media_upload::current().snapshot();assert(bytes.sent==kChunkBytes&&bytes.total==kChunkBytes+100);
  auto body=sent[1].substr(sent[1].find("\r\n\r\n")+4);assert(body.size()==kChunkBytes);
  for(size_t i=0;i<body.size();++i)assert(uint8_t(body[i])==uint8_t(i));
  // Transient DMA pressure drains without spending a retry; permanent pressure

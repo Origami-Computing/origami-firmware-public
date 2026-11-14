@@ -22,6 +22,8 @@
 #include "app.h"
 #include "services/photo_library.h"
 #include "services/uploads.h"
+#include "services/media_upload_progress.h"
+#include "services/gallery_receipt.h"
 #include "config/ui_layout.h"
 #include "config/ui_theme.h"
 #include "hal/hal_display.h"
@@ -42,6 +44,7 @@ static int         s_count      = 0;
 static int         s_idx        = 0;   // 0 = newest photo
 static bool        s_needRender = false;
 static bool        s_needPhotoRender = true;
+static bool s_offerUpload=false;
 static bool        s_actionsOpen = false;
 static policy::Action s_action = policy::Action::Escape;
 static bool        s_deleteFailed = false;
@@ -157,11 +160,29 @@ static void deletePhoto() {
     Serial.printf("[photos] delete ok=1 queue=%d count=%d path=%s\n", removedUploads, s_count, path);
 }
 
-static void uploadVideo() {
+static void uploadSelected() {
     using E=UploadQueue::VideoEnqueue;
-    if(!s_library.browsing() || s_idx<0 || s_idx>=s_count || !s_library[s_idx].video)return;
-    const auto result=services::uploads::ensureInit()
-        ? services::uploads::queue().enqueueVideo(s_library[s_idx].path) : E::StorageUnavailable;
+    if(!s_library.browsing() || s_idx<0 || s_idx>=s_count)return;
+    if(!services::uploads::ensureInit()){
+        s_uploadError="Upload queue unavailable";s_needRender=true;return;
+    }
+    if(!s_library[s_idx].video){
+        auto& queue=services::uploads::queue();
+        const auto& file=s_library[s_idx];
+        const char* name=strrchr(file.path,'/');
+        const auto view=queue.view(name?name+1:file.path);
+        if(view.count && !strcasecmp(view.item.filePath,file.path)){
+            if(view.item.status==QSTATUS_FAILED && queue.forceSend(view.item.id)!=UploadQueue::ForceResult::Scheduled){
+                s_uploadError="Queue busy. Try again.";s_needRender=true;return;
+            }
+            closeActions();startSync();return;
+        }
+        if(queue.enqueue("image",file.path,"image/jpeg",false)){
+            closeActions();startSync();return;
+        }
+        s_uploadError="Cannot queue photo";s_needRender=true;return;
+    }
+    const auto result=services::uploads::queue().enqueueVideo(s_library[s_idx].path);
     switch(result){
       case E::Queued: case E::AlreadyQueued: closeActions();startSync();return;
       case E::Busy:s_uploadError="Upload busy. Try again.";break;
@@ -179,11 +200,10 @@ static void drawActions(ui::scene::Scene& scene, int16_t W, int16_t H) {
     const int16_t height = 32;
     const int16_t gap = 6;
     const int16_t x = W - kScreenInsetX - width;
-    const bool video=s_count>0 && s_library[s_idx].video;
-    const int rows=video?3:2;
+    const int rows=s_offerUpload?3:2;
     const int16_t top = kSystemStatusBarH + (H - kSystemStatusBarH - 22 - height * rows - gap*(rows-1)) / 2;
     for (int row = 0; row < rows; ++row) {
-        const auto action=policy::actionAt(row,video);
+        const auto action=policy::actionAt(row,s_offerUpload);
         const bool selected=action==s_action;
         const uint16_t bg = selected ? TFT_BLACK : TFT_WHITE;
         const uint16_t fg = selected ? TFT_WHITE : TFT_BLACK;
@@ -254,7 +274,8 @@ static void onDraw(TFT_eSprite& canvas) {
 
         b.clearContent(kUiBg);
         b.panelHeader("sync.title", "Sync to cloud");
-        char line[40];
+        char line[48];
+        const auto bytes=services::media_upload::current().snapshot();
         if (s_syncTotal < 0) {
             b.labelCenterMuted("sync.msg", "Upload queue unavailable");
         } else if (s_syncTotal == 0) {
@@ -267,10 +288,15 @@ static void onDraw(TFT_eSprite& canvas) {
             else snprintf(line, sizeof(line), "%d uploads confirmed", done);
             b.statusLine("sync.msg", line, kUiFg);
         } else {
-            snprintf(line, sizeof(line), "Uploading %d / %d", done, s_syncTotal);
+            if(sync.transferring && bytes.total)
+                snprintf(line,sizeof(line),"%lu.%02lu / %lu.%02lu MB",
+                         (unsigned long)(bytes.sent/1000000), (unsigned long)(bytes.sent%1000000/10000),
+                         (unsigned long)(bytes.total/1000000), (unsigned long)(bytes.total%1000000/10000));
+            else snprintf(line,sizeof(line),"Waiting to upload...");
             b.statusLine("sync.msg", line, kUiFg);
         }
-        b.progressBar("sync.bar", (uint32_t)done, (uint32_t)(s_syncTotal > 0 ? s_syncTotal : 1));
+        if (!finished && sync.connected && sync.transferring && bytes.total) b.progressBar("sync.bar",bytes.sent,bytes.total);
+        else if (finished && s_syncTotal>0 && done==s_syncTotal) b.progressBar("sync.bar",1,1);
 
         scene.render(canvas);
         hal::display::markAllDirty();
@@ -445,11 +471,11 @@ static void onInput(hal::input::InputEvent ev) {
     if (s_actionsOpen) {
         if (ui::nav::isBackTap(ev)) closeActions();
         else if (ev.type == ET::Scroll) {
-            const auto next = policy::moveAction(s_action, ev.delta,s_count>0 && s_library[s_idx].video);
+            const auto next = policy::moveAction(s_action, ev.delta,s_offerUpload);
             if (next != s_action) { s_action = next; s_needRender = true; }
         } else if (ui::nav::isEnterPress(ev) && !s_needRender) {
             if (s_action == policy::Action::Escape) closeActions();
-            else if(s_action==policy::Action::Upload)uploadVideo();
+            else if(s_action==policy::Action::Upload)uploadSelected();
             else deletePhoto();
         }
         return;  // RB must not start cloud sync while choosing a destructive action.
@@ -478,6 +504,7 @@ static void onInput(hal::input::InputEvent ev) {
 
     if (ui::nav::isEnterPress(ev) && !s_needRender) {
         s_uploadError=nullptr;
+        s_offerUpload=!services::gallery_receipt::confirmed(s_library[s_idx].path);
         s_actionsOpen = true;
         s_action = policy::Action::Escape;
         s_deleteFailed = false;

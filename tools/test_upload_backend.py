@@ -23,6 +23,7 @@ result=block(header,'    struct UploadResult {')+';'
 code=r'''
 #include "core/secrets.h"
 #include "core/upload_receipt.h"
+#include "services/media_upload_progress.h"
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
@@ -144,6 +145,7 @@ int main(){
   failWrite=0;shortWrite=3;fragmented=true;wire.clear();response=receiptResponse(201);
   result=queue.doUpload(item);
   assert(result.kind==UploadQueue::UploadResultKind::HttpResponse && result.httpCode==201);
+  const auto bytes=services::media_upload::current().snapshot();assert(bytes.sent==fileBytes && bytes.total==fileBytes);
   auto length=wire.find("Content-Length: ")+strlen("Content-Length: ");
   assert(std::stoul(wire.substr(length))==wire.size()-(wire.find("\r\n\r\n")+4));
   shortWrite=0;fragmented=false;earlyEof=true;wire.clear();
