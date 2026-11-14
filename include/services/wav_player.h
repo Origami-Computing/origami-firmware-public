@@ -13,6 +13,7 @@
 #include "core/pcm_ring.h"
 #include "core/playback_progress.h"
 #include "core/mjpeg_avi.h"
+#include "core/recording_playback_dsp.h"
 #include "services/playback_worker.h"
 
 namespace services {
@@ -81,6 +82,8 @@ public:
     }
 
 private:
+    core::audio::RecordingPlaybackDsp recordingDsp_;
+    bool masterRecording_ = false;
     bool usageTrackActive_ = false;
     std::atomic<uint8_t> spectrum_[kVisBars]{};
     void stopTrackUnlocked(); // Caller holds PlaybackWorker::Control.
