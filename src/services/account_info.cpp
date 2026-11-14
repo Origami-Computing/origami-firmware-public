@@ -55,19 +55,23 @@ void poll() {
  Serial.printf("[account] refresh HTTP %d content_length=%d\n",code,http.getSize());
  Snapshot next{};
  if(code==200 && http.getSize()<=8192){
-  JsonDocument filter,doc;filter["name"]=true;filter["is_anonymous"]=true;filter["phone"]=true;
+  JsonDocument filter,doc;filter["email"]=true;filter["name"]=true;filter["is_anonymous"]=true;filter["phone"]=true;
   ProfileBody body;
   const int received=http.writeToStream(&body);
   if(received>=0 && !deserializeJson(doc,body.text.c_str(),DeserializationOption::Filter(filter)) && doc.is<JsonObject>()){
    const char* name=doc["name"]|"";
+   const char* email=doc["email"]|"";
    const char* phone=doc["phone"]|"";
-   strlcpy(next.name,doc["is_anonymous"].as<bool>()?"Guest account":name[0]?name:phone[0]?phone:"Linked (unnamed)",sizeof(next.name));
+   strlcpy(next.name,doc["is_anonymous"].as<bool>()?"Guest account":name[0]?name:email[0]?email:phone[0]?phone:"Linked (unnamed)",sizeof(next.name));
   }
  } else if(code==401 || code==404)strlcpy(next.name,"Not linked",sizeof(next.name));
  http.end();
  if(!next.name[0])strlcpy(next.name,"Unavailable",sizeof(next.name));
  portENTER_CRITICAL(&s_mux);
- s_value=next;s_revision=request.revision;s_valid=true;
+ // A temporary transport error should not replace a known identity for this account.
+ if(!s_valid || s_revision!=request.revision || strcmp(next.name,"Unavailable")!=0){
+  s_value=next;s_revision=request.revision;s_valid=true;
+ }
  portEXIT_CRITICAL(&s_mux);
 }
 }}
