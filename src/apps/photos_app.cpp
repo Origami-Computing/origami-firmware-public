@@ -289,7 +289,9 @@ static void onDraw(TFT_eSprite& canvas) {
             b.statusLine("sync.msg", line, kUiFg);
         } else {
             if(sync.transferring && bytes.total)
-                snprintf(line,sizeof(line),"%lu / %lu bytes",(unsigned long)bytes.sent,(unsigned long)bytes.total);
+                snprintf(line,sizeof(line),"%lu.%02lu / %lu.%02lu MB",
+                         (unsigned long)(bytes.sent/1000000), (unsigned long)(bytes.sent%1000000/10000),
+                         (unsigned long)(bytes.total/1000000), (unsigned long)(bytes.total%1000000/10000));
             else snprintf(line,sizeof(line),"Waiting to upload...");
             b.statusLine("sync.msg", line, kUiFg);
         }
