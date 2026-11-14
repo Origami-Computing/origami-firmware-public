@@ -3,9 +3,9 @@ from pathlib import Path
 import subprocess,sys,tempfile
 ROOT=Path(__file__).resolve().parents[1]
 source=(ROOT/'src/widgets/sync.cpp').read_text()
-body=source[source.index('class Body :'):source.index('// Fetch the raw manifest')]
+body=source[source.index('class Body :'):source.index('// Certificate verification')]
 helper=source[source.index('static services::custom_apps::Result publicGet('):source.index('static bool safeRemoteId')]
-download=source[source.index('services::custom_apps::Result download('):source.index('int syncFromBackend(')]
+download=source[source.index('services::custom_apps::Result download('):source.index('int syncOne(')]
 with tempfile.TemporaryDirectory() as directory:
  p=Path(directory)
  (p/'test.cpp').write_text(r'''

@@ -9,23 +9,6 @@ namespace widgets {
 namespace sync {
 
 /**
- * Pull backend widgets into account-scoped persistent packages.
- *
- * GET <backend>/api/device-widgets (X-Api-Key auth) for the manifest, then
- * each script body, installing on mounted SD or internal flash. Synchronous — blocks
- * the calling task for the duration of the HTTP round-trips.
- *
- * Bodies (manifest <=64 KiB, script <=32 KiB, data <=8 KiB) and the bounded
- * manifest parser use PSRAM. Only completely received bodies are written; a
- * failed script leaves the manifest pending for a later retry. Earlier successful
- * file writes are not rolled back. Agent allocation/admission is unchanged.
- *
- * Returns the number of widgets written, or -1 on error (errOut filled with
- * a short human-readable reason).
- */
-int syncFromBackend(char* errOut, size_t errLen);
-
-/**
  * Fetch ONE widget by backend ID and install a validated persistent package.
  * Used by the push-driven launch flow (widget_ready) to pull the freshly
  * generated widget without a full manifest sync. Returns 0 on success, -1 on
@@ -43,8 +26,7 @@ services::custom_apps::Result download(core::app_store::Download&,
 /**
  * Spawn the background poll task (widget_poll, Core 0, PRIO_SERVICE).
  * Call once from services::startBackgroundTasks() after WiFi task is up.
- * The task wakes every WIDGET_POLL_INTERVAL_MS, fetches the manifest, and
- * calls syncFromBackend() only when the manifest has changed.
+ * Services foreground app downloads, targeted launches, and live app data.
  */
 bool startPolling(); // false if worker creation failed; safe to retry
 
@@ -63,13 +45,6 @@ bool pollingPaused();
 
 /** Resume a poller paused by suspendPolling(). */
 void resumePolling();
-
-/**
- * Returns true (and clears the flag) if a background sync completed since
- * the last call. Safe to call from ui_task — written by widget_poll task
- * using atomic publication and read-clear. Multiple completions coalesce.
- */
-bool takeSyncNotification();
 
 }  // namespace sync
 }  // namespace widgets
