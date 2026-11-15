@@ -8,7 +8,6 @@ namespace { GyroFifo* fifoOwner = nullptr; }
 bool GyroFifo::open() {
     if (active_) return true;
     if (fifoOwner && fifoOwner != this) return false;
-    if (!hal::imu::isReady()) return false;
     samples_ = static_cast<int32_t (*)[3]>(
         heap_caps_malloc(sizeof(int32_t) * 3 * capacity, MALLOC_CAP_SPIRAM));
     if (!samples_) return false;

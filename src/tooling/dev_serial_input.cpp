@@ -116,6 +116,7 @@
 #include "core/rotary_decoder.h"
 #include "hal/hal_io.h"
 #include "hal/hal_imu.h"
+#include "services/motion.h"
 #include "hal/hal_power.h"
 #include "hal/fuel_gauge_workaround.h"
 #include "hal/hal_sd.h"
@@ -1498,6 +1499,12 @@ static bool handleMicTuningCommand(char* line) {
 }
 
 static bool runImuTest() {
+  services::motion::Gyroscope gyroLease;
+  if (!gyroLease.open()) {
+    Serial.println("[imu-test] result=FAIL gyro unavailable");
+    return false;
+  }
+  delay(50);  // Allow turn-on before collecting the first gyro sample.
   int32_t accel[3] = {}, gyro[3] = {};
   int32_t accelMin[3] = {INT32_MAX, INT32_MAX, INT32_MAX};
   int32_t accelMax[3] = {INT32_MIN, INT32_MIN, INT32_MIN};

@@ -99,7 +99,7 @@ bool Capture::begin(uint32_t nowMs, uint32_t timeoutMs) {
   pose_ = Pose{};
   face_ = -1;
   failure_ = Failure::None;
-  if (!hal::imu::isReady() || !gyro_.open()) {
+  if (!gyro_.open()) {
     finish(State::Failed, Failure::Unavailable);
     return false;
   }
