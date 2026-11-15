@@ -64,7 +64,7 @@ int Library::beginSync() {
 Library::SyncStatus Library::syncStatus() const {
     auto& queue=uploads::queue();
     const auto counts=queue.counts();
-    return {counts.pending + counts.active,counts.failed,hal::wifi::connected(),counts.confirmed - syncStartConfirmed_};
+    return {counts.pending + counts.active,counts.failed,hal::wifi::connected(),counts.confirmed - syncStartConfirmed_,counts.active>0};
 }
 void Library::close() {
     browseReady_=false;

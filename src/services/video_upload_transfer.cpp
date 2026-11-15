@@ -1,4 +1,5 @@
 #include "services/video_upload_transfer.h"
+#include "services/media_upload_progress.h"
 #include "services/tls_trust.h"
 #include "hal/hal_sd.h"
 #include <WiFiClientSecure.h>
@@ -19,8 +20,8 @@ struct Work {
     uint32_t sentBytes=0,sendMs=0,connectMs=0,pressureMs=0;
     bool memoryBlocked=false;
     bool (*checkpoint)(void*);void* context;
-    uint32_t started=0,lastRead=0,readIdleMs=15000;bool cancelled=false;
-    Work(bool (*check)(void*),void* user):checkpoint(check),context(user){started=millis();}
+    uint32_t started=0,deadlineBase=0,lastRead=0,readIdleMs=15000;bool cancelled=false;
+    Work(bool (*check)(void*),void* user):checkpoint(check),context(user){started=deadlineBase=millis();}
     ~Work(){
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
         Serial.printf("[video-net] bytes=%lu totalMs=%lu connectMs=%lu sendMs=%lu pressureMs=%lu dmaFree=%u dmaLargest=%u\n",
@@ -45,8 +46,8 @@ struct Work {
         }
         return ready();
     }
-    bool ready(){if(!checkpoint(context)){cancelled=true;return false;}return uint32_t(millis()-started)<180000u;}
-    bool send(const void* bytes,size_t length){
+    bool ready(){if(!checkpoint(context)){cancelled=true;return false;}return uint32_t(millis()-deadlineBase)<180000u;}
+    bool send(const void* bytes,size_t length,bool mediaBody=false){
         const auto* p=static_cast<const uint8_t*>(bytes);
         while(length){
             if(!encryptionReady())return false;
@@ -55,6 +56,9 @@ struct Work {
             const size_t sent=client.write(p,amount);
             sendMs+=millis()-began;sentBytes+=sent;
             if(!sent||sent>amount)return false;
+            // A slow link can take over three minutes per provider-required 6 MiB PATCH.
+            // Keep the stall deadline and cancellation checks active while bytes advance.
+            if(mediaBody)deadlineBase=millis();
             p+=sent;length-=sent;
         }
         return true;
@@ -241,6 +245,7 @@ TransferResult transfer(const char* id,const char* path,Resume& record,const cor
     uint32_t offset=0;
     if(!resumeOffset(w.reply,record.media.bytes,offset))return failure();
     if(!w.ready())return failure();
+    services::media_upload::current().set(offset,record.media.bytes);
     if(offset==record.media.bytes)return {Transfer::Verify,w.reply.status};
     const uint32_t remaining=record.media.bytes-offset,chunk=remaining<kChunkBytes?remaining:kChunkBytes;
     if(!hal::sd::seekStream(&w.reader,offset))return {Transfer::Storage,w.reply.status};
@@ -260,7 +265,9 @@ TransferResult transfer(const char* id,const char* path,Resume& record,const cor
         const size_t wanted=chunk-sent<8192?chunk-sent:8192;
         const size_t got=hal::sd::readStream(&w.reader,payload.data,wanted);
         if(!got||got>wanted)return {Transfer::Storage,w.reply.status};
-        if(!w.send(payload.data,got))return failure();sent+=got;
+        if(!w.send(payload.data,got,true))return failure();
+        sent+=got;
+        services::media_upload::current().set(offset+sent,record.media.bytes);
     }
     // Storage may finalize the object before acknowledging the last PATCH.
     // Keep cancellation live while allowing that bounded provider operation.

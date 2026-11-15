@@ -161,7 +161,7 @@ void process(bool (*pause)()){
         outcome=r==hal::app_storage::Result::Ok?Result::Ok:r==hal::app_storage::Result::Unavailable?Result::Unavailable:
             r==hal::app_storage::Result::Cancelled?Result::Cancelled:r==hal::app_storage::Result::Corrupt?Result::Corrupt:Result::Io;break;}
     case Operation::Sync:{char err[48];
-        int result=backendId[0]?sync::syncOne(backendId,backendSlug,err,sizeof(err),&selected):sync::syncFromBackend(err,sizeof(err));
+        int result=sync::syncOne(backendId,backendSlug,err,sizeof(err),&selected);
         outcome=result<0?Result::Io:Result::Ok;
         if(outcome==Result::Ok&&backendId[0]){
             outcome=load(selected,payload);

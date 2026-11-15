@@ -46,7 +46,7 @@ class UploadQueue {public:
  uint32_t m_confirmedCount=0;
  int requests=0,saves=0;std::function<void()> duringUpload;
  UploadResult result{UploadResultKind::HttpResponse,200,true,0};
- UploadResult doUpload(QueueItem& item){++requests;assert(!strcmp(m_inFlightId,item.id));if(duringUpload)duringUpload();assert(!strcmp(m_inFlightId,item.id));strcpy(item.lastError,"injected");return result;}
+ UploadResult uploadWithGalleryReceipt(QueueItem& item){++requests;assert(!strcmp(m_inFlightId,item.id));if(duringUpload)duringUpload();assert(!strcmp(m_inFlightId,item.id));strcpy(item.lastError,"injected");return result;}
  bool saveManifestUnlocked(){++saves;return true;}
  uint32_t jitteredDelayMs(uint32_t n){return n;}
  bool processOnePending();int findRunnableIndexUnlocked(uint32_t)const;int forcedIndexUnlocked()const;

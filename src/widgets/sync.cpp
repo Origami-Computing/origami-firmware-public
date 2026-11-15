@@ -51,9 +51,6 @@ constexpr size_t kMaxDataBytes   = 8u * 1024u;   // matches lua_app data cap
 // How often the poll task wakes up to check for new/updated widgets.
 constexpr uint32_t kPollIntervalMs = 30000u;
 
-// Cross-core notification: written by widget_poll (Core 0), read by ui_task.
-// Atomic publication/consumption; no lock is held across I/O or task waits.
-static std::atomic<bool> s_syncNotify{false};
 // Accessed only by widget_poll, including its cancellation checkpoints.
 static services::background_network::PeriodicWork s_periodicWork;
 static std::atomic<TaskHandle_t> s_pollTask{nullptr};
@@ -86,13 +83,6 @@ void setErr(char* errOut, size_t errLen, const char* msg) {
     if (errOut && errLen > 0) snprintf(errOut, errLen, "%s", msg);
 }
 
-// djb2 hash over a byte buffer — fast and good enough to detect manifest changes.
-static uint32_t djb2(const char* s, size_t len) {
-    uint32_t h = 5381u;
-    for (size_t i = 0; i < len; ++i) h = h * 33u ^ (uint8_t)s[i];
-    return h;
-}
-
 // A bounded sink also handles chunked HTTP bodies through HTTPClient's decoder.
 // Reject oversize responses while streaming, before allocating an unbounded String.
 class Body : public Stream {
@@ -112,27 +102,6 @@ public:
     const char* data() const{return bytes_;}size_t size() const{return size_;}
 private:bool progress_;size_t total_=0;services::custom_apps::Cancel cancel_;uint32_t started_;size_t limit_,size_=0;char* bytes_;bool overflow_=false;
 };
-// Fetch the raw manifest payload and return its hash, or 0 on failure.
-static uint32_t fetchManifestHash() {
-    if (WiFi.status() != WL_CONNECTED) return 0;
-    const auto config = core::secrets::backendConfig();
-    WiFiClient plain;
-    WiFiClientSecure secure;
-    services::tls::useRootBundle(secure);
-    secure.setHandshakeTimeout(8);
-    WiFiClient& transport = strncmp(config.url, "https://", 8) == 0
-                                ? static_cast<WiFiClient&>(secure) : plain;
-    HTTPClient http;
-    http.setConnectTimeout(4000);
-    http.begin(transport, String(config.url) + kManifestPath);
-    http.addHeader("X-Api-Key", config.apiKey);
-    const int code = http.GET();
-    if (code != 200) { http.end(); return 0; }
-    Body payload(64u*1024u);const bool ok=payload.receive(http);http.end();
-    if(!ok)return 0;
-    return djb2(payload.data(),payload.size());
-}
-
 // Certificate verification is CPU-bound (seconds for a P-384 chain such as
 // staging's) and this worker shares core 0 with net_poll and the idle task.
 // Block briefly between requests so neither misses its task-watchdog deadline.
@@ -218,8 +187,6 @@ static bool fetchAndWriteWidget(const core::secrets::BackendConfig& config, WiFi
 static void pollTask(void*) {
     s_pollTask = xTaskGetCurrentTaskHandle();
     if(widgets::storage::pending())xTaskNotifyGive(s_pollTask);
-    uint32_t lastHash = 0;
-    bool loggedAgentWait = false;
     bool retryAdmission = false;
     for (;;) {
         s_periodicWork.release();
@@ -256,17 +223,7 @@ static void pollTask(void*) {
         const bool liveTransit = services::muni::isActive();
         if ((liveTransit || liveHttp) && !services::muni::pollDue() && !services::app_http::pollDue()) continue;
         const bool agentReady = apps::agent::flow::isTransportReady();
-        // Bulk backend sync waits for the primary socket. Public transit must
-        // also work when that backend is unavailable, but cannot race its TLS
-        // reconnect. Borrow the existing acknowledged pause only while offline.
-        if (!agentReady && !liveTransit && !liveHttp) {
-            if (!loggedAgentWait) {
-                Serial.println("[widget-poll] waiting for agent transport before HTTPS sync");
-                loggedAgentWait = true;
-            }
-            continue;
-        }
-        loggedAgentWait = false;
+        if (!agentReady && !liveTransit && !liveHttp) continue;
         services::agent_coordination::TransportPause reconnectPause;
         if (!agentReady || liveHttp) {
             if (services::agent_coordination::isSessionActive() ||
@@ -278,9 +235,6 @@ static void pollTask(void*) {
         if (!pollPausePending()) services::muni::poll(pollPausePending);
         reconnectPause.release();
         if (pauseAtIdleCheckpoint()) continue;
-        // Foreground live data takes this worker's slot. Defer bulk automatic
-        // script downloads until that subscription closes; targeted launches
-        // retain their existing foreground sync path.
         if (services::muni::isActive() || services::app_http::hasOwner()) continue;
 
         // Net polling is disabled in some hardware-diagnostic builds. Offer
@@ -288,21 +242,7 @@ static void pollTask(void*) {
         // worker once the primary agent transport has settled.
         services::eyes_asset::service();
         if (pauseAtIdleCheckpoint()) continue;
-        const uint32_t h = fetchManifestHash();
-        if (pauseAtIdleCheckpoint()) continue;
-        if (h == 0 || h == lastHash) continue;
-        Serial.printf("[widget-poll] manifest changed (hash %08lx → %08lx), syncing\n",
-                      (unsigned long)lastHash, (unsigned long)h);
-        char err[48] = "";
-        const int n = syncFromBackend(err, sizeof(err));
-        if (pauseAtIdleCheckpoint()) continue;
-        if (n < 0) {
-            Serial.printf("[widget-poll] sync failed: %s\n", err);
-        } else {
-            Serial.printf("[widget-poll] synced %d widget(s)\n", n);
-            lastHash = h;
-            s_syncNotify = true;
-        }
+
     }
 }
 
@@ -361,64 +301,6 @@ services::custom_apps::Result download(core::app_store::Download& request,
     auto* bytes=static_cast<uint8_t*>(heap_caps_malloc(body.size(),MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
     if(!bytes)return apps::Result::NoMemory;
     memcpy(bytes,body.data(),body.size());out.reset();out.bytes=bytes;out.size=body.size();return apps::Result::Ok;
-}
-
-int syncFromBackend(char* errOut, size_t errLen) {
-    if (WiFi.status() != WL_CONNECTED) {
-        setErr(errOut, errLen, "wifi not connected");
-        return -1;
-    }
-
-    const auto config = core::secrets::backendConfig();
-    WiFiClient plain;
-    WiFiClientSecure secure;
-    services::tls::useRootBundle(secure);
-    secure.setHandshakeTimeout(8);
-    WiFiClient& transport = strncmp(config.url, "https://", 8) == 0
-                                ? static_cast<WiFiClient&>(secure) : plain;
-    HTTPClient http;
-    http.setReuse(true);
-    http.setConnectTimeout(4000);
-    String base = String(config.url);
-    http.begin(transport, base + kManifestPath);
-    http.addHeader("X-Api-Key", config.apiKey);
-    int code = http.GET();
-    if (code != 200) {
-        http.end();
-        if (errOut) snprintf(errOut, errLen, "manifest HTTP %d", code);
-        return -1;
-    }
-    Body payload(64u*1024u);const bool bodyOk=payload.receive(http);http.end();
-    if(!bodyOk){setErr(errOut,errLen,"manifest too large or unreadable");return -1;}
-    if (pollPausePending()) {
-        setErr(errOut, errLen, "paused");
-        return -1;
-    }
-
-    core::BoundedJsonMemory memory(64u*1024u);
-    JsonDocument doc(&memory);
-    if (deserializeJson(doc, payload.data(),payload.size()) || !doc.is<JsonArray>()) {
-        setErr(errOut, errLen, "bad manifest JSON");
-        return -1;
-    }
-
-    int written = 0;
-    for (JsonObject w : doc.as<JsonArray>()) {
-        if (xTaskGetCurrentTaskHandle() == s_pollTask && services::muni::isActive()) {
-            setErr(errOut, errLen, "deferred for live data");
-            return -1; // Retry the manifest later; do not accept a partially synced hash.
-        }
-        if (pollPausePending()) {
-            setErr(errOut, errLen, "paused");
-            return -1;
-        }
-        const char* id = w["id"];
-        const char* slug = w["slug"];
-        if (!id || !slug || !slug[0]) continue;
-        if (fetchAndWriteWidget(config, transport, id, slug)) written++;
-        else { setErr(errOut,errLen,"installation failed"); return -1; }
-    }
-    return written;
 }
 
 int syncOne(const char* id, const char* slug, char* errOut, size_t errLen, services::custom_apps::Identity* installed) {
@@ -486,10 +368,6 @@ void resumePolling() {
     TaskHandle_t task = s_pollTask;
     if (task) xTaskNotifyGive(task);
     Serial.println("[widget-poll] resumed");
-}
-
-bool takeSyncNotification() {
-    return s_syncNotify.exchange(false);
 }
 
 }  // namespace sync

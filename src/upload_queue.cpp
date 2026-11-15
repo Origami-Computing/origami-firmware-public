@@ -1,5 +1,7 @@
 #include <time.h>
 #include "upload_queue.h"
+#include "services/media_upload_progress.h"
+#include "services/gallery_receipt.h"
 
 #include <ArduinoJson.h>
 #include <SD.h>
@@ -479,7 +481,7 @@ bool UploadQueue::processOnePending() {
 
     // 2) Long blocking network I/O — NO mutex held. startWorker() acquired
     // exclusive use of the device's constrained TLS resources before spawn.
-    const UploadResult result = doUpload(snapshot);
+    const UploadResult result = uploadWithGalleryReceipt(snapshot);
 
     // 3) Apply result back to the live item under the mutex.
     {
@@ -657,7 +659,24 @@ bool UploadQueue::processOnePending() {
 // change takes effect on the next upload, not halfway through request setup.
 // ---------------------------------------------------------------------------
 
+UploadQueue::UploadResult UploadQueue::uploadWithGalleryReceipt(QueueItem& item) {
+    if(item.deleteAfterUpload || (strcmp(item.type,"image") && strcmp(item.type,"video")))
+        return doUpload(item);
+    const auto revision=core::secrets::backendRequest().revision;
+    char binding[65];
+    size_t bytes=0;
+    uint32_t modified=0;
+    const bool identified=services::video_upload::binding(core::secrets::backendConfig(),binding)
+        && hal::sd::fileInfo(item.filePath,bytes,modified);
+    const auto result=doUpload(item);
+    if(identified && result.kind==UploadResultKind::HttpResponse && result.httpCode>=200 &&
+       result.httpCode<300 && revision==core::secrets::backendRequest().revision)
+        services::gallery_receipt::remember(item.filePath,binding,bytes,modified);
+    return result;
+}
+
 UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
+    services::media_upload::current().set(0,0);
     if(strcmp(item.type,"video")==0)return doVideoUpload(item);
     const auto config = core::secrets::backendConfig();
     const char* liveUrl = config.url;
@@ -682,6 +701,7 @@ UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
         return {UploadResultKind::PermanentItemFailure, 0, false, 0};
     }
     size_t fileSize = file.size();
+    services::media_upload::current().set(0,fileSize);
 
     const char* boundary = "----OrigamiBoundary7MA4YWxk";
 
@@ -859,7 +879,10 @@ UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
         hal::bus::unlockSpi();
         if (bytesRead == 0 || bytesRead > toRead) { writeOk = false; break; }
         writeOk = writeAll(buf, bytesRead); // Network I/O holds no SPI lock.
-        remaining -= bytesRead;
+        if(writeOk){
+            remaining -= bytesRead;
+            services::media_upload::current().set(fileSize-remaining,fileSize);
+        }
         // Each write can consume its socket timeout. Eight successful but slow
         // chunks must not accumulate past the watchdog between progress feeds.
         core::watchdog::feed();

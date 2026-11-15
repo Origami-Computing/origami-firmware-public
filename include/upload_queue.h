@@ -242,6 +242,7 @@ private:
      * Returns true if a slot was freed (or already free), false if the queue can't make room.
      * Caller MUST hold `m_mutex`. The evicted file's SD copy is also deleted to reclaim space.
      */
+    UploadResult uploadWithGalleryReceipt(QueueItem& item);
     UploadResult doUpload(QueueItem& item);
     UploadResult doVideoUpload(QueueItem& item);
     bool mutationBlocksUnlocked(const char* path) const;

@@ -32,8 +32,7 @@ def main():
     state = source[begin:source.index('bool pollPausePending()', begin)].replace('static services::background_network::PeriodicWork s_periodicWork;', '')
     functions = '\n'.join(function(source, signature) for signature in (
         'bool pollPausePending()', 'bool pauseAtIdleCheckpoint()',
-        'void requestPollingPause()', 'bool pollingPaused()', 'bool suspendPolling(uint32_t timeoutMs)', 'void resumePolling()',
-        'bool takeSyncNotification()'))
+        'void requestPollingPause()', 'bool pollingPaused()', 'bool suspendPolling(uint32_t timeoutMs)', 'void resumePolling()'))
     functions = functions.replace('s_periodicWork.release();', '')
     harness = r'''
 #include <atomic>
@@ -81,7 +80,6 @@ struct Logger {
 int main() {
     // Before worker publication, retain the pause so startup cannot begin I/O.
     assert(suspendPolling(0));
-    assert(!takeSyncNotification());
     std::atomic<bool> stop{false}, busy{false};
     std::atomic<unsigned> iterations{0};
     std::thread worker([&] {
@@ -90,7 +88,6 @@ int main() {
         while (!stop.load()) {
             if (pauseAtIdleCheckpoint()) continue;
             busy = true;
-            s_syncNotify = true; // Same publication as the real poll loop.
             std::this_thread::yield();
             busy = false;
             ++iterations;
@@ -106,7 +103,6 @@ int main() {
         std::this_thread::yield();
         assert(iterations == before && !busy);
         resumePolling();
-        (void)takeSyncNotification();
     }
     stop = true;
     resumePolling();
@@ -116,18 +112,7 @@ int main() {
     assert(!suspendPolling(1));
     assert(!s_pauseRequested);
     resumePolling(); // Idempotent release.
-    s_syncNotify = true;
-    assert(takeSyncNotification());
-    assert(!takeSyncNotification());
-    // Concurrent publication/read-clear: exercise the actual consumer under TSan.
-    std::thread publisher([] {
-        for (unsigned i=0; i<100000; ++i) s_syncNotify = true;
-    });
-    for (unsigned i=0; i<100000; ++i) (void)takeSyncNotification();
-    publisher.join();
-    s_syncNotify = true;
-    assert(takeSyncNotification() && !takeSyncNotification());
-    puts("PASS startup pause, 2000 handoffs, timeout rollback, notification consumption");
+    puts("PASS startup pause, 2000 handoffs, timeout rollback");
 }
 '''
     with tempfile.TemporaryDirectory() as directory:

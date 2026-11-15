@@ -114,7 +114,6 @@ Result download(core::app_store::Download&,Package& out,Cancel cancel){
  return pack("qr-app","QR App","1","function widget.start() end",27,"{}",2,out);
 }
 bool workerAvailable=true;bool startPolling(){return workerAvailable;}void requestPoll(){}
-int syncFromBackend(char*,size_t){return 0;}
 int syncOne(const char*,const char*,char*,size_t,services::custom_apps::Identity*){return 0;}
 }}
 bool cancel(){return ++checkpoints==cancelPoint;}

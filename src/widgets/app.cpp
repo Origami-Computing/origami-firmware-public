@@ -29,7 +29,7 @@
 #include "hal/hal_input.h"
 #include "hal/hal_sd.h"
 #include "widgets/vm.h"
-#include "widgets/sync.h"
+
 #include "widgets/storage.h"
 #include "services/custom_apps.h"
 #include "widgets/launch.h"
@@ -73,27 +73,27 @@ custom::Package s_currentPackage, s_readyPackage;
 bool s_externalSelected=false;
 bool s_loadRequested=false;
 bool s_nativePreparing=false;
-uint32_t s_catalogJob=0,s_launchJob=0,s_syncJob=0;
+uint32_t s_catalogJob=0,s_launchJob=0;
 bool s_catalogWanted=false;
 char s_remoteId[40]={},s_remoteSlug[kSlugLen]={};
 void releaseLoadedScript(){s_currentPackage.reset();}
 void cancelLoading(){s_nativePreparing=false;s_loadRequested=false;s_remoteId[0]=0;if(s_launchJob)storage::abandon(s_launchJob);s_launchJob=0;s_readyPackage.reset();}
 void closeAppWork(){s_catalogWanted=false;cancelLoading();if(s_catalogJob)storage::abandon(s_catalogJob);s_catalogJob=0;
-    if(s_syncJob)storage::abandon(s_syncJob);s_syncJob=0;}
+}
 int  s_sdCount = 0;          // external apps in the bounded catalog
 int  s_sel = 0;
 bool s_needRedraw = false;
 ui::ListView s_list;
 
-// Result of the last "sync from kami" action, shown under the picker title.
+// Storage or launch error displayed in the picker.
 char s_syncMsg[40] = "";
 
-// App Downloader first, then the user's installed and synced apps, then sync.
-int pickerCount() { return s_sdCount + 2; }
+// App Downloader first, then the user's installed and synced apps.
+int pickerCount() { return s_sdCount + 1; }
 const char* pickerLabel(int idx) {
     if(idx==0)return "App Downloader";
     if(idx>0 && idx<=s_sdCount)return s_catalog->entries[idx-1].name;
-    return "Sync apps";
+    return "";
 }
 
 void rescanWidgets() {
@@ -105,11 +105,6 @@ void rescanWidgets() {
     s_catalogWanted=true;
     if(!s_catalogJob)s_catalogJob=storage::request(storage::Operation::Catalog);
     if(s_catalogJob)s_catalogWanted=false;
-}
-
-void runSync() {
-    if(!s_syncJob)s_syncJob=storage::request(storage::Operation::Sync);
-    snprintf(s_syncMsg,sizeof(s_syncMsg),"%s",s_syncJob?"syncing...":"storage busy; retry");
 }
 
 // ---------------------------------------------------------------------------
@@ -419,7 +414,7 @@ ui::ListItem pickerItemFn(int idx, void*) {
     item.label = (idx >= 0 && idx < pickerCount()) ? pickerLabel(idx) : "";
     item.fg    = kUiFg;
     namespace icons=assets::menu_icons;
-    item.icon=idx==0?icons::kInstall:idx==s_sdCount+1?icons::kTools:icons::kSdCard;
+    item.icon=idx==0?icons::kInstall:icons::kSdCard;
     if(idx>0 && idx<=s_sdCount && s_catalog->entries[idx-1].native){
         const auto& entry=s_catalog->entries[idx-1];
         item.icon=entry.hasIcon&&s_icons?s_icons+(idx-1)*200:icons::kGames;
@@ -458,8 +453,8 @@ void pickerEnter() {
 void pickerExit() {}
 
 // Keep focus on the same app (or built-in action) when an async scan reorders rows.
-int catalogSelection(const custom::Catalog& catalog,const custom::Identity* selected,int builtinRow) {
-    if(!selected)return builtinRow<0?0:int(catalog.count)+builtinRow;
+int catalogSelection(const custom::Catalog& catalog,const custom::Identity* selected) {
+    if(!selected)return 0;
     for(size_t i=0;i<catalog.count;++i){const auto& id=catalog.entries[i].identity;
         if(id.medium==selected->medium && id.legacy==selected->legacy &&
            !strcmp(id.origin,selected->origin) && !strcmp(id.id,selected->id))return int(i)+1;
@@ -469,13 +464,12 @@ int catalogSelection(const custom::Catalog& catalog,const custom::Identity* sele
 
 void pickerTick(uint32_t) {
     custom::Result result;
-    if(s_catalogWanted && !s_catalogJob && !s_syncJob)rescanWidgets();
+    if(s_catalogWanted && !s_catalogJob)rescanWidgets();
     custom::Identity focused;
     const bool focusedExternal=s_sel>0 && s_sel<=s_sdCount;
-    const int builtinRow=s_sel==0?-1:s_sel-s_sdCount;
     if(focusedExternal)focused=s_catalog->entries[s_sel-1].identity;
     if(s_catalogJob && storage::take(s_catalogJob,result,nullptr,s_catalog)){
-        s_sel=catalogSelection(*s_catalog,focusedExternal?&focused:nullptr,builtinRow);
+        s_sel=catalogSelection(*s_catalog,focusedExternal?&focused:nullptr);
         s_catalogJob=0;s_sdCount=int(s_catalog->count);
         bool needsIcons=false;for(int i=0;i<s_sdCount;++i)needsIcons|=s_catalog->entries[i].hasIcon;
         if(needsIcons&&!s_icons)s_icons=static_cast<uint8_t*>(heap_caps_malloc(kMaxWidgets*200,MALLOC_CAP_SPIRAM|MALLOC_CAP_8BIT));
@@ -490,16 +484,7 @@ void pickerTick(uint32_t) {
         if(result!=custom::Result::Ok || s_catalog->overflow)snprintf(s_syncMsg,sizeof(s_syncMsg),"%s",s_catalog->overflow?"more apps than picker capacity":custom::resultName(result));
         s_needRedraw=true;hal::display::markAllDirty();
     }
-    if(s_syncJob && storage::take(s_syncJob,result)){
-        s_syncJob=0;snprintf(s_syncMsg,sizeof(s_syncMsg),"sync: %s",custom::resultName(result));rescanWidgets();s_needRedraw=true;hal::display::markAllDirty();
-    }
-    if (widgets::sync::takeSyncNotification()) {
-        rescanWidgets();
-        snprintf(s_syncMsg, sizeof(s_syncMsg), "auto-synced %d widget%s",
-                 s_sdCount, s_sdCount == 1 ? "" : "s");
-        s_needRedraw = true;
-        hal::display::markAllDirty();
-    }
+
 }
 
 void pickerInput(hal::input::InputEvent ev) {
@@ -519,13 +504,6 @@ void pickerInput(hal::input::InputEvent ev) {
 
     if (ui::nav::isEnterTap(ev)) {
         if(s_sel==0){closeAppWork();NavHandler::instance().push(&apps::app_store::app);return;}
-        if (s_sel == s_sdCount + 1) {
-            // Queue the existing worker; keep input and presentation responsive.
-            runSync();
-            s_needRedraw = true;
-            hal::display::markAllDirty();
-            return;
-        }
         if(s_sel<=0 || s_sel>s_sdCount)return;
         closeAppWork();
         s_externalSelected=true;

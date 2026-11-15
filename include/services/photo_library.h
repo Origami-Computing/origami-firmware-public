@@ -11,7 +11,7 @@ public:
     enum class BrowseResult { Ready, UploadsBusy, NetworkBusy, Pending };
     using LoadResult = hal::sd::PhotoCatalogResult;
     using File = hal::sd::PhotoFile;
-    struct SyncStatus { int pending; int failed; bool connected; uint32_t confirmed; };
+    struct SyncStatus { int pending; int failed; bool connected; uint32_t confirmed; bool transferring; };
     Library() = default;
     ~Library() { close(); }
     Library(const Library&) = delete;
