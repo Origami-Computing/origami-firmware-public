@@ -1,20 +1,28 @@
 """Execute the production boot/escape adapter with a clock, pin and navigation fixture."""
 from pathlib import Path
-import subprocess,tempfile
+import os, shlex, subprocess, tempfile
 root=Path(__file__).resolve().parents[1]
+compiler=shlex.split(os.environ.get('CXX','c++'))
+sanitizers=[] if os.name=='nt' else ['-fsanitize=address,undefined']
 source=(root/'src/apps/tutorial_app.cpp').read_text()
-start=source.index('void serviceBootOffer(){');end=source.index('{',start)+1;depth=1
-while depth:
-    depth+=(source[end]=='{')-(source[end]=='}');end+=1
+def function(signature):
+    start=source.index(signature)
+    end=source.index('{',start)+1
+    depth=1
+    while depth:
+        depth+=(source[end]=='{')-(source[end]=='}')
+        end+=1
+    return source[start:end]
 code=r'''
 #include <stdint.h>
 #include <initializer_list>
 #include <cassert>
-bool s_active=false,s_talkPending=false,s_agentStarted=false,s_bootChecked=false,s_exitHolding=false;
-uint32_t s_exitHoldAt=0,now=0;
+bool s_active=false,s_talkPending=false,s_agentStarted=false,s_bootChecked=false,s_completed=false,s_audioSelected=false;
+uint32_t now=0;
 unsigned pushed=0,popped=0,saved=0,stopped=0,suppressed=0,marks=0;
 int app;
-struct {bool wifiOnly=false;void agentReturned(){}}s_flow;
+#include "apps/onboarding_flow.h"
+apps::onboarding::Flow s_flow;
 uint32_t millis(){return now;}void save(){++saved;}void stopSpeech(){++stopped;}
 struct {void println(const char*){}}Serial;
 namespace hal {namespace input {bool a=false,b=false;bool buttonADown(){return a;}bool buttonBDown(){return b;}void suppressUntilButtonsReleased(){++suppressed;}}}
@@ -32,30 +40,31 @@ struct NavHandler {
  void push(int*){++pushed;++levels;}
  void popToRoot(){++popped;levels=1;s_active=false;}
 };
-void load(){}
-'''+source[start:end]+r'''
+void load(){s_completed=services::onboarding_progress::load().completed;}
+'''+function('void serviceBootOffer(){')+'\n'+function('void replay(){')+r'''
 int main(){
  auto& nav=NavHandler::instance();
  serviceBootOffer();assert(pushed==1&&marks==1&&s_active);
  nav.levels=1;s_active=false;s_bootChecked=false;serviceBootOffer();assert(pushed==2&&marks==1); // Reboot resumes unfinished tutorial.
- services::onboarding_progress::progress.offered=false;
+ // Holding both buttons during either the tutorial or a child must never unwind the stack.
+ hal::input::a=hal::input::b=true;
+ for(int depth:{2,3}){
+  nav.levels=depth;now=100;serviceBootOffer();now+=6000;serviceBootOffer();
+  assert(nav.levels==depth && popped==0 && s_active);
+ }
+ replay();assert(!s_completed && !s_flow.canExitReplay(s_completed));
  services::onboarding_progress::progress.completed=true;
- s_bootChecked=false;serviceBootOffer();assert(pushed==2); // Completed legacy.
- s_active=true;nav.levels=3;hal::input::a=hal::input::b=true;
- now=100;serviceBootOffer();now=5099;serviceBootOffer();assert(popped==0);
- hal::input::b=false;serviceBootOffer();hal::input::b=true;now=5100;serviceBootOffer();
- now=10099;serviceBootOffer();assert(popped==0); // Releasing either button restarts the full interval.
- now=10100;serviceBootOffer();assert(popped==1&&!s_active&&saved==1&&suppressed==1);
- now=16000;serviceBootOffer();assert(popped==1); // Still-held gesture cannot repeat.
- s_active=true;s_flow.wifiOnly=true;serviceBootOffer();now+=6000;serviceBootOffer();assert(popped==1);
- s_flow.wifiOnly=false;now=0xfffffff0u;serviceBootOffer();now+=5000;serviceBootOffer();assert(popped==2); // Timer wrap.
+ s_active=false;s_bootChecked=false;nav.levels=1;
+ const auto before=pushed;serviceBootOffer();assert(pushed==before && !s_active);
+ replay();assert(s_completed && s_flow.page==0 && s_flow.canExitReplay(s_completed));
+
 }
 '''
 with tempfile.TemporaryDirectory() as directory:
     p=Path(directory);(p/'test.cpp').write_text(code)
-    subprocess.run(['c++','-std=c++14','-fsanitize=address,undefined',str(p/'test.cpp'),'-o',str(p/'test')],check=True)
-    subprocess.run([str(p/'test')],check=True,timeout=10)
-print('PASS first boot and unfinished reboot resume, completed migration, nested tutorial escape, 4999/5000 ms, interrupted hold and timer wrap')
+    subprocess.run(compiler+['-std=c++14',*sanitizers,'-I'+str(root/'include'),str(p/'test.cpp'),'-o',str(p/'test.exe')],check=True)
+    subprocess.run([str(p/'test.exe')],check=True,timeout=10)
+print('PASS first boot and unfinished reboot resume, protected long holds and replay eligibility from persisted completion')
 
 # Execute the production policy, including explicit manual C-hold sleep admission.
 policy_start=source.index('static core::health::RuntimePolicy runtimePolicy() {')
@@ -64,6 +73,6 @@ policy=source[policy_start:policy_end]
 with tempfile.TemporaryDirectory() as directory:
     p=Path(directory)
     (p/'policy.cpp').write_text('#include "core/health_policy.h"\n#include <cassert>\nbool active; bool sessionActive(){return active;}\n'+policy+'\nint main(){active=true;auto p=runtimePolicy();assert(!p.allowPowerSleep&&!p.allowBatterySleep&&!p.allowIdleReturn);active=false;p=runtimePolicy();assert(p.allowPowerSleep&&p.allowBatterySleep);}')
-    subprocess.run(['c++','-std=c++14','-I'+str(root/'include'),str(p/'policy.cpp'),'-o',str(p/'policy')],check=True)
-    subprocess.run([str(p/'policy')],check=True)
+    subprocess.run(compiler+['-std=c++14','-I'+str(root/'include'),str(p/'policy.cpp'),'-o',str(p/'policy.exe')],check=True)
+    subprocess.run([str(p/'policy.exe')],check=True)
 print('PASS active tutorial blocks manual and idle sleep; inactive tutorial releases policy')

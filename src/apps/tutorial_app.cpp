@@ -12,6 +12,7 @@
 #include "apps/onboarding_flow.h"
 #include "apps/onboarding_controls.h"
 #include "ui/onboarding_flow_view.h"
+#include "ui/onboarding_exit_prompt.h"
 #include "services/uploads.h"
 #include "services/agent_coordination.h"
 #include "services/vibration.h"
@@ -44,6 +45,9 @@ namespace {
 using onboarding::Input;
 using onboarding::Flow;
 Flow s_flow;
+enum class ExitChoice { Closed, Resume, Exit };
+ExitChoice s_exitChoice=ExitChoice::Closed;
+uint32_t s_promptOpenedAt=0;
 services::custom_apps::Catalog* s_apps=nullptr;uint32_t s_catalogJob=0;bool s_catalogRequested=false;
 onboarding::Controls s_controls;
 bool s_audioSelected=false;
@@ -78,8 +82,6 @@ onboarding::TextPlayback s_text;
 bool s_talkPending=false,s_agentStarted=false;
 bool s_active=false,s_bootChecked=false,s_dirty=true,s_completed=false;
 uint32_t s_started=0,s_lastDraw=0,s_drawUs=0;
-uint32_t s_exitHoldAt=0;
-bool s_exitHolding=false;
 constexpr unsigned kScanReadingPauseMs=2200;
 unsigned s_scanAfter=0;
 int s_scrollFrom=0,s_scrollTarget=0;
@@ -121,7 +123,7 @@ unsigned elapsed(){
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
  if(s_frozen)return s_frozenMs;
 #endif
- return millis()-s_started;
+ return (s_exitChoice==ExitChoice::Closed?millis():s_promptOpenedAt)-s_started;
 }
 const char* dialogueCopy(){return s_wrapped.c_str();}
 void refreshCopy(){s_wrapped=ui::onboarding_approved::wrap(ui::onboarding_approved::copy(s_flow.page));}
@@ -151,6 +153,7 @@ bool load(){
  const auto p=services::onboarding_progress::load();s_flow.reset();s_flow.interest=p.interest;s_flow.account=p.account;s_flow.joinWifi=p.joinWifi;s_flow.setupPublished=p.setupPublished;s_flow.connected=p.connected||hal::wifi::connected();s_flow.origin=p.account?40:(p.joinWifi?41:39);s_flow.setPage(p.page);s_completed=p.completed;return !s_completed;
 }
 void enterView(){
+ s_exitChoice=ExitChoice::Closed;
  s_controls.reset(s_flow.page);s_controlSuccessDrawn=false;s_usbSuccessAt=0;s_catalogRequested=false;
  refreshCopy();s_reviewCached=false;
  stopSpeech();s_speechLetters=s_speechBlips=0;
@@ -188,6 +191,7 @@ void startScanner(){
 }
 void finish();
 void tick(uint32_t now){
+ if(s_exitChoice!=ExitChoice::Closed)return;
  // C click edges are delivered on release by the power-button gesture owner.
  // Read the existing physical level for visual feedback without changing that policy.
  if(s_flow.page==5&&!s_controls.success){
@@ -244,6 +248,25 @@ void tick(uint32_t now){
 void finish(){s_completed=true;save();NavHandler::instance().popToRoot();}
 void onInput(hal::input::InputEvent ev){
  using ET=hal::input::EventType;Input input;
+ if(s_exitChoice!=ExitChoice::Closed){
+  if(ev.type==ET::Scroll && ev.delta){
+   s_exitChoice=ev.delta<0?ExitChoice::Exit:ExitChoice::Resume;
+   s_dirty=true;
+  }else if(ev.type==ET::ButtonC_Tap){
+   if(s_exitChoice==ExitChoice::Exit){
+    NavHandler::instance().popToRoot();
+   }else{
+    const uint32_t paused=millis()-s_promptOpenedAt;
+    s_started+=paused;
+    if(s_usbSuccessAt)s_usbSuccessAt+=paused;
+    if(s_controls.success)s_controls.successAt+=paused;
+    s_exitChoice=ExitChoice::Closed;
+    s_reviewCached=false;
+    s_dirty=true;
+   }
+  }
+  return;
+ }
  if(onboarding::Controls::accepts(s_flow.page)){
   unsigned haptics=0;
   switch(ev.type){
@@ -301,6 +324,16 @@ void onInput(hal::input::InputEvent ev){
 
 bool onChord(){
  if(s_flow.wifiOnly){NavHandler::instance().pop();return true;}
+ if(s_flow.canExitReplay(s_completed)){
+  if(s_exitChoice==ExitChoice::Closed){
+   s_promptOpenedAt=millis();
+   s_exitChoice=ExitChoice::Resume;
+   stopSpeech();
+   hal::input::suppressUntilButtonsReleased();
+   s_dirty=true;
+  }
+  return true;
+ }
  if(s_flow.page==123){s_flow.setPage(124);changed();return true;}
  if(elapsed()+s_text.offset<readyAt()||!s_flow.beginTalk())return true;
  stopSpeech();save();releaseDialogue();
@@ -378,6 +411,12 @@ void draw(TFT_eSprite& c){
    ui::onboarding_scenes::customMenu(c,s_flow.installed,s_flow.page==134,ms,names,count);
   }else ui::onboarding_scenes::render(c,s_flow.page,ms,selection,detail);
  }
+ if(s_exitChoice!=ExitChoice::Closed){
+  ui::onboarding_flow::exitPrompt(c,s_exitChoice==ExitChoice::Exit);
+  s_drawUs=micros()-started;
+  hal::display::markAllDirty();
+  return;
+ }
  serviceSpeech(ms);
  s_drawUs=micros()-started;hal::display::markAllDirty();
  // Start the dwell after painting, so queued input or a busy UI loop cannot skip green.
@@ -446,7 +485,7 @@ void replay(){
  s_audioSelected=false;
  NavHandler::instance().setWorkflowPolicy({});
  s_talkPending=s_agentStarted=false;
- auto& nav=NavHandler::instance();nav.popToRoot();load();s_flow.reset();s_completed=false;s_active=true;s_bootChecked=true;
+ auto& nav=NavHandler::instance();nav.popToRoot();load();s_flow.reset();s_active=true;s_bootChecked=true;
  services::notifyUserActivity();nav.push(&app);
 }
 void beginWifiSetup(){
@@ -457,15 +496,6 @@ void beginWifiSetup(){
 }
 void serviceBootOffer(){
  auto& nav=NavHandler::instance();
- // Service the whole workflow, including its scanner, menu and Agent children.
- if(s_active && !s_flow.wifiOnly && hal::input::buttonADown() && hal::input::buttonBDown()) {
-  if(!s_exitHolding){s_exitHolding=true;s_exitHoldAt=millis();}
-  if(uint32_t(millis()-s_exitHoldAt)>=5000u){
-   s_exitHolding=false;s_talkPending=s_agentStarted=false;
-   stopSpeech();save();nav.setWorkflowPolicy({});nav.popToRoot();s_active=false;
-   hal::input::suppressUntilButtonsReleased();return;
-  }
- } else s_exitHolding=false;
  if(s_talkPending){
   if(!apps::agent::isAtHomescreen())s_agentStarted=true;
   if(s_agentStarted&&nav.depth()==1&&!nav.systemScreenActive()&&apps::agent::isAtHomescreen()){
