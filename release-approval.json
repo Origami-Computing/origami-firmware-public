@@ -1,11 +1,11 @@
 {
   "approved": true,
-  "reviewed_tree_sha256": "4dfdc9e8f644c0f808d4862ac56dd1e4f1c8b688f3fd34e951c6c05463c25624",
-  "approved_by": "Release requested and playback accepted by the device operator. Codex verified the qualified image, reviewed source digest, distribution archive, and unchanged license and security-contact files.",
+  "reviewed_tree_sha256": "8f7a303ea7a16551cfc5373d0c21a7479ec88086cee0e627581254618a184475",
+  "approved_by": "Publication requested by the device operator. Codex verified the signed image on hardware, the reviewed source digest and distribution archive, and the unchanged license and security-contact files.",
   "source_review_complete": true,
   "license_review_complete": true,
   "security_contact_ready": true,
   "artwork_font_ownership_confirmed": true,
   "ownership_confirmation_date": "2026-10-21",
-  "qualification": "Signed v1.0.10-public-review.1 was verified against its source tree, signed manifest and release checksums. Direct USB installation on rev-4 N16R8 passed flash digest verification and booted the matching v1.0.10 ELF. Recording gain, playback admission, measurement and game motion recovery tests passed. The operator played a microphone recording on the directly flashed device and confirmed that playback sounds right."
+  "qualification": "Signed v1.0.11-public-review.1 matched source 5d75c14ad9fc22a8a652a6779c991fa981e9753c and firmware SHA-256 486f39a4a51ca496b93734c302fedd2d7c186f74b53fd6b2f285d1cc9f11b45c. USB flash verification and boot of the matching official v1.0.11 ELF passed on rev-4 N16R8. The Settings replay, default Resume, wheel selection and confirmed exit to Home passed. Both popup selections matched their approved framebuffer pixels. The device retained onboarding completion."
 }
