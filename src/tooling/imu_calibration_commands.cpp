@@ -128,7 +128,7 @@ void startStream(uint32_t now, float seconds, bool raw) {
     Serial.println("[imu-cal] ERR busy");
     return;
   }
-  if (!hal::imu::isReady() || !s_stream.gyro.open()) {
+  if (!s_stream.gyro.open()) {
     Serial.println("[imu-cal] ERR imu-unavailable");
     return;
   }

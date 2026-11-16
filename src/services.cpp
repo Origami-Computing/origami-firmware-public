@@ -546,9 +546,9 @@ static void svcTask(void*) {
 void init() {
     s_lastActivityMs = millis();
 
+    services::imu_sensor_calibration::loadAndApply();
     if (hal::imu::init()) {
         Serial.println("IMU OK");
-        services::imu_sensor_calibration::loadAndApply();
         if (hal::imu::enableStepCounter())
             Serial.println("Pedometer ON (LSM6DSL)");
         else

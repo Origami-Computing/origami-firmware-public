@@ -1,5 +1,5 @@
 """Run production C++ games in the host simulator, without devices."""
-import sys,time,unittest
+import re,sys,time,unittest
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'tools/lua_simulator'))
@@ -24,7 +24,12 @@ class NativeTests(unittest.TestCase):
   finally:self.runtime.close()
  def test_all_catalog_apps_start_input_stop_and_reenter_without_retained_resources(self):
   entries=[e for e in server.store.catalog(native_preview=True) if e.get('preview')]
-  self.assertEqual(len(entries),15)
+  # Exercise every built-in game on this firmware, including all three sports.
+  menu=(ROOT/'src/apps/menu_app.cpp').read_text().split('kGameEntries[] = {',1)[1].split('};',1)[0]
+  apps=re.findall(r'&apps::(\w+)::app',menu)
+  ids={'native-'+('t-rex' if app=='trex' else app.replace('_','-')) for app in apps}
+  self.assertTrue({'native-tennis','native-bowling','native-golf'} <= ids)
+  self.assertEqual({entry['id'] for entry in entries},ids)
   for entry in entries:
    for repeat in range(2):
     self.send('environment',tilt=0,noise=35,failure=False)

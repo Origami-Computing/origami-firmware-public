@@ -11,6 +11,7 @@ def function(text,signature):
 code=r'''
 #include "core/mjpeg_avi.h"
 #include "core/audio_dsp.h"
+#include "core/recording_playback_dsp.h"
 #include "core/playback_progress.h"
 #include <atomic>
 #include <cassert>
@@ -39,6 +40,7 @@ code+=r'''
  static bool parseHeader_(hal::sd::StreamReader&,ParsedHeader&);
  bool prepareAviAudioChunk_();bool failAviStream_();bool pumpFileToRing_();bool atEndOfFile_();bool recoverSdFile_();
  const int16_t* memoryPcm_=nullptr;size_t memoryFrames_=0,memoryPosition_=0;bool memoryLoop_=false;
+ core::audio::RecordingPlaybackDsp recordingDsp_;bool masterRecording_=false;
  hal::sd::StreamReader file_;bool fileOpen_=true;char currentPath_[192]="/test.avi";
  uint32_t dataStart_=0,dataEnd_=0,bytesPerFrame_=2,lastGoodFilePos_=0;
  core::avi::Info avi_{};uint32_t aviChunkEnd_=0,aviSamplesRead_=0;
@@ -72,6 +74,14 @@ int main(int argc,char** argv){assert(argc==3);Bytes original=readFile(argv[1]),
  core::avi::u32(data.data()+24,48000);core::avi::u32(data.data()+28,96000);core::avi::u32(data.data()+32,0x00100002);
  memcpy(data.data()+36,"data",4);core::avi::u32(data.data()+40,expected.size());memcpy(data.data()+44,expected.data(),expected.size());
  {WavPlayer p;assert(p.open());assert(play(p)==expected&&!p.streamFailed_&&p.elapsedMs()==800);}
+ // The shared recording processor delivers identical audio from WAV and AVI,
+ // regardless of their different read/chunk boundaries, without shifting time.
+ Bytes masteredWav;
+ {WavPlayer p;assert(p.open());p.masterRecording_=true;p.recordingDsp_.reset(48000);
+  masteredWav=play(p);assert(masteredWav!=expected && p.elapsedMs()==800);}
+ data=original;
+ {WavPlayer p;assert(p.open());p.masterRecording_=true;p.recordingDsp_.reset(48000);
+  assert(play(p)==masteredWav && p.elapsedMs()==800);}
  // Reopen preserves physical chunk position; PCM is neither repeated nor lost.
  data=original;{WavPlayer p;assert(p.open());p.file_.handle=nullptr;assert(play(p)==expected&&!p.streamFailed_);}
  // Valid header with inconsistent stream length cannot silently truncate audio.

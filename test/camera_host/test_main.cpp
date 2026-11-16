@@ -8,7 +8,11 @@ SerialType Serial;
 WireType Wire1;
 SDType SD;
 static sensor_t sensor;
-static uint8_t jpeg[]={0xff,0xd8,0xff,0xd9};
+// The camera HAL requires a frame header and scan before EOI.
+static uint8_t jpeg[] = {
+  0xff,0xd8, 0xff,0xc0,0,11,8,1,224,2,128,1,1,17,0,
+  0xff,0xda,0,8,1,1,0,0,63,0,42,0xff,0xd9
+};
 static camera_fb_t frame={jpeg,sizeof(jpeg),640,480,PIXFORMAT_JPEG,{0,1}};
 
 esp_err_t esp_camera_init(const camera_config_t* config) {

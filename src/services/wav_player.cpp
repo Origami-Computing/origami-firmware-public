@@ -169,6 +169,9 @@ bool WavPlayer::startTrack(const char* path) {
     bytesPerFrame_ = parsed.bytesPerFrame;
     lastGoodFilePos_ = dataStart_;
     avi_ = parsed.avi; aviChunkEnd_ = dataStart_; aviSamplesRead_ = 0; streamFailed_ = false;
+    masterRecording_ = info_.channels == 1 &&
+        (!strncmp(path, "/recordings/", 12) || !strncmp(path, "/videos/", 8));
+    recordingDsp_.reset(info_.hz);
 
     nameFromPath(path, info_.title, sizeof(info_.title));
     progress_.reset();
@@ -268,6 +271,7 @@ bool WavPlayer::restartTrack() {
     outputSampleRemainder_ = 0;
     lastGoodFilePos_ = dataStart_;
     aviChunkEnd_ = dataStart_; aviSamplesRead_ = 0; streamFailed_ = false;
+    recordingDsp_.reset(info_.hz);
     wantsNext_ = false;
     clearSpectrum();
     for (int i = 0; i < 12 && ring_.free() > 2048; ++i) {
@@ -514,6 +518,7 @@ bool WavPlayer::pumpFileToRing_() {
     if (gotFrames <= 0) return false;
 
     if (avi_.audioSamples) aviSamplesRead_ += uint32_t(gotFrames);
+    if (masterRecording_) recordingDsp_.process(pcmBuf_, gotFrames, info_.channels);
     analyzeVis_(pcmBuf_, gotFrames, info_.channels);
     progress_.add((uint32_t)gotFrames, info_.hz);
     core::dsp::pushStereoWithVolumeBasisPoints(pcmBuf_, gotFrames, info_.channels,

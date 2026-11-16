@@ -23,7 +23,8 @@ code=r'''
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-bool spawnOk=false;int opens=0,txStarts=0,starts=0,usageEvents=0;
+#include "core/recording_playback_dsp.h"
+bool spawnOk=false;int opens=0,txStarts=0,starts=0,usageEvents=0,fixtureChannels=2;
 namespace core{namespace usage{void emit(const char*,const char*){++usageEvents;}}}
 struct Log{void println(const char*){}template<class...T>void printf(const char*,T...) {}} Serial;
 struct File{operator bool()const{return true;}unsigned size(){return 4096;}unsigned position(){return 0;}void close(){}};
@@ -40,6 +41,7 @@ struct Progress{void reset(){}void add(int,int){}};
 struct Worker{bool runningFlag=false,pending=false;bool running()const{return runningFlag;}bool cleanupPending()const{return pending;}};
 struct PlaybackWorker{struct Control{Control(Worker&){}explicit operator bool()const{return true;}};};
 struct Base{
+ core::audio::RecordingPlaybackDsp recordingDsp_;bool masterRecording_=false;
  Worker worker_;Ring ring_;Codec codec_;Progress progress_,outputProgress_;File file_;
  struct Avi{} avi_;unsigned aviChunkEnd_=0,aviSamplesRead_=0,outputSampleRemainder_=0;
  std::atomic<bool> streamFailed_{false};
@@ -52,7 +54,7 @@ struct Base{
  bool startTask(){++starts;return worker_.runningFlag=spawnOk&&!worker_.pending;}
  void stopTrackUnlocked(){playing_=false;fileOpen_=false;}
  bool parseID3_(){return true;}int decodeOneFrame_(){return 0;}int scaledVolumeBasisPoints(){return 1000;}
- bool ready(){return true;}bool parseHeader_(File&,ParsedHeader&){return true;}
+ bool ready(){return true;}bool parseHeader_(File&,ParsedHeader& parsed){parsed.channels=fixtureChannels;return true;}
  void clearSpectrum(){}bool pumpFileToRing_(){return false;}
 };
 void nameFromPath(const char*,char* out,unsigned size){snprintf(out,size,"fixture");}
@@ -76,11 +78,18 @@ template<class Player>void check(){
  assert(usageEvents==1);p.fileOpen_=true;p.resume();assert(p.playing_&&usageEvents==2);
  p.resume();assert(usageEvents==2);
 }
-int main(){check<Mp3Player>();check<WavPlayer>();puts("PASS actual MP3/WAV startTrack: failed admission opens no file, starts no I2S, never plays; later retry and resume guards");}
+int main(){check<Mp3Player>();check<WavPlayer>();
+ fixtureChannels=1;spawnOk=true;WavPlayer p;
+ assert(p.startTrack("/recordings/test.wav") && p.masterRecording_);
+ assert(p.startTrack("/videos/test.avi") && p.masterRecording_);
+ assert(p.startTrack("/music/test.wav") && !p.masterRecording_);
+ assert(p.startTrack("/recordings-other/test.wav") && !p.masterRecording_);
+ fixtureChannels=2;assert(p.startTrack("/recordings/test.wav") && !p.masterRecording_);
+ puts("PASS actual MP3/WAV admission, resume guards and recording-processing scope");}
 '''
 with tempfile.TemporaryDirectory() as directory:
     path=Path(directory);(path/'test.cpp').write_text(code)
-    subprocess.run(['c++','-std=c++14','-fsanitize=address,undefined',str(path/'test.cpp'),'-o',str(path/'test')],check=True)
+    subprocess.run(['c++','-std=c++14','-fsanitize=address,undefined','-I'+str(ROOT/'include'),str(path/'test.cpp'),'-o',str(path/'test')],check=True)
     result=subprocess.run([str(path/'test')],capture_output=True,text=True)
     if negative:
         assert result.returncode != 0 and 'p.startTrack' in result.stderr, result.stdout+result.stderr
