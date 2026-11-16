@@ -278,3 +278,18 @@ Generated from recorded process exit codes. Passing host checks exercise their s
 | `test_wifi_provision.py` | PASS | `mediafix-test_wifi_provision.py.log` |
 | `test_wifi_qr_session.py` | PASS | `results.json` |
 | `test_wpa3_sae_cleanup.py` | PASS | `final-results.json` |
+
+## Additional acceptance checks for subsequent firmware runs
+
+Added November 15 after investigating motion loss in Tennis and Bowling. Record the firmware revision and evidence for each case. The November 15 results are in the [branch QA report](audio-playback-branch-qa-2026-11-15.md).
+
+- [ ] Tilt and rotate the physical device about each axis. Verify all three accelerometer and gyro channels respond, and the data-ready interrupt asserts and clears.
+- [ ] After a missed startup probe, restore sensor availability and open a motion game. Verify calibration and fresh samples without rebooting. Record whether the failure was injected or occurred on hardware.
+- [ ] On the device, calibrate Tennis, register one physical swing, switch to Bowling and register one physical throw. Reopen Tennis and register another swing. Save game-event and sample-rate evidence.
+- [ ] Use the camera, microphone and speaker in turn. Verify valid IMU samples after releasing each peripheral.
+- [ ] Confirm a physical tap is detected, walking increments the step counter, and motion wakes the device in a supported sleep mode.
+- [ ] Inspect a freshly saved camera image and replay a newly recorded spoken phrase. Confirm intelligibility on the speaker and successful rerouting on headphone insertion and removal.
+- [ ] With card I/O idle, remove and reinsert the SD card. Verify detection, remount and a scratch file write/read.
+- [ ] Record fuel-gauge voltage, current, temperature, raw charge percentage and displayed percentage. Unplug and reconnect USB, verify charger/power-good transitions and investigate any unexplained percentage mismatch.
+- [ ] Press A, B and C, rotate the encoder in both directions, visually inspect the display and confirm physical vibration.
+- [ ] For timed shutdown wake and scheduled alarm wake, log the wake cause and verify screen/input response and USB reconnection. Record any manual wake or cable reconnection needed.
