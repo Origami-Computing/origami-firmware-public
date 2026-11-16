@@ -1,9 +1,25 @@
 #include "apps/onboarding_controls.h"
+#include "apps/onboarding_flow.h"
 #include <cassert>
 #include <initializer_list>
 #include <cstdint>
 using apps::onboarding::Controls;
 int main(){
+ apps::onboarding::Flow replay;
+ for(unsigned page=0;page<=143;++page){
+  replay.setPage(page);
+  assert(!replay.canExitReplay(false));
+ }
+ for(unsigned page:{3u,4u,25u,122u,123u,124u}){
+  replay.setPage(page);
+  assert(!replay.canExitReplay(true));
+ }
+ for(unsigned page:{0u,5u,6u,18u,31u,36u,40u,140u}){
+  replay.setPage(page);
+  assert(replay.canExitReplay(true));
+ }
+ replay.beginWifiSetup();
+ assert(!replay.canExitReplay(true));
  for(unsigned run=0;run<1000;++run){
   for(unsigned page:{3u,4u,5u}){
    Controls c;c.reset(page);unsigned b=page==3?0:page==4?1:2;

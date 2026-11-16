@@ -11,6 +11,17 @@ struct Flow {
  void reset(){*this=Flow{};}
  void beginWifiSetup(){reset();wifiOnly=true;page=kWifiWebsite;}
  void setPage(unsigned next){page=next;selection=0;}
+ // Called only while the tutorial owns the visible screen. Child apps handle their own chords.
+ bool canExitReplay(bool completed) const {
+  if(!completed || wifiOnly)return false;
+  switch(page){
+   case 3: case 4: // Individual A and B button lessons.
+   case 25: // Hold A+B to speak to the live agent.
+   case 122: case 123: case 124: // Scripted speaking demonstration.
+    return false;
+   default:return true;
+  }
+ }
  unsigned afterNav()const{return interest==1?125:kBuildIntro;}
  unsigned afterPractice()const{return account&&connected?25:122;}
  bool turn(int delta){
