@@ -1,11 +1,11 @@
 {
   "approved": true,
-  "reviewed_tree_sha256": "784352abf25ba7926165b9e8502af534ac387a955e9088c455f72e44c66adb56",
-  "approved_by": "Vaibhav Maloo authorized public OTA and GitHub release. Codex verified the signed v1.0.9 image, merged source changes, distribution archive, retained notices and unchanged security contact.",
+  "reviewed_tree_sha256": "4dfdc9e8f644c0f808d4862ac56dd1e4f1c8b688f3fd34e951c6c05463c25624",
+  "approved_by": "Release requested and playback accepted by the device operator. Codex verified the qualified image, reviewed source digest, distribution archive, and unchanged license and security-contact files.",
   "source_review_complete": true,
   "license_review_complete": true,
   "security_contact_ready": true,
   "artwork_font_ownership_confirmed": true,
   "ownership_confirmation_date": "2026-10-21",
-  "qualification": "Signed review.1 booted on rev4. Checked the complete Custom Apps picker and installed Gravity Four through the foreground installer using decoded public QR digits. MB progress and post-receipt Upload visibility were hardware-tested on the preceding gallery feature build; the release board is unregistered."
+  "qualification": "Signed v1.0.10-public-review.1 was verified against its source tree, signed manifest and release checksums. Direct USB installation on rev-4 N16R8 passed flash digest verification and booted the matching v1.0.10 ELF. Recording gain, playback admission, measurement and game motion recovery tests passed. The operator played a microphone recording on the directly flashed device and confirmed that playback sounds right."
 }
