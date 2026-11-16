@@ -188,3 +188,92 @@ Video audio shares the tested processor, but a fresh physical video capture and
 listening test has not been performed. Microphone sensitivity/calibration remains
 outside the demonstrated playback fix; this investigation does not claim every
 possible low-input cause is ruled out.
+
+## Speaker clarity experiment, 15 November 2026
+
+The operator provided the same 8.864-second control phrase on the laptop and
+device (mono 48 kHz PCM16, SHA-256
+`87babe11eea5937f74223f4991df454f6f83a2050ffd04776d60ce8d5bc0a4fd`).
+A CRC-verified SD readback matched the laptop file. The host selected the
+Realtek built-in speaker endpoint explicitly at its existing volume. The
+EarPods input and its level were held fixed after unmuting. The initial four
+all-zero runs were discarded. All audio captures are local and private.
+
+For each replay, align the input and captured 10 ms energy envelopes around
+the source windows 0.75–1.45, 3.25–3.65, 5.00–5.45 and 7.00–7.50 seconds.
+Compare the 5–12 kHz energy to 0.5–3.5 kHz in the same vowels using 2,048-sample
+Hann windows at 48 kHz with a 512-sample hop. Check ambient energy before and
+after playback using the existing rejection criteria. For a band near the
+floor, use the measured total as an upper estimate, without attributing its
+energy to the speaker. The band ratio measures spectral balance and cannot
+establish harmonic distortion, speaker damage or a listener preference.
+
+Both checkpoint speaker runs passed the noise checks. Raw high/mid ratios
+were about -7, -16, -5 and -16 dB, respectively; repeat differences were
+under 0.4 dB. The first laptop run also passed. Its raw ratios were about
+-32 to -35 dB, with much of the high-band signal near the noise floor. The
+second laptop pass was noise-rejected. A trial reducing final speaker drive
+from 20% to 15% lowered vowel levels, but pre/post noise drift was 3.53 dB
+and that run cannot support a noise-corrected quality claim. The original
+volume profile was restored immediately.
+
+Tested one-pole 90 Hz and 150 Hz high-pass copies **before** the checkpoint
+mastering stage. Each file passed the SD transfer CRC and played twice on the
+normal recording route. An additional unfiltered replay completed the
+baseline → candidates → baseline comparison. All seven runs in this table
+passed the noise checks.
+
+| Condition | 0.75 s vowel | 3.25 s vowel | 5.00 s vowel | 7.00 s vowel |
+| --- | ---: | ---: | ---: | ---: |
+| Checkpoint mean high/mid (dB), 3 runs | -7.29 | -15.93 | -4.83 | -16.28 |
+| Checkpoint replay range (dB) | 0.37 | 0.17 | 0.34 | 0.16 |
+| 90 Hz filter minus checkpoint (dB), 2 runs | -0.20 | +0.06 | -0.10 | -0.12 |
+| 150 Hz filter minus checkpoint (dB), 2 runs | -0.29 | -0.02 | -0.27 | -0.19 |
+
+Values use band powers after subtraction of the louder pre/post background
+estimate. Across these windows, mean vowel RMS differed from checkpoint by
+at most 0.39 dB. Neither filter produced a material reduction in the feature
+at comparable speech level. Neither was selected for deployment or a second
+recording validation. These results apply to this phrase and this speaker.
+
+The lower-drive repeat passed (0.54 dB drift). It reduced vowel RMS by
+2.2–2.5 dB, with mixed changes in high/mid ratio (-0.55 to +1.03 dB).
+The checkpoint's original profile was restored.
+
+As a separate mastering control, the existing C++ DSP harness processed the
+original PCM through the production header. The bounds, reset, chunking and
+volume tests passed. The host applied one constant scalar (0.13039) to this
+output to match the original digital RMS across the four selected windows,
+then played it twice through the same Realtek speakers. Both acoustic runs
+passed noise screening. The total measured high/mid ratios remained around
+-32 to -35 dB, compared with -5 to -16 dB on Kami. Mastering alone did not
+reproduce Kami's acoustic signature on the laptop.
+
+Finally, isolate whether simply removing the suspect frequencies from the
+mastered file removes them from the capture. Use the same voiced passage at
+5.00–5.45 s, with identical L/R samples in a stereo test WAV to bypass a
+second pass through recording mastering. In one four-second sequence replay
+the original, a 3.7 kHz low-pass, a 300 Hz bass removal, half amplitude, and
+the original again. All were rendered from the production processor output.
+The device played this sequence twice. All ten windows passed noise checks
+(0.8–1.05 dB pre/post drift). In the unfiltered passages the high band was
+about 26 dB above the measured background.
+
+The low-pass reduced the digital high/mid ratio from -41.22 to -93.95 dB
+(52.73 dB reduction). In the first capture, the corresponding ratios were
+-4.64 and -4.80 dB; in the second, -4.44 and -4.52 dB. Even the 300 Hz bass
+removal changed the captured ratio by less than 0.3 dB in either run.
+Half amplitude made the vowel about 5.4 dB quieter and increased the relative
+high-band contribution. End-of-sequence controls returned near the starting
+values.
+
+For this vowel the high-frequency feature persisted after it was almost
+eliminated from the PCM supplied to device playback. The measurement
+localizes the feature downstream of mastering, somewhere in the device
+output and microphone measurement chain. Attribution to the amplifier,
+transducer, enclosure, or pickup by the measurement microphone needs an
+independent measurement. Its perceptual correspondence to the reported rasp
+is also unconfirmed. No candidate improved the feature enough to justify
+flashing a build. The installed loudness checkpoint remains the comparison
+point. The private directory holds the source, raw captures, per-window
+JSON, hashes and a level-matched laptop / checkpoint / 150 Hz listening file.
