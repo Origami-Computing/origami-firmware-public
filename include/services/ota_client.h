@@ -39,6 +39,7 @@ void serviceBootHealth(bool setupHealthy);
 // Persisted preference defaults to Public. Private and Staging require a
 // server-confirmed developer role at selection, retrieval and download.
 // Selection failure preserves its actionable reason in lastError().
+bool publicChannelOnly();
 ReleaseChannel releaseChannel();
 bool setReleaseChannel(ReleaseChannel channel);
 const char* releaseChannelName(ReleaseChannel channel);

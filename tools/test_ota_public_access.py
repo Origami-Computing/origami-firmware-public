@@ -29,7 +29,10 @@ const char*channelPath(ReleaseChannel c){return c==ReleaseChannel::Public?"publi
 void downloadTask(void*){}
 namespace hal{namespace tasks{enum class Id{OtaDownload};bool spawn(Id,void(*)(void*)){++spawns;return spawnOk;}}}
 namespace services {namespace ota_client {void abortFlash(){s_download=DownloadState::Idle;}}}
-'''+a+'\nnamespace services {namespace ota_client {\n'+b+'\n}}\n'+r'''
+#include <cstring>
+namespace core { namespace release_policy { constexpr bool productionOnly=true; } }
+const char* OTA_BUILD_CHANNEL="private";
+'''+s[s.index('bool publicChannelOnly()'): s.index('ReleaseChannel releaseChannel()')].replace('bool publicChannelOnly() {','bool services::ota_client::publicChannelOnly() {')+ a+'\nnamespace services {namespace ota_client {\n'+b+'\n}}\n'+r'''
 ReleaseInfo release(ReleaseChannel c){ReleaseInfo r{};r.channel=c;r.size=100;snprintf(r.url,sizeof(r.url),OTA_BASE_URL "/releases/%s/" OTA_HARDWARE_ID "/" OTA_LAYOUT_ID "/v1.0.5/hash/firmware.bin",channelPath(c));return r;}
 int main(){
  auto pub=release(ReleaseChannel::Public),priv=release(ReleaseChannel::Private),stage=release(ReleaseChannel::Staging);

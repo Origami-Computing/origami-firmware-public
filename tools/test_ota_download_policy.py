@@ -8,6 +8,7 @@ def prefix(name,marker):
  return s[start:end]+' return true;\n}\n'
 code=r'''
 #include <atomic>
+#include <cstring>
 #include <cstdint>
 #include <cassert>
 #include <initializer_list>
@@ -17,7 +18,9 @@ namespace ota_access {enum class Role{Unknown,Production,Developer};Role granted
 bool authenticated=true;bool refreshAccess(){return authenticated && ota_access::role()!=ota_access::Role::Unknown;}
 void setError(const char*){} void abortFlash(){} char s_err[100];
 enum class DownloadState{Running,Idle};std::atomic<DownloadState>s_download{DownloadState::Idle};
-'''+s[s.index('static bool authorizeRelease('):s.index('bool fetchLatestRelease(')]+prefix('bool fetchLatestRelease(', '    if (!OTA_BASE_URL')+prefix('bool beginFlash(', '    char prefix[')+r'''
+namespace core { namespace release_policy { constexpr bool productionOnly=true; } }
+const char* OTA_BUILD_CHANNEL="private";
+'''+s[s.index('bool publicChannelOnly()'): s.index('ReleaseChannel releaseChannel()')]+ s[s.index('static bool authorizeRelease('):s.index('bool fetchLatestRelease(')]+prefix('bool fetchLatestRelease(', '    if (!OTA_BASE_URL')+prefix('bool beginFlash(', '    char prefix[')+r'''
 int main(){
  for(auto role:{ota_access::Role::Unknown,ota_access::Role::Production,ota_access::Role::Developer}){
   ota_access::granted=role;
@@ -27,6 +30,12 @@ int main(){
    assert(fetchLatestRelease(channel,&info)==allowed);assert(beginFlash(info)==allowed);
    authenticated=false;assert(fetchLatestRelease(channel,&info)==(channel==ReleaseChannel::Public));assert(beginFlash(info)==(channel==ReleaseChannel::Public));authenticated=true;
   }
+ }
+ OTA_BUILD_CHANNEL="public";
+ ota_access::granted=ota_access::Role::Developer;
+ for(auto channel:{ReleaseChannel::Staging,ReleaseChannel::Private}){
+  ReleaseInfo info{};info.channel=channel;
+  assert(!fetchLatestRelease(channel,&info)&&!beginFlash(info));
  }
  ReleaseInfo invalid{};invalid.channel=static_cast<ReleaseChannel>(99);
  assert(!fetchLatestRelease(invalid.channel,&invalid)&&!beginFlash(invalid));
