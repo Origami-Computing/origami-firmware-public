@@ -1,4 +1,4 @@
-# Native apps and Lua extensions
+# Native C++ app development
 
 Read `docs/architecture.md`, `docs/building.md`, `CONTRIBUTING.md`, `include/app.h` and `include/scene/screen.h` in the target checkout. Inspect the nearest existing app before choosing an implementation; `src/apps/timer_app.cpp` demonstrates a service-backed, multi-screen app. It is a reference, not a template to copy wholesale.
 
@@ -16,9 +16,9 @@ App activation is not screen entry. `onEnter` initializes an activation; `onResu
 
 Respect dependency direction: apps coordinate workflows; scene/UI render; services own operations; core owns reusable models/policy; HAL owns hardware. Core must not import services. Core/services/SFX must not import app/navigation/presentation interfaces, including transitively. Do not patch installed PlatformIO packages to make a build pass.
 
-## Extending Lua without rewriting the UI
+## Independently installed native apps
 
-Read `include/widgets/api_registry.h`, `src/widgets/api.cpp` and a narrow existing binding such as `api_timer.cpp`. Expose a bounded operation through existing control/services; validate every argument, return explicit errors, and expose no raw pointers, filesystem roots, credentials or unbounded network calls. Honor callback budgets with the existing execution checks. Register the namespace explicitly following the current registry; add capability descriptions when extending the control capability model. Keep side effects out of drawing. Test invalid inputs, service busy/failure and cancellation as applicable.
+The firmware-integrated path above produces a custom OS image. An App Store package is a separate delivery path: inspect `include/services/native_apps.h`, `include/config/native_apps.h`, `src/services/native_apps.cpp` and the available packaging tools before promising an installable app. The current loader requires a publisher signature, matching hashes and ABI, and an ELF payload within its size limit. Do not remove authentication checks or assume a public publisher service is available.
 
 ## Verification and delivery
 

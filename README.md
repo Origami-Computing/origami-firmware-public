@@ -4,17 +4,22 @@
 <h1 align="center">kamiOS 1.0</h1>
 <p align="center"><strong>Origami Computing</strong></p>
 
-kamiOS is the operating firmware for Origami’s ESP32-S3 handheld: a display, camera, audio, motion sensing, and Lua widgets in one device.
+kamiOS is the operating firmware for Origami’s ESP32-S3 handheld: a display, camera, audio, motion sensing, and native apps in one device.
 
-Official releases are published after source review, automated checks, and qualification of the signed candidate. See [release review](docs/release-review.md).
+Get the [latest public firmware](https://github.com/Origami-Computing/origami-firmware-public/releases/latest), read [what changed](CHANGELOG.md), or use [guided USB recovery](https://origami-computing.github.io/origami-firmware-public/) if OTA is not working.
 
 ## Build your own app
 
-Describe an idea to your coding assistant and give it the [Origami app builder skill](skills/origami-app-builder/SKILL.md). Start with Lua: small games, clocks, interactive tools and data screens can run from the SD card without rebuilding firmware. The skill includes a [ready-to-copy counter](skills/origami-app-builder/assets/counter/main.lua), the supported Lua API and C++ guidance for deeper hardware features.
+Build apps in **C++** using the [Origami app builder skill](skills/origami-app-builder/SKILL.md) and [native development guide](skills/origami-app-builder/references/cpp.md).
 
-With a skill-compatible assistant, copy the entire `skills/origami-app-builder` folder into its skills directory and invoke `$origami-app-builder`. In Codex, that directory is `~/.codex/skills/`. Other assistants can read `SKILL.md` and its linked references directly from this checkout.
+| Start with | What it provides |
+| --- | --- |
+| An app idea | Ask your coding assistant to use `$origami-app-builder`. |
+| Existing App/Screen contracts | Workflow, lifecycle, controls and navigation. |
+| Shared UI and services | Drawing, camera, audio, networking and storage. |
+| A custom firmware build | The documented development path; App Store packaging/signing is separate. |
 
-Try: “Use the Origami app builder skill to make a breathing app with a gentle animation and rotary speed control.” Lua supports the device's exposed capabilities; arbitrary network, storage and hardware access need native integration.
+Copy the whole `skills/origami-app-builder` folder into your assistant's skills directory, or have it read `SKILL.md` directly. Try: “Build a C++ breathing app with a gentle animation and rotary speed control.”
 
 ## Hardware
 
@@ -68,12 +73,11 @@ flowchart TB
 | Storage | What lives here | Survives power-off? |
 | --- | --- | --- |
 | Flash | Firmware, settings and system state | Yes |
-| SD card | Photos, video, recordings, Lua widgets; native apps when app flash is absent | Yes |
+| SD card | Photos, video, recordings; native apps when app flash is absent | Yes |
 | 8 MiB PSRAM | Working memory for running code, images and buffers | No |
 
 | Custom app type | Installation and limits |
 | --- | --- |
-| Lua widget | Runs from SD; no firmware rebuild. |
 | Signed native app | Installed through App Store; ELF payload up to 512 KiB, subject to available memory and API compatibility. |
 | C++ built into kamiOS | Requires a firmware build; the complete OS must fit one 6 MiB slot. |
 | Optional native-app flash | About 3.8 MiB at `0xC30000` (`0x3D0000` bytes). **Not enabled by the current partition table.** Needs a verified partition migration; OTA alone does not create it. |
