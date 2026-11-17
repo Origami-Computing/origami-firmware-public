@@ -9,7 +9,7 @@ builds, not published updates; their changes are included under v1.0.8.
 
 ## v1.0.12
 
-Published: 2026-11-17 (UTC).
+Published: 2026-11-16 at 06:59 PM PST.
 
 Changes since v1.0.11.
 
@@ -21,7 +21,7 @@ Changes since v1.0.11.
 
 ## v1.0.11
 
-Published: 2026-11-16 (UTC).
+Published: 2026-11-16 at 03:09 PM PST.
 
 Changes since v1.0.10.
 
@@ -30,7 +30,7 @@ Changes since v1.0.10.
 
 ## v1.0.10
 
-Published: 2026-11-16 (UTC).
+Published: 2026-11-16 at 12:18 PM PST.
 
 Changes since v1.0.9.
 
@@ -39,7 +39,7 @@ Changes since v1.0.9.
 
 ## v1.0.9
 
-Published: 2026-11-14 (UTC).
+Published: 2026-11-13 at 05:07 PM PST.
 
 Changes since v1.0.8.
 
@@ -49,7 +49,7 @@ Changes since v1.0.8.
 
 ## v1.0.8
 
-Published: 2026-11-13 (UTC).
+Published: 2026-11-13 at 03:03 PM PST.
 
 Changes since v1.0.5.
 
@@ -64,7 +64,7 @@ Changes since v1.0.5.
 
 ## v1.0.5
 
-Published: 2026-11-01 (UTC).
+Published: 2026-10-31 at 08:56 PM PDT.
 
 Changes since v1.0.4.
 
@@ -73,7 +73,7 @@ Changes since v1.0.4.
 
 ## v1.0.4
 
-Published: 2026-10-31 (UTC).
+Published: 2026-10-30 at 05:53 PM PDT.
 
 Changes since v1.0.3.
 
@@ -82,7 +82,7 @@ Changes since v1.0.3.
 
 ## v1.0.3
 
-Published: 2026-10-31 (UTC).
+Published: 2026-10-30 at 05:16 PM PDT.
 
 Changes since v1.0.2.
 
@@ -92,7 +92,7 @@ Changes since v1.0.2.
 
 ## v1.0.2
 
-Published: 2026-10-30 (UTC).
+Published: 2026-10-30 at 04:54 PM PDT.
 
 Changes since v1.0.1.
 
@@ -102,7 +102,7 @@ Changes since v1.0.1.
 
 ## v1.0.1
 
-Published: 2026-10-28 (UTC).
+Published: 2026-10-27 at 09:18 PM PDT.
 
 Initial published release.
 

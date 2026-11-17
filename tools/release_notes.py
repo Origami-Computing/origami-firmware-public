@@ -1,6 +1,7 @@
 """Validate the release log and package already-verified public candidate assets."""
 import argparse
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import hashlib
 import json
 from pathlib import Path
@@ -39,10 +40,14 @@ def release_entry(changelog, version, previous=None):
         raise ValueError(f'Add a brief, reviewed CHANGELOG.md entry for {version}')
     body = entries[version].strip()
     lines = body.splitlines()
-    published = re.fullmatch(r'Published: (\d{4}-\d{2}-\d{2}) \(UTC\)\.', lines[0] if lines else '')
+    published = re.fullmatch(r'Published: (\d{4}-\d{2}-\d{2} at \d{2}:\d{2} [AP]M) (PST|PDT)\.', lines[0] if lines else '')
     if not published:
-        raise ValueError('Entry must include Published: YYYY-MM-DD (UTC).')
-    date.fromisoformat(published[1])
+        raise ValueError('Entry must include Published: YYYY-MM-DD at HH:MM AM/PM PST/PDT.')
+    timestamp = datetime.strptime(published[1], '%Y-%m-%d at %I:%M %p')
+    pacific = ZoneInfo('America/Los_Angeles')
+    if not any(timestamp.replace(tzinfo=pacific, fold=fold).tzname() == published[2]
+               for fold in (0, 1)):
+        raise ValueError('Use PST or PDT according to the Pacific publication date')
     lines = lines[1:]
     while lines and not lines[0]:
         lines.pop(0)
