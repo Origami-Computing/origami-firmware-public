@@ -65,7 +65,7 @@ class ReleaseNotesTests(unittest.TestCase):
 
     def test_workflow_keeps_verification_before_packaging_and_explicit_uploads(self):
         workflow = (ROOT/'.github/workflows/publish.yml').read_text()
-        self.assertLess(workflow.index('tools/verify_release_candidate.py'), workflow.index('--directory dist\n'))
+        self.assertLess(workflow.index('tools/verify_release_candidate.py'), workflow.index('tools/release_notes.py --version "$VERSION" --directory dist'))
         self.assertIn('--previous-version "$PREVIOUS_VERSION"', workflow)
         self.assertIn('dist/firmware.bin "release-output/kamiOS-$VERSION.zip"', workflow)
         self.assertNotIn('dist/*', workflow)

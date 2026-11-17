@@ -1,4 +1,4 @@
-name: Build firmware draft release
+name: Build firmware qualification candidate
 on:
   workflow_dispatch:
     inputs:
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read
     env:
       REVIEW_TAG: ${{ inputs.tag }}
     steps:
@@ -106,25 +106,13 @@ jobs:
           paths=sorted(p for p in Path('dist').iterdir() if p.name!='SHA256SUMS.txt')
           Path('dist/SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in paths))
           PY
-      - name: Create draft release only
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 - <<'PYNOTES'
-          import pathlib
-          provenance = pathlib.Path('dist/REVIEW.txt').read_text()
-          pathlib.Path('DRAFT-NOTES.md').write_text(
-              '## Internal test build — not a customer download\n\n'
-              'Retained for maintainer testing and release provenance. This draft does not publish an OTA update.\n\n'
-              '[Latest public firmware](https://github.com/Origami-Computing/origami-firmware-public/releases/latest)'
-              ' · [OTA troubleshooting and USB recovery](https://origami-computing.github.io/origami-firmware-public/)\n\n'
-              '<details>\n<summary>Candidate build record</summary>\n\n' + provenance + '\n</details>\n')
-          PYNOTES
-          gh release create "$REVIEW_TAG" \
-            --target "$GITHUB_SHA" --draft --latest=false \
-            --title "INTERNAL TEST BUILD — $REVIEW_TAG" \
-            --notes-file DRAFT-NOTES.md \
-            dist/*
+      - name: Retain candidate outside GitHub Releases
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-${{ inputs.tag }}
+          path: dist/*
+          retention-days: 90
+          if-no-files-found: error
       - name: Retain signed legacy bridge for private migration
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

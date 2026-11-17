@@ -84,11 +84,11 @@ Run the relevant host regressions and the production build. CI is the authoritat
 
 After review, merge the PR into the public repository. This changes its source snapshot, not repository visibility. If the repository is still private, keep it private through qualification. Keep the evidence tied to the merged source and discard stale approval when source changes.
 
-## 4. Build a signed private candidate
+## 4. Build a signed qualification candidate
 
-The current first-launch workflow is **Actions → Build firmware draft release**. Run it on `main` with a fresh tag matching `platformio.ini`, for example `v1.0.0-public-review.1`. Increment the review suffix for each candidate. This workflow is intentionally restricted to a private repository; see the post-launch section below before making future releases.
+Use **Actions → Build firmware qualification candidate** on `main` with a fresh candidate identifier matching `platformio.ini`, for example `v1.0.13-public-review.1`. Increment the review suffix for each build. Candidate output is retained as an Actions artifact, not a GitHub release.
 
-The workflow builds `esp32-s3-menu-n16r8-release-review`, records the tracked source digest, packages source/notices and prepares a signed Public manifest. It creates a draft release and does not change an OTA channel. Signing is performed using the Actions secret; never embed the private signing key in source or firmware.
+The workflow builds `esp32-s3-menu-n16r8-release-review`, records the tracked source digest, packages source/notices and prepares a signed Public manifest. It uploads a candidate artifact and does not change an OTA channel. Signing is performed using the Actions secret; never embed the private signing key in source or firmware.
 
 Verify these candidate assets:
 
@@ -114,7 +114,7 @@ Use the matching reviewed source checkout. A source-digest mismatch, invalid sig
 
 Identify the board, USB port, installed baseline, hardware revision and partition layout. Verify that another operator/chat is not using the board. Save a private recovery backup and protect it as credential-bearing data. Do not erase NVS, SD content, factory data or eFuses as a shortcut.
 
-A private GitHub draft is not automatically an OTA endpoint. After USB qualification, **Deploy private Public-channel qualification candidate** can deploy the exact signed candidate while the repository is private. This workflow verifies its source digest and signature, does not publish the GitHub release, and does not bypass final publication approval. Deploying a qualification candidate to a live channel is a separate controlled action: it may reach other authorized devices. Establish the test audience and rollback plan first. Do not mark source/binary review approved merely to bypass the publication workflow for testing.
+An Actions artifact is not an OTA endpoint. After USB qualification, **Deploy private Public-channel qualification candidate** can deploy the exact signed candidate. This workflow verifies its source digest and signature, does not publish a GitHub release, and does not bypass final publication approval. Deploying a qualification candidate to a live channel is a separate controlled action: it may reach other authorized devices. Establish the test audience and rollback plan first. Do not mark source/binary review approved merely to bypass the publication workflow for testing.
 
 Record each result against the exact candidate hash:
 
@@ -174,7 +174,7 @@ After the administrator changes visibility, check the repository and release fro
 
 Repeat this process for every new public version. Increment the version deliberately and use an independent public PR. Never publish private work merely because private CI passed. Preserve an internal source-to-public mapping and a public changelog containing only publishable information.
 
-**Current workflow limitation:** `release.yml` runs only while this repository is private. Before the second release, implement and review a post-launch qualification path. A private qualification repository or isolated private build process can produce candidates for the public main digest; its trusted workflow, source verification, signing-key access and exact-byte promotion must be designed together. Do not simply remove the privacy condition and assume draft releases hide private source or Actions logs in a public repository.
+Use the Actions candidate-storage contract below for subsequent releases. Retained artifacts in a public repository are not a place for private source, credentials or raw device logs; only the reviewed public candidate materials belong there.
 
 If a release fails, stop further promotion, preserve evidence, and use the verified recovery/migration procedure. Restore a channel pointer only to a compatible signed image that clients accept; version checks may reject a downgrade. If a signing key is compromised, plan a trust-key transition and device recovery, not just a new GitHub secret. Keep the vulnerability handling process separate from ordinary feature promotion.
 
@@ -220,7 +220,7 @@ Release notes lead with changes and two download choices. Source identity and th
 firmware hash are tucked into expandable build details. The publisher verifies the
 candidate and distribution archive before wrapping the unchanged candidate assets
 in one ZIP; no firmware is rebuilt and signing/admission rules remain unchanged.
-Candidate-review drafts retain their individual diagnostic files. The signed
+Candidate Actions artifacts retain their individual diagnostic files. The signed
 `latest.json` inside the ZIP is the original candidate evidence; devices use the
 live channel manifest, not this archived copy, for normal updates.
 
@@ -230,3 +230,20 @@ been qualified. Prepare a new version and candidate through the existing process
 Previously published releases are not rewritten by the workflow. Any historical
 notes or asset migration must preserve their firmware and source provenance and
 be handled explicitly; this change does not delete old download URLs.
+
+## Candidate storage: Actions, not Releases
+
+Qualification builds are retained as `candidate-vX.Y.Z-public-review.N` Actions
+artifacts for up to 90 days, subject to the repository retention limit. Use a new
+review suffix for each build. A candidate identifier is not a public Git tag or
+release. Fetch the artifact from the successful qualification run; the qualifier
+and publisher use `tools/fetch_release_candidate.py` and then perform the existing
+source, signature and distribution checks. Expired or ambiguous candidates require
+a fresh build and qualification; do not bypass the checks.
+
+GitHub Releases is for published public versions. The publisher's temporary draft
+is only a publication transaction; it is made visible after verified OTA publication.
+Do not create internal test/qualification releases there. Archive any required
+candidate evidence outside Releases before removing historical drafts. Download
+candidate bytes from Actions for manual qualification rather than `gh release download`.
+Source approval, hardware qualification and exact-byte promotion still apply.
