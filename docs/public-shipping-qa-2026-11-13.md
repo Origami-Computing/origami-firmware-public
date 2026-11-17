@@ -4,6 +4,11 @@ Branch: `fix/public-shipping-acceptance`. Latest `origin/main` fetched and merge
 
 A checked item means the stated verification was completed, not that every possible interaction is proven. Host and device evidence are reported separately. Credentials and raw device logs remain in ignored `.origami/private/`.
 
+For each new release QA pass, record fresh results against that candidate; the
+checked boxes below are historical evidence, not reusable approval. Include the
+[subsequent-run checks](#additional-acceptance-checks-for-subsequent-firmware-runs)
+and the mandatory [photo/video upload-to-agent tests](#photo-and-video-upload-to-agent--every-release-qa-pass).
+
 ## Integration and installation
 - [x] Fetch latest public origin and merge without losing local shipping changes — clean merge.
 - [x] Required architecture and tracked-secret checks. — PASS: architecture guard and Windows tracked-secret scan.
@@ -293,3 +298,44 @@ Added November 15 after investigating motion loss in Tennis and Bowling. Record 
 - [ ] Record fuel-gauge voltage, current, temperature, raw charge percentage and displayed percentage. Unplug and reconnect USB, verify charger/power-good transitions and investigate any unexplained percentage mismatch.
 - [ ] Press A, B and C, rotate the encoder in both directions, visually inspect the display and confirm physical vibration.
 - [ ] For timed shutdown wake and scheduled alarm wake, log the wake cause and verify screen/input response and USB reconnection. Record any manual wake or cable reconnection needed.
+
+## Photo and video upload to agent — every release QA pass
+
+Added November 17 after the main-menu Camera saved JPEGs without enqueueing them.
+Run both cases on the exact release candidate, using the Camera reached through
+Home/main-menu controls. A legacy serial camera command, pre-existing file or
+manually enqueued fixture is not a substitute for this capture flow. Connect the
+device to Wi-Fi and the intended test account; use the same account in the web
+app and agent conversation. Record candidate commit/hash, media filename/ID,
+capture time, queue state, delivery receipt and account-side evidence privately.
+Start these checkboxes unchecked for every candidate and report Pass, Fail or
+Blocked separately for photo and video.
+
+### Photo: capture → local viewer → automatic upload → agent
+
+- [ ] Take a new photo of a distinctive test scene through the normal Camera shutter.
+- [ ] Verify the JPEG is saved on SD, is nonempty and decodes correctly. Open that same photo in Photos and confirm it renders.
+- [ ] Verify automatic admission to the persisted upload queue with the matching file path and capture timestamp when the clock is synchronized. Do not use Photos' manual Upload action to make this test pass.
+- [ ] Leave Camera/Photos or use the normal sync control to release the camera/gallery network reservation. Verify upload completion and a valid server receipt for this photo; an empty queue or HTTP 200 alone is insufficient.
+- [ ] Confirm the matching image loads in both the account's web Timeline and Library, with sensible capture/save times. Confirm it remains viewable on SD after upload.
+- [ ] Ask the connected agent about the newly uploaded photo without supplying its distinctive visual details in the question. Verify it can access the correct image and describe those details. Save the prompt, response and media association as evidence; web visibility alone does not prove agent access.
+
+### Video: record → local playback → automatic upload → agent
+
+- [ ] Record a new short video through the normal Camera controls, with a distinctive action and a recognizable spoken phrase when microphone recording is enabled. Stop normally and verify the finalized, nonempty video on SD.
+- [ ] Play that same clip locally. Verify changing frames through the end, expected duration and intelligible recorded audio when enabled.
+- [ ] Verify automatic admission to the persisted upload queue for the finalized clip. Leave recording/playback or use normal sync, then verify completed transfer/finalization and a valid delivery receipt for the same clip.
+- [ ] Confirm the matching video appears in both the account's web Timeline and Library and plays through with expected picture and audio. Verify the local clip remains playable after upload.
+- [ ] Ask the connected agent about the newly uploaded video without supplying the action or spoken phrase in the question. Verify access to the correct clip and a description of its distinctive action, plus the recorded speech when enabled. Record media association and response evidence separately from upload success.
+- [ ] Repeat recording and exit Camera while recording, using supported navigation. Verify one valid finalized clip, exactly one queue entry and one account item, successful upload and agent access.
+
+### Offline/retry coverage — both media types
+
+- [ ] Capture a fresh photo and video while disconnected. Verify both save locally and remain pending rather than disappearing or claiming successful delivery.
+- [ ] Reboot with those uploads pending, reconnect Wi-Fi, and verify both requests recover from SD and complete without recapturing or manually enqueueing them. Confirm one account item per capture, local-file retention, and agent access after delivery.
+- [ ] If any step fails, record the failing boundary and evidence, fix it, and rerun the affected complete flow on the rebuilt candidate. Mark unavailable account/web/agent verification Blocked, not Pass. Record manual Upload recovery separately; it does not satisfy automatic-upload acceptance.
+
+Host regressions such as `test_cine_service.py`, `test_photo_storage.py`,
+`test_photo_upload_timestamp.py`, `test_video_enqueue.py`, and the video upload
+protocol/queue/transfer suites supplement these live checks; they do not replace
+device capture, web playback or agent-consumption verification.

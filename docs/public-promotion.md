@@ -113,6 +113,7 @@ A private GitHub draft is not automatically an OTA endpoint. After USB qualifica
 
 Record each result against the exact candidate hash:
 
+- Run the [release QA checklist](public-shipping-qa-2026-11-13.md), including fresh [photo and video upload-to-agent tests](public-shipping-qa-2026-11-13.md#photo-and-video-upload-to-agent--every-release-qa-pass). Both media types must pass capture, local viewing/playback, automatic queueing, delivery, Timeline/Library visibility and agent access on this candidate; historical checked results do not qualify a new release.
 - Production key can select and download Public; Private and Staging are rejected by both device policy and server access.
 - Developer key can select Public, Private and Staging. Explicit cross-channel changes work even when a private version number is lower; same-channel rollback rules remain enforced.
 - Missing/invalid keys cannot download restricted firmware. Clear temporary test credentials afterward.

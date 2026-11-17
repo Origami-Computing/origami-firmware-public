@@ -50,7 +50,7 @@ namespace services{namespace camera{class Session{public:
         r"""#pragma once
 #include <stdint.h>
 #include <stddef.h>
-namespace services{namespace photos{struct Target{uint32_t sequence=0;char path[64]={};bool valid()const{return sequence!=0;}};bool initialize();Target prepare();bool write(const Target&,const uint8_t*,size_t);bool write(const Target&,const uint8_t*,size_t,const uint8_t*,size_t);}}
+namespace services{namespace photos{struct Target{uint32_t sequence=0,capturedAtUnix=0;char path[64]={};bool valid()const{return sequence!=0;}};bool initialize();Target prepare();void markCaptured(Target&);bool enqueue(const Target&);bool write(const Target&,const uint8_t*,size_t);bool write(const Target&,const uint8_t*,size_t,const uint8_t*,size_t);}}
 """,
     )
     put(
@@ -69,6 +69,7 @@ namespace services{namespace photos{struct Target{uint32_t sequence=0;char path[
 #include <string>
 int allocations=0,budget=-1;int64_t clockUs=0;bool running=false,reserved=false,held=false,stopBlocked=false,failInit=false,failRead=false,failDecode=false,failWrite=false,failMeta=false,failTelemetry=false,failIsp=false,stale=false,badFrame=false;
 bool fullSize=false;
+unsigned queued=0,marked=0;bool failQueue=false;uint32_t captureTime=1700000001;std::string queuedPath;
 unsigned liveUs=10000,liveGain=32;
 unsigned sequence=0,reads=0,configs=0;hal::camera::CineIspRequest last;std::vector<uint8_t> jpeg={255,216,255,192,0,8,8,6,0,8,0,1,255,217};std::map<std::string,std::vector<uint8_t>> files;
 const char* firmware="v1.0.5";
@@ -79,6 +80,8 @@ bool readJpegShutter(ShutterInfo* p){if(failTelemetry)return false;p->valid=true
 }namespace sd{bool ensureDir(const char*){return true;}bool writeFile(const char* path,const uint8_t* data,size_t n){if(failMeta)return false;files[path].assign(data,data+n);return true;}}}
 namespace services{namespace photos{
 bool initialize(){return true;}Target prepare(){Target t;t.sequence=++sequence;snprintf(t.path,sizeof(t.path),"/photos/IMG_%05u.jpg",sequence);return t;}
+void markCaptured(Target& t){assert(held);++marked;t.capturedAtUnix=captureTime;}
+bool enqueue(const Target& t){assert(!held&&files.count(t.path)&&t.capturedAtUnix==captureTime);++queued;queuedPath=t.path;return !failQueue;}
 bool write(const Target& t,const uint8_t* data,size_t n){if(failWrite)return false;files[t.path].assign(data,data+n);return true;}
 bool write(const Target& t,const uint8_t* data,size_t n,const uint8_t* exif,size_t count){assert(!count||(count>10&&count<=512&&exif[0]==255&&exif[1]==225));embeddedExif.assign(exif,exif+count);return write(t,data,n);}
 }namespace camera{
@@ -122,6 +125,13 @@ int main(){using services::cine_camera::Session;using services::cine_camera::Col
  clockUs+=1000000;std::string overlongVersion(90,'x');firmware=overlongVersion.c_str();assert(c.capture()&&embeddedExif.empty()&&strstr(c.status().message,"metadata failed"));meta=std::string(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"embedded_exif\":false")!=std::string::npos);firmware="v1.0.5";
  clockUs+=1000000;failMeta=true;assert(c.capture()&&strstr(c.status().message,"metadata failed"));failMeta=false;
  clockUs+=1000000;failWrite=true;assert(!c.capture()&&!held&&!c.status().saved);failWrite=false;
+ // Every valid saved still is admitted exactly once, after releasing its frame.
+ // A failed save never queues; queue failure preserves the local photo for retry.
+ clockUs+=1000000;auto beforeQueued=queued;auto beforeMarked=marked;
+ assert(c.capture()&&c.status().queued&&queued==beforeQueued+1&&marked==beforeMarked+1&&queuedPath==c.status().photoPath);
+ clockUs+=1000000;beforeQueued=queued;failWrite=true;assert(!c.capture()&&!c.status().queued&&queued==beforeQueued);failWrite=false;
+ clockUs+=1000000;failQueue=true;assert(c.capture()&&!c.status().queued&&files.count(c.status().photoPath)&&strstr(c.status().message,"not queued"));failQueue=false;
+ clockUs+=1000000;captureTime=0;assert(c.capture()&&queuedPath==c.status().photoPath);
  clockUs+=1000000;auto original=jpeg;jpeg[7]=0;jpeg[8]=240;jpeg[9]=1;jpeg[10]=64;
  failWrite=false;assert(!c.capture()&&!fullSize&&!held);jpeg=original;
  stopBlocked=true;assert(!c.close()&&running&&reserved&&allocations==1);stopBlocked=false;assert(c.close()&&!running&&!reserved&&!allocations);assert(c.close());

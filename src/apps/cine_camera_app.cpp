@@ -138,7 +138,10 @@ void snap() {
   draw(hal::display::canvas());
   hal::display::flush();
   const bool saved = session.capture();
-  feedbackStage = saved ? 5 : 6;
+  const auto& result = session.status();
+  Serial.printf("[camera-photo] saved=%u queued=%u path=%s\n",
+                result.saved, result.queued, result.photoPath);
+  feedbackStage = saved ? (result.queued ? 5 : 8) : 6;
   feedbackAt = millis();
   invalidate();
   draw(hal::display::canvas());
@@ -292,6 +295,7 @@ void build(ui::scene::Scene &view, int16_t w, int16_t h) {
                     feedbackStage == 1   ? "CAPTURE"
                     : feedbackStage == 7 ? "VIDEO SAVED"
                     : feedbackStage == 5 ? "PHOTO SAVED"
+                    : feedbackStage == 8 ? "SAVED / NOT QUEUED"
                                          : "SAVE FAILED",
                     0xffff, 0, 1);
     return;

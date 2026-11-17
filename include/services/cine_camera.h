@@ -7,7 +7,7 @@ namespace camera { class VideoRecording; }
 namespace cine_camera {
 using ColorMode = core::cine::ColorMode;
 struct Status {
-  bool open = false, saved = false, previewInterrupted = false;
+  bool open = false, saved = false, queued = false, previewInterrupted = false;
   uint32_t sequence = 0;
   char message[80] = {}, photoPath[64] = {}, metadataPath[64] = {};
 };
