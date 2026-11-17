@@ -1,11 +1,11 @@
 {
   "approved": true,
-  "reviewed_tree_sha256": "8f7a303ea7a16551cfc5373d0c21a7479ec88086cee0e627581254618a184475",
-  "approved_by": "Publication requested by the device operator. Codex verified the signed image on hardware, the reviewed source digest and distribution archive, and the unchanged license and security-contact files.",
+  "reviewed_tree_sha256": "e09eea5d902c0aeed24ad7c9f87022b9a20239e8cb99312f5a235088fc0d65a3",
+  "approved_by": "Device operator requested publication. Codex checked the public port, retained MIT and CC BY-SA component notices, distribution archive and signed rev-4 hardware candidate.",
   "source_review_complete": true,
   "license_review_complete": true,
   "security_contact_ready": true,
   "artwork_font_ownership_confirmed": true,
   "ownership_confirmation_date": "2026-10-21",
-  "qualification": "Signed v1.0.11-public-review.1 matched source 5d75c14ad9fc22a8a652a6779c991fa981e9753c and firmware SHA-256 486f39a4a51ca496b93734c302fedd2d7c186f74b53fd6b2f285d1cc9f11b45c. USB flash verification and boot of the matching official v1.0.11 ELF passed on rev-4 N16R8. The Settings replay, default Resume, wheel selection and confirmed exit to Home passed. Both popup selections matched their approved framebuffer pixels. The device retained onboarding completion."
+  "qualification": "Signed v1.0.12-public-review.1 from 877f712b9e61c1a3208038024c609c2577347219, firmware SHA-256 dcd665f09dfe1f8d4b993799632d9830b6afafa4a209ffc43307596758ea5e93. On COM56 the installed bytes and running ELF matched, and partition metadata was preserved. Tests exercised manual and automatic full-resolution stills, microphone-on 480p and silent 720p clips, Photos display and playback to EOF, recorder capture, and read-only Public OTA selection. Two playback tests measured [25091, 24464] microseconds per panel refresh, with zero reported missed sync pulses over 80 profiled presentations. Panel timing was instrumented; physical visual and listening acceptance are separate."
 }
