@@ -88,12 +88,13 @@ void chrome(C &c, const char *color, const char *shutter, unsigned phase, bool c
                         : stage == 3 || stage == 4 ? "SAVING"
                         : stage == 5               ? "SAVED"
                         : stage == 6               ? "SAVE FAILED"
+                        : stage == 8               ? "SAVED / NOT QUEUED"
                                                    : "B: PHOTO / HOLD: VIDEO";
   // Backing goes first so the shared capture caption is drawn only once.
   backdrop(c, 52, 197, int(strlen(caption)) * 6 + 8, 18, 128);
   camera_photographer::overlays(c, phase, false, false, false);
   settingsIcon(c);
-  if (!stage)
+  if (!stage || stage == 8)
     pixel_text::text(c, caption, 56, 202, 1, 0xffff);
   if (!showControls)
     return;

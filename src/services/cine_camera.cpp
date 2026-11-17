@@ -172,6 +172,7 @@ void Session::adjustShutter(int delta) {
   configureExposure(ExposureMode::Manual, core::cine::shutterSpeedsUs[next], shutter_.gainQ4);
 }
 bool Session::capture() {
+  status_.saved = status_.queued = false;
   if (!status_.open)
     return false;
   const uint64_t started = esp_timer_get_time();
@@ -227,6 +228,7 @@ bool Session::saveStill() {
     snprintf(status_.message, sizeof(status_.message), "Fresh sensor frame unavailable");
     return false;
   }
+  photos::markCaptured(target);
   const bool sampleValid = autoExposure() ? refreshExposure() : shutter_.valid;
   const auto exposure = sampleValid ? shutter_ : hal::camera::ShutterInfo{};
   uint8_t exif[core::cine::exifCapacity];
@@ -239,6 +241,9 @@ bool Session::saveStill() {
       photos::write(target, frame.buf, frame.len, exif, exifBytes);
   camera_.returnFrame();
   status_.saved = ok;
+  // Persist the upload request only after the JPEG is saved and the sensor
+  // frame is returned. The camera reservation defers network work until exit.
+  status_.queued = ok && photos::enqueue(target);
   snprintf(status_.photoPath, sizeof(status_.photoPath), "%s", target.path);
   snprintf(status_.metadataPath, sizeof(status_.metadataPath), "/cine/SHOT_%05lu.json",
            (unsigned long)status_.sequence);
@@ -269,7 +274,8 @@ bool Session::saveStill() {
       n > 0 && size_t(n) < sizeof(metadata) &&
       hal::sd::writeFile(status_.metadataPath, reinterpret_cast<const uint8_t *>(metadata), n);
   snprintf(status_.message, sizeof(status_.message),
-           ok ? (metadataOk && exifBytes ? "Photo saved" : "Photo saved; metadata failed")
+           ok ? (!status_.queued ? "Photo saved; not queued. Retry in Photos"
+                 : metadataOk && exifBytes ? "Photo saved" : "Photo saved; metadata failed")
               : "Save failed; partial files retained");
   return ok;
 }
