@@ -45,39 +45,108 @@ There is **one release ZIP**. GitHub's additional “Source code (zip)” and �
 
 ## Where firmware and custom apps live
 
-The device has **16 MiB of flash** for persistent storage, **8 MiB of PSRAM** for working memory, and an SD card for media and apps. PSRAM is cleared on power-off; it is not extra storage.
+```mermaid
+flowchart TB
+    subgraph flash["16 MiB flash · persistent storage · not to scale"]
+        direction TB
+        boot["0x000000 · Bootloader + partition table"]
+        settings["0x009000 · Settings: 20 KiB<br/>0x00E000 · Boot selection: 8 KiB"]
+        slotA["0x010000 · Firmware slot A<br/>6 MiB · one complete kamiOS image"]
+        slotB["0x610000 · Firmware slot B<br/>6 MiB · one complete kamiOS image"]
+        system["0xC10000 · Crash data: 64 KiB<br/>0xC20000 · Shipping state: 12 KiB"]
+        spare["0xC23000–0xFFFFFF · Unallocated<br/>Optional app storage can use 0xC30000 onward"]
+        boot --- settings --- slotA --- slotB --- system --- spare
+    end
+    classDef firmware fill:#dbeafe,stroke:#2563eb,color:#172554
+    classDef unused fill:#f1f5f9,stroke:#64748b,color:#0f172a,stroke-dasharray:5 5
+    class slotA,slotB firmware
+    class spare unused
+```
 
-| Flash area | Purpose |
+**Either firmware slot can be active.** The other is the OTA download target—not custom-app storage. [Partition source](partitions_ota_n16r8.csv).
+
+| Storage | What lives here | Survives power-off? |
+| --- | --- | --- |
+| Flash | Firmware, settings and system state | Yes |
+| SD card | Photos, video, recordings, Lua widgets; native apps when app flash is absent | Yes |
+| 8 MiB PSRAM | Working memory for running code, images and buffers | No |
+
+| Custom app type | Installation and limits |
 | --- | --- |
-| Firmware slot A — 6 MiB | One complete kamiOS image. |
-| Firmware slot B — 6 MiB | A second image, so an update can be written without overwriting the running firmware. |
-| Settings and system areas | Wi-Fi/settings, boot selection, crash information and shipping state. |
-| Optional custom-app area — about 3.8 MiB | Separate persistent storage for native apps, **only on devices provisioned with the compatible `customapps` partition**. |
-
-The [current partition table](partitions_ota_n16r8.csv) does **not** declare that optional app partition. The storage code supports it at `0xC30000` with size `0x3D0000`, but unused flash is not automatically an app filesystem. Native App Store downloads fall back to SD storage when that partition is absent. Enabling it needs a separately verified partition migration; installing a firmware update alone does not create it.
-
-Custom apps do not consume the spare OTA slot. Lua widgets run from SD without rebuilding kamiOS. Signed native apps install separately through App Store and load into memory when opened; their ELF payload is currently limited to 512 KiB, with actual execution also limited by available memory and API compatibility. Adding C++ directly to the firmware is different: it increases the OS image, which must fit inside one 6 MiB slot. Photos, recordings and videos stay on SD.
+| Lua widget | Runs from SD; no firmware rebuild. |
+| Signed native app | Installed through App Store; ELF payload up to 512 KiB, subject to available memory and API compatibility. |
+| C++ built into kamiOS | Requires a firmware build; the complete OS must fit one 6 MiB slot. |
+| Optional native-app flash | About 3.8 MiB at `0xC30000` (`0x3D0000` bytes). **Not enabled by the current partition table.** Needs a verified partition migration; OTA alone does not create it. |
 
 ## How OTA works
 
-1. The device fetches update information over HTTPS and checks the signed manifest, version, expected image hash, hardware and partition-layout compatibility.
-2. After you confirm, it downloads the image into the inactive firmware slot. The currently running image stays intact during the download.
-3. The downloaded bytes are checked against the signed hash. Only a successfully validated image is selected for the next boot. The device then restarts into the update.
+```mermaid
+flowchart TD
+    check["Check for updates over HTTPS"] --> manifest{"Signed manifest valid?<br/>Version, hardware and layout compatible?"}
+    manifest -- No --> stop["Stop · keep current firmware"]
+    manifest -- Yes --> confirm{"You confirm installation?"}
+    confirm -- No --> stop
+    confirm -- Yes --> download["Write download to inactive slot<br/>Running slot stays intact"]
+    download --> verify{"Complete image passes<br/>hash and image validation?"}
+    verify -- No --> stop
+    verify -- Yes --> select["Select verified slot for next boot"]
+    select --> reboot["Restart into updated kamiOS"]
+```
 
-A normal OTA update replaces firmware only. It preserves settings, SD files and a separately provisioned custom-app partition; it does not resize partitions or install a bootloader. Keeping two images does not guarantee automatic recovery from every failure after reboot—recovery also depends on the installed bootloader and device state.
+| Normal OTA changes | Normal OTA preserves |
+| --- | --- |
+| Inactive firmware image; next-boot selection after validation | Settings, SD files, any existing custom-app partition, bootloader and partition layout |
 
-Public firmware updates since v1.0.5 need no OTA enrollment key. Private and Staging channels retain developer authorization. Backend account setup is separate from permission to download an OS update.
+| Update channel | Access |
+| --- | --- |
+| Public, since v1.0.5 | No OTA enrollment key needed. |
+| Private / Staging | Developer authorization required. |
+
+Backend account setup is separate. Two slots do not guarantee automatic recovery after a bad boot; recovery depends on the installed bootloader and device state.
 
 ## If you need to flash over USB
 
-Use USB for development or recovery when the normal updater cannot be used. **Do not write `firmware.bin` at address zero or erase the whole device.** It contains the OS application, not the bootloader, partition table or factory configuration.
+**Never write `firmware.bin` at address zero or erase the whole device.** It is an application image, not a factory installer.
 
-1. Confirm the board is rev-4 ESP32-S3 N16R8 and inspect its installed partition table and selected boot slot. Do not guess the slot from the filename.
-2. Back up the device privately, including settings and partition/boot information. Close other serial monitors and keep power stable.
-3. Verify the download hash and write only the application image to the confirmed compatible application slot. The standard slot addresses are `0x10000` and `0x610000`; which one to use depends on the device's boot selection. Preserve all other flash regions.
-4. Verify the written bytes, reboot, and confirm the version, settings, SD access and the affected features.
+| Situation | Use |
+| --- | --- |
+| Working device, normal upgrade | On-device **Update Firmware**. |
+| Development or recovery, compatible layout intact | USB application-only flashing into the confirmed boot slot. |
+| Blank device or damaged partition table | Matching factory/recovery package and provisioning procedure; this release ZIP is insufficient. |
 
-A blank device or a damaged partition table needs a matching recovery/factory package and provisioning procedure; this release bundle is not sufficient. See [installation and recovery](docs/installation.md) before writing anything. The included SD artwork lives in `sd_flash/` in the source companion.
+| USB step | Required check |
+| --- | --- |
+| 1. Identify | Rev-4 ESP32-S3 N16R8; inspect the installed partition table and boot selection. |
+| 2. Preserve | Private backup of settings and boot/partition data; one serial connection; stable power. |
+| 3. Write | Verify the download hash. Write only the confirmed application slot: normally `0x10000` or `0x610000`, **never a guessed address**. |
+| 4. Verify | Check written bytes, reboot, and confirm version, settings, SD access and affected features. |
+
+Read [installation and recovery](docs/installation.md) first. SD artwork is under `sd_flash/` in the source companion.
+
+## Architecture at a glance
+
+```mermaid
+flowchart TD
+    app["Apps + navigation<br/>User workflows and lifecycle"]
+    view["Screens + shared UI<br/>Views, layout and drawing"]
+    service["Services<br/>Camera, audio, network and OTA sessions"]
+    core["Core<br/>Models, parsers and algorithms"]
+    hal["HAL<br/>Devices, buses and hardware policy"]
+    app --> view
+    app --> service
+    service --> core
+    service --> hal
+    view --> hal
+```
+
+| Owner | Keeps responsibility for |
+| --- | --- |
+| App | What the user is doing and how long the workflow lasts. |
+| Screen / UI | What is shown and how it is drawn. |
+| Service | Starting, cancelling and cleaning up operations. |
+| Core / HAL | Reusable logic / controlled access to hardware. |
+
+[Architecture details](docs/architecture.md) cover lifecycle, resource ownership and OTA handoff.
 
 ## Explore
 
