@@ -150,7 +150,7 @@ The approval file itself is excluded from that digest so the approval-only commi
 
 Run **Publish approved public firmware** on `main` with stable tag `v1.0.0` and the qualified candidate tag. It verifies the candidate and promotes the same firmware bytes, rather than rebuilding after hardware qualification. It creates the release draft, publishes/verifies the Public OTA bytes, then makes the release visible within the repository's current visibility. An AWS failure can leave a draft or staged objects; inspect before retrying. Never overwrite an already published version with different bytes.
 
-Check the release page contains the application binary, source companion, notices and checksums. Confirm the downloaded GitHub binary and authenticated OTA binary match the approved hash. Confirm the live signed channel pointer and actual device upgrade. Tag creation or an Actions success badge alone is insufficient.
+Check the release page has exactly two uploaded assets: `firmware.bin` and `kamiOS-vX.Y.Z.zip`. The ZIP retains the verified candidate files unchanged, including the corresponding source, notices, signed candidate manifest and checksums, plus the release notes and cumulative log. GitHub adds source snapshot links automatically; these are not installation bundles. Confirm the downloaded GitHub binary and authenticated OTA binary match the approved hash. Confirm the live signed channel pointer and actual device upgrade. Tag creation or an Actions success badge alone is insufficient.
 
 ## 8. First public visibility change
 
@@ -202,3 +202,26 @@ Main protection/security reporting verification:
 Visibility approval and signed-out verification:
 Remaining blockers and owners:
 ```
+
+## Required release log and download presentation
+
+Before qualification, add the version's concise entry to [CHANGELOG.md](../CHANGELOG.md)
+and follow the [contribution requirements](../CONTRIBUTING.md#release-notes-are-part-of-a-production-promotion).
+The baseline must be the latest published public version, not the previous private
+build or the original feature introduction. Review the full public diff for coverage.
+The publisher refuses missing, placeholder or mismatched notes and a stale baseline.
+
+Release notes lead with changes and two download choices. Source identity and the
+firmware hash are tucked into expandable build details. The publisher verifies the
+candidate and distribution archive before wrapping the unchanged candidate assets
+in one ZIP; no firmware is rebuilt and signing/admission rules remain unchanged.
+Candidate-review drafts retain their individual diagnostic files. The signed
+`latest.json` inside the ZIP is the original candidate evidence; devices use the
+live channel manifest, not this archived copy, for normal updates.
+
+These tooling/documentation changes invalidate an old source approval just like
+other tracked changes. Do not reuse v1.0.12's approval or claim a new candidate has
+been qualified. Prepare a new version and candidate through the existing process.
+Previously published releases are not rewritten by the workflow. Any historical
+notes or asset migration must preserve their firmware and source provenance and
+be handled explicitly; this change does not delete old download URLs.

@@ -8,7 +8,7 @@ Copy `sd_flash/eyes/` and `sd_flash/boot/` into the root of an existing FAT32 ca
 
 ## Existing provisioned device
 
-Use the existing on-device production update flow when an update is offered. An OTA access key remains separately provisioned; downloading the public application does not grant backend or OTA access. Do not publish keys to make setup easier.
+Use **Update Firmware** on the device and confirm the offered Public update. Public firmware since v1.0.5 needs no OTA enrollment key; Private and Staging remain restricted. Backend registration is separate. An application update preserves the existing partition layout, settings and SD files. See the [flash and update guide](../README.md#how-ota-works).
 
 ## USB recovery and new hardware
 
