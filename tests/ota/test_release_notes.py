@@ -10,10 +10,17 @@ ROOT = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('release_notes', ROOT/'tools/release_notes.py')
 notes = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(notes)
-LOG = '# Release log\n\n## v1.0.12\n\nChanges since v1.0.11.\n\n- Fix gallery navigation when reaching the final photo.\n'
+LOG = '# Release log\n\n## v1.0.12\n\nPublished: 2026-11-17 (UTC).\n\nChanges since v1.0.11.\n\n- Fix gallery navigation when reaching the final photo.\n'
 
 
 class ReleaseNotesTests(unittest.TestCase):
+    def test_publication_date_required_and_valid(self):
+        for value in ['', 'Published: 2026-02-30 (UTC).', 'Published: yesterday (UTC).']:
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                notes.release_entry(LOG.replace('Published: 2026-11-17 (UTC).', value), 'v1.0.12')
+        rendered = notes.render(LOG, 'v1.0.12', dict(version='v1.0.12', source_commit='a'*40, firmware_sha256='b'*64))
+        self.assertIn('Published: 2026-11-17 (UTC).', rendered)
+
     def test_baseline_and_exact_version(self):
         body, baseline = notes.release_entry(LOG, 'v1.0.12', 'v1.0.11')
         self.assertEqual(baseline, 'v1.0.11')
