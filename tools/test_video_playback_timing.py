@@ -17,7 +17,7 @@ code=r'''
 #include <vector>
 uint32_t prefetchSlots=3;
 uint32_t clockMs=0;uint32_t millis(){return clockMs;}
-namespace hal {namespace display {void exitOptimizedRender(){}void enterOptimizedRender(){}void markAllDirty(){}}}
+namespace hal {namespace display {void exitOptimizedRender(){}void enterOptimizedRender(bool){}void markAllDirty(){}}}
 struct TFT_eSprite {}; int app=0; const void* activeApp=nullptr;
 struct NavHandler {const void* top(){return activeApp;}static NavHandler& instance(){static NavHandler n;return n;}void runtimePolicyChanged(){}};
 namespace services {namespace video {

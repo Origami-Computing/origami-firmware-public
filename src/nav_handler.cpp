@@ -262,6 +262,10 @@ void NavHandler::dispatch(hal::input::InputEvent ev) {
     } trace(ev);
 
     if(ev.type==ET::PowerSleep) {
+        // Only the visible app may consume a hold; system controls take priority.
+        App* visible = top();
+        if (!systemScreen_ && !services::automation::wantsInputCapture() &&
+            visible && visible->onPowerHold && visible->onPowerHold()) return;
         // Alerts retain their snooze/dismiss controls; do not interrupt an update.
         if(!services::automation::wantsInputCapture() && runtimePolicy().allowPowerSleep) {
             Serial.printf("[power-control] C held %lums -> sleep\n",(unsigned long)core::power_button::kHoldMs);

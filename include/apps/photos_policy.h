@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 
 namespace apps {
 namespace photos {
@@ -13,6 +14,13 @@ constexpr Action actionAt(int row, bool video) {
     return video ? (row <= 0 ? Action::Upload : row == 1 ? Action::Delete : Action::Escape)
                  : (row <= 0 ? Action::Delete : Action::Escape);
 }
+
+inline int moveIndex(int index, int delta, int count) {
+    if (count <= 0) return 0;
+    const int64_t next = (int64_t(index) + delta) % count;
+    return int(next < 0 ? next + count : next);
+}
+
 
 constexpr Action moveAction(Action current, int delta, bool video = false) {
     return actionAt(actionRow(current, video) + (delta < 0 ? -1 : delta > 0 ? 1 : 0), video);

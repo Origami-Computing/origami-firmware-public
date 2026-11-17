@@ -26,3 +26,40 @@ The commercial MP3, source design studies, vendor font-generation tool assets an
 The resolved build inventory is in `third_party/dependencies.json`; available library-level license files are retained under `third_party/licenses/`. WebSockets 2.7.3 declares LGPL-2.1. Review its binary-distribution obligations and the full Arduino/SDK dependency closure before publishing any application binary. Missing notice files or manifest license fields are unresolved evidence gaps, not permission to redistribute.
 
 Arduino-ESP32 also declares LGPL-2.1-or-later. The STM32duino LSM6DSL source permission header is now retained. See `docs/distribution.md` for the source/relink approach and the remaining precompiled SDK evidence gap.
+
+# Cine camera
+
+The camera and gallery improvements incorporate code from thesephist/kami-os,
+commit 18a67eea, under the license below.
+
+MIT License
+
+Copyright (c) 2026 Origami Firmware contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Cine Gold and Portra matrix data
+
+The fitted Gold/Portra data in `include/core/cine_film_matrices.h` derives from
+**spektrafilm by Andrea Volpato**, https://github.com/andreavolpato/spektrafilm,
+commit `3bb2c2d2801ff68b92019cf1dbcbb133d60832bc`. This data remains
+**CC BY-SA 4.0** and is excluded from the repository's default MIT grant.
+See [the unmodified upstream license](third_party/licenses/spektrafilm/SPEKTRAFILM_LICENSE.txt)
+and [modification record](third_party/licenses/spektrafilm/CHANGELOG.txt).
+The firmware uses fitted matrix constants; it does not include the simulator code.

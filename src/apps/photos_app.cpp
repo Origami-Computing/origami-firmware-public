@@ -1,15 +1,15 @@
 /**
  * @file photos_app.cpp
- * @brief Photos — browse JPEG photos and AVI videos together on SD card.
+ * @brief Photos â€” browse JPEG photos and AVI videos together on SD card.
  *
  * The photo-library service scans JPEGs in /photos on enter and owns browsing
  * reservations, sync handoff and local-delete/upload ordering. Camera captures
  * are newest first by ID;
  * other files follow by SD modification time/name. Rotary scrolls the gallery.
  *
- * All JPEG decoding and scaling is handled by hal::display::drawJpegFileScaled(),
- * which writes into the canvas sprite via the normal canvas pipeline.
- * All UI chrome uses ui::scene::Builder — no direct TFT calls in this file.
+ * PhotoPreview reduces still images into the canvas. Video thumbnails and playback
+ * use the video services. Cover and exit free the gallery decoder workspace.
+ * All UI chrome uses ui::scene::Builder â€” no direct TFT calls in this file.
  */
 
 #include "apps/photos_app.h"
@@ -27,6 +27,7 @@
 #include "config/ui_layout.h"
 #include "config/ui_theme.h"
 #include "hal/hal_display.h"
+#include "hal/hal_photo_preview.h"
 #include "hal/hal_input.h"
 #include "nav_handler.h"
 #include "scene/screen.h"
@@ -55,6 +56,7 @@ static services::photos::Library s_library;
 static services::video::Thumbnail s_thumbnail;
 static int s_thumbnailIndex=-1;
 static char s_resumePath[272]{};
+static hal::display::PhotoPreview s_preview;
 static bool s_lastRendered = false;
 static uint32_t s_lastPixels = 0;
 static unsigned s_lastNonblack = 0;
@@ -326,12 +328,12 @@ static void onDraw(TFT_eSprite& canvas) {
     scene.render(canvas);
     scene.clear();
 
-    // Decode and scale JPEG into canvas — all low-level work in the HAL
+    // Decode and scale JPEG into canvas â€” all low-level work in the HAL
     const char* path = s_library[s_idx].path;
     const bool video=s_library[s_idx].video;
     const bool rendered = video
         ? s_thumbnailIndex==s_idx && hal::display::drawJpegBufferScaled(s_thumbnail.data(),s_thumbnail.size(),0,kSystemStatusBarH,W,cH-22)
-        : hal::display::drawJpegFileScaled(path, 0, kSystemStatusBarH, W, cH - 22);
+        : s_preview.draw(path,0,kSystemStatusBarH,W,cH-22);
     if (!rendered) b.statusLine("photos.read_error", video && s_thumbnailIndex!=s_idx ? "Loading preview..." : "Cannot open media", kUiFg);
 
     // A sparse canvas fingerprint makes blank/stale gallery renders testable over serial.
@@ -397,6 +399,7 @@ static void activateGallery() {
 }
 
 static void exitApp() {
+    s_preview.close();
     s_browsePending = false;
     s_actionsOpen = false;
     s_thumbnail.clear();s_thumbnailIndex=-1;
@@ -514,9 +517,7 @@ static void onInput(hal::input::InputEvent ev) {
 
     if (ev.type == ET::Scroll && ev.delta != 0) {
         const int prev = s_idx;
-        s_idx += ev.delta;
-        if (s_idx < 0)        s_idx = 0;
-        if (s_idx >= s_count) s_idx = s_count - 1;
+        s_idx = policy::moveIndex(s_idx, ev.delta, s_count);
         if (s_idx != prev) {
             s_needRender = true;
             s_needPhotoRender = true;

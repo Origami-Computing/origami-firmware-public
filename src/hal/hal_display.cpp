@@ -26,6 +26,10 @@ static unsigned s_brightnessPercent = 100;
 static bool s_frozen = false;
 static bool s_pinsReady = false;
 
+// FRCTRL2 values for the normal UI and full-width portrait video transfers.
+static constexpr uint8_t kUiFrameRate = 0x13;     // nominal 53 Hz
+static constexpr uint8_t kVideoFrameRate = 0x1f;  // nominal 39 Hz
+static bool s_videoScan = false;
 static volatile bool s_vsyncFlag = false;
 static volatile uint32_t s_teEdgeCount = 0;
 
@@ -129,7 +133,8 @@ bool init() {
   // FRCTR2 = 0x13 (~53Hz) — slows panel scan so full-frame SPI push
   // completes before the scan catches up.
   s_tft.writecommand(0xC6);
-  s_tft.writedata(0x13);
+  s_tft.writedata(kUiFrameRate);
+  s_videoScan = false;
 
   // TE (tearing effect) output on ST7789 — pulses HIGH during vblank.
   s_tft.writecommand(0x35);
@@ -229,8 +234,15 @@ void setCanvasRedirect(bool on) {
 
 static volatile bool s_optimizedRender = false;
 
-void enterOptimizedRender() {
+void enterOptimizedRender(bool videoPlayback) {
   hal::bus::lockSpi();
+  if (videoPlayback && !s_videoScan) {
+    // The final portrait rows are the landscape left edge. Give the panel
+    // writer time to reach those rows before scanout reaches them.
+    s_tft.writecommand(0xC6);
+    s_tft.writedata(kVideoFrameRate);
+    s_videoScan = true;
+  }
   if (s_optimizedRender) {
     hal::bus::unlockSpi();
     return;
@@ -246,6 +258,11 @@ void exitOptimizedRender() {
   if (!s_optimizedRender) {
     hal::bus::unlockSpi();
     return;
+  }
+  if (s_videoScan) {
+    s_tft.writecommand(0xC6);
+    s_tft.writedata(kUiFrameRate);
+    s_videoScan = false;
   }
   s_optimizedRender = false;
   s_canvasRedirect = true;
@@ -384,10 +401,11 @@ void fixColorInversion() {
 bool waitForVSync() {
   s_vsyncFlag = false;
   const uint32_t t0 = micros();
+  const uint32_t timeoutUs = s_videoScan ? 30000 : 22000;
   while (!s_vsyncFlag) {
     // FRCTR2 targets roughly 53 Hz (18.9 ms). The former 18 ms timeout could
     // expire immediately before a valid TE edge, defeating synchronization.
-    if (micros() - t0 > 22000) return false;
+    if (micros() - t0 > timeoutUs) return false;
   }
   s_vsyncFlag = false;
   return true;

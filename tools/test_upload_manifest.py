@@ -88,6 +88,9 @@ int main(){
  char path[96]{};shortWrite=true;assert(reserve.generatePath("IMG",".jpg",path,sizeof(path))==0&&path[0]=='\0');
  shortWrite=false;assert(reserve.generatePath("IMG",".jpg",path,sizeof(path))==165);assert(strstr(path,"IMG_00165.jpg"));
  UploadQueue reserved;assert(reserved.loadManifestUnlocked()&&reserved.m_nextImgId==166);
+ assert(reserved.generatePath("VID_C",".avi",path,sizeof(path))==166 && strstr(path,"VID_C_00166.avi"));
+ UploadQueue nextBoot;assert(nextBoot.loadManifestUnlocked());
+ assert(nextBoot.generatePath("IMG",".jpg",path,sizeof(path))==167);
  resetFaults();disk.clear();strcpy(item.type,"video");item.deleteAfterUpload=true;disk[item.filePath]="media";
  assert(q.saveManifestUnlocked());UploadQueue videoBoot;assert(videoBoot.loadManifestUnlocked());
  assert(videoBoot.m_count==1&&!videoBoot.m_items[0].deleteAfterUpload);

@@ -70,6 +70,8 @@ struct Tuning {
   /** Auto exposure / auto gain. Forcing values manually here makes 90% of "weird color" reports. */
   bool exposure_ctrl = true;
   bool gain_ctrl     = true;
+  // Keep two full-size JPEG buffers for live preview and still-size transitions.
+  bool continuousStillPreview = false;
   // OV3660 night-mode AEC can extend frame intervals in low light. Video
   // preview may disable it without disabling automatic exposure/gain. Other
   // sensors retain their existing AEC2 behavior; this is not a frame-rate cap.
@@ -152,6 +154,23 @@ bool triggerAutofocus(uint32_t timeoutMs = 5000);
 // Deinitialize camera (releases resources, powers down)
 void deinit();
 
+// UI-task JPEG exposure and fixed Cine ISP profile; no resolution/clock changes.
+struct ShutterInfo {bool valid=false,manual=false;uint32_t requestedUs=0,actualUs=0,ticks=0,clockHz=0,frameUs=0;uint16_t gainQ4=0,hts=0,vts=0;};
+struct CineIspRequest {
+  uint32_t shutterUs = 16667;
+  uint16_t gainQ4 = 16;
+  uint8_t colorMode = 0;
+  bool autoExposure = false;
+  uint16_t autoVts = 0;
+};
+struct CineIspReadback {bool valid=false;uint8_t gamma[16]={},cmx[11]={},flags[2]={};uint16_t wb[3]={};uint8_t colorMode=0;ShutterInfo shutter;};
+// Selected Cine ISP color profile and exposure. Finite register allowlist, rollback on
+// write/readback failure. Caller must own the camera with no outstanding loan.
+bool configureCineIsp(const CineIspRequest& request,CineIspReadback* output);
+// Switch sensor output within an existing full-resolution JPEG DMA allocation.
+bool setStillPreviewSize(bool fullResolution);
+// Read live JPEG exposure registers without changing AE/AGC or camera tuning.
+bool readJpegShutter(ShutterInfo* output);
 // Get next frame. Returns true and fills *out; caller must call returnFrame() when done.
 bool getFrame(CameraFrame* out);
 

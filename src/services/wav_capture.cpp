@@ -2,6 +2,7 @@
 #include "core/usage_events.h"
 #include "core/recording_files.h"
 #include "hal/hal_audio.h"
+#include "hal/hal_sd.h"
 
 namespace services { namespace audio {
 
@@ -17,6 +18,10 @@ WavCapture::StartResult WavCapture::begin(const char* directory, const char* pre
         return StartResult::PeripheralBusy;
     if (reserved == services::background_network::PeripheralReservation::Result::AgentBusy)
         return StartResult::AgentBusy;
+    if (!hal::sd::ensureMediaMounted()) {
+        reservation_.release();
+        return StartResult::FileUnavailable;
+    }
     hal::audio::hardwareReset();
     const bool codec = hal::audio::initCodec(0x18);
     const bool configured = codec && hal::audio::configureForRecording();

@@ -3,6 +3,7 @@
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 // Arduino 2.0.17 ships esp32-camera as a precompiled SDK archive. Keep this
@@ -72,6 +73,7 @@ extern "C" bool __wrap_ll_cam_dma_sizes(void* camera) {
     return ok;
   }
 #endif
+
   if (!s_internalJpeg) return ok;
 
   DmaGeometry dma;

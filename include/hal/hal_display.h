@@ -60,7 +60,7 @@ void setCanvasRedirect(bool on);
  *                          rotation 3 for existing direct pixel-region draws.
  * exitOptimizedRender()  — restores canvas pipeline + marks full frame dirty.
  */
-void enterOptimizedRender();
+void enterOptimizedRender(bool videoPlayback = false);
 void exitOptimizedRender();
 bool isOptimizedRender();
 

@@ -1,12 +1,14 @@
 #include "services/photo_storage.h"
 #include "services/uploads.h"
 #include "hal/hal_sd.h"
+#include "core/cine_exif.h"
 #include "core/board_time.h"
 #include <stdio.h>
 #include <string.h>
 
 namespace services { namespace photos {
 bool initialize() {
+    if (!hal::sd::ensureMediaMounted()) return false;
     (void)uploads::ensureInit();
     return hal::sd::ensureDir("/photos");
 }
@@ -28,6 +30,20 @@ void markCaptured(Target& target) {
 bool write(const Target& target, const uint8_t* jpeg, size_t length) {
     if (!target.valid()) return false;
     const bool saved = hal::sd::writeFile(target.path, jpeg, length);
+    if (!saved) hal::sd::removeFile(target.path);
+    return saved;
+}
+bool write(const Target& target, const uint8_t* jpeg, size_t length,
+           const uint8_t* exif, size_t exifLength) {
+    if (!exifLength) return write(target, jpeg, length);
+    const size_t offset = core::cine::exifInsertionOffset(jpeg, length);
+    if (!target.valid() || !offset || !exif || exifLength < 10 ||
+        exifLength > core::cine::exifCapacity || exif[0] != 0xff || exif[1] != 0xe1 ||
+        ((size_t(exif[2]) << 8) | exif[3]) != exifLength - 2 ||
+        memcmp(exif + 4, "Exif\0\0", 6)) return false;
+    const hal::sd::FilePart parts[] = {{jpeg, offset}, {exif, exifLength},
+                                     {jpeg + offset, length - offset}};
+    const bool saved = hal::sd::writeFileParts(target.path, parts, 3);
     if (!saved) hal::sd::removeFile(target.path);
     return saved;
 }

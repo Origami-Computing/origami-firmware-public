@@ -192,7 +192,7 @@ int main(int argc,char** argv){
  assert(r.begin(640,480));waitFor(r,State::Recording);blockWrites=true;
  assert(r.dropped()==0&&r.submissionStats().accepted==0&&r.submissionStats().maxQueued==0);
  std::vector<std::vector<uint8_t>> queued;
- for(unsigned i=0;i<6;++i){
+ for(unsigned i=0;i<32;++i){
   auto borrowed=marked(uint8_t(i));queued.push_back(borrowed);
   assert(r.submit(borrowed.data(),borrowed.size(),i*33));
   std::fill(borrowed.begin(),borrowed.end(),0); // Producer may immediately reuse its input.
@@ -203,17 +203,35 @@ int main(int argc,char** argv){
  // The size check must precede access to the deliberately tiny borrowed array.
  assert(!r.submit(invalid,core::avi::kJpegFrameBytes+1,600));
  const auto stats=r.submissionStats();
- assert(stats.accepted==6&&stats.queueFull==1&&stats.invalid==3&&stats.oversized==1&&stats.maxQueued==6);
+ assert(stats.accepted==32&&stats.queueFull==1&&stats.invalid==3&&stats.oversized==1&&stats.maxQueued==32);
  assert(r.dropped()==5);
- r.stop();assert(!r.submit(jpeg.data(),jpeg.size(),800));blockWrites=false;r.close();join();assert(r.state()==State::Saved&&r.frames()==6&&!allocations);
- assert(r.dropped()==5&&r.submissionStats().accepted==6);
+ r.stop();assert(!r.submit(jpeg.data(),jpeg.size(),800));blockWrites=false;r.close();join();assert(r.state()==State::Saved&&r.frames()==32&&!allocations);
+ assert(r.dropped()==5&&r.submissionStats().accepted==32);
  const auto& drained=files.at(r.path());size_t at=core::avi::kHeaderBytes;
  for(const auto& expected:queued){
   assert(!memcmp(drained.data()+at,"00dc",4)&&u32(drained,at+4)==expected.size());
   assert(!memcmp(drained.data()+at+8,expected.data(),expected.size()));
   at+=core::avi::chunkBytes(expected.size());
  }
- assert(!memcmp(drained.data()+at,"idx1",4)&&u32(drained,at+4)==6*16);
+ assert(!memcmp(drained.data()+at,"idx1",4)&&u32(drained,at+4)==queued.size()*16);
+ // Wrap the byte pool across non-aligned payloads and verify the writer
+ // never aliases unread data when its descriptor and byte cursors diverge.
+ assert(r.begin(640,480));waitFor(r,State::Recording);
+ queued.clear();
+ for(unsigned i=0;i<26;++i){
+  auto image=marked(uint8_t(i));
+  image.insert(image.end()-2,65001+i*37,uint8_t(i+1));
+  while(!r.submit(image.data(),image.size(),i*33))
+   std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  queued.push_back(image);
+ }
+ r.stop();r.close();join();assert(r.state()==State::Saved);
+ const auto& wrappedQueue=files.at(r.path());at=core::avi::kHeaderBytes;
+ for(const auto& image:queued){
+  assert(u32(wrappedQueue,at+4)==image.size());
+  assert(!memcmp(wrappedQueue.data()+at+8,image.data(),image.size()));
+  at+=core::avi::chunkBytes(image.size());
+ }
  // Actual write/seek/rename/close failures are never reported as Saved.
  for(int mode=0;mode<4;++mode){
    writes=0;failWrite=mode==0?3:0;failSeek=mode==1;failRename=mode==2;failClose=mode==3;
