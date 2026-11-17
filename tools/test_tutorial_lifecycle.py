@@ -46,6 +46,8 @@ namespace services {namespace vibration {enum class Cue{Scroll};unsigned ticks=0
 namespace apps {namespace app_store {enum class TutorialResult{None,Back,Skipped,Installed};TutorialResult takeTutorialResult(){return TutorialResult::Skipped;}}}
 
 apps::onboarding::Controls s_controls;
+enum class ExitChoice { Closed, Resume, Exit };
+ExitChoice s_exitChoice=ExitChoice::Closed;
 bool s_preview=false;bool s_active=false,s_frozen=true,s_dirty=false;
 bool s_reviewCached=true,s_photoQueued=true;
 services::photos::Target s_photo,photoResult;
