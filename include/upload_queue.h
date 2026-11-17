@@ -46,7 +46,7 @@ public:
     using NetworkReleaseCallback = void (*)();
 
     // Generate a unique file path inside the queue directory.
-    // prefix: "IMG" or "AUD"
+    // IMG and VID_C share the camera capture sequence; AUD uses the audio sequence.
     // ext: ".jpg" or ".wav"
     // Writes full path to outPath (e.g. "/upload_queue/IMG_00012.jpg")
     // Returns the sequence number, or 0 on failure.

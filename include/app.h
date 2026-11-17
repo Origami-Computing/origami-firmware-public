@@ -91,6 +91,11 @@ struct App {
     // Before another app or system view covers this app. Release view-scoped
     // resources here; onResume restores workflow before the view re-enters.
     void (*onCover)();
+
+    /** Optional visible-app wheel-hold action. True consumes the gesture before
+     * standby; alerts/system screens retain their controls. No callback means
+     * the usual device-wide hold-to-sleep behavior. */
+    bool (*onPowerHold)();
 };
 
 /** App descriptor; `INIT` is the initial scene::Screen*. */

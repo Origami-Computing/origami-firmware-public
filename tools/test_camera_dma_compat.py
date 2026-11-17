@@ -12,12 +12,12 @@ with tempfile.TemporaryDirectory(prefix='camera-dma-compat-') as directory:
     root = Path(directory)
     headers = {
         'esp_arduino_version.h': '#define ESP_ARDUINO_VERSION_VAL(a,b,c) ((a)*10000+(b)*100+(c))\n#define ESP_ARDUINO_VERSION 20017\n',
-        'esp_camera.h': '#pragma once\nusing esp_err_t=int;using framesize_t=int;constexpr int PIXFORMAT_JPEG=4,PIXFORMAT_RGB565=0,FRAMESIZE_QVGA=5;struct camera_config_t {int pixel_format;int xclk_freq_hz;};\n',
+        'esp_camera.h': '#pragma once\nusing esp_err_t=int;using framesize_t=int;constexpr int PIXFORMAT_JPEG=4,PIXFORMAT_RGB565=0,PIXFORMAT_GRAYSCALE=3,FRAMESIZE_QVGA=5,FRAMESIZE_XGA=10,FRAMESIZE_QXGA=20;struct camera_config_t {int pixel_format;int xclk_freq_hz;};\n',
         'esp_heap_caps.h': '#include <stddef.h>\n#define MALLOC_CAP_DMA 8\nsize_t heap_caps_get_largest_free_block(unsigned);\n',
         'esp_log.h': '#define ESP_LOGW(...) ((void)0)\n',
     }
     for name, content in headers.items():
-        (root/name).write_text(content)
+        (root/name).parent.mkdir(parents=True,exist_ok=True);(root/name).write_text(content)
     (root/'main.cpp').write_text(r'''
 #include <cassert>
 #include <cstdint>
@@ -29,12 +29,11 @@ extern "C" bool __wrap_ll_cam_dma_sizes(void*);
 extern "C" int __wrap_cam_config(const camera_config_t*,int,uint16_t);
 struct Camera {uint32_t item=1,buffer=16384,chunk=1024,count=16,node=1024;uint32_t untouched=0xabcdef12;};
 Camera camera;
+
 size_t largest=50000;bool sdkOk=true;int sdkResult=0,calls=0,heapQueries=0;
 size_t heap_caps_get_largest_free_block(unsigned caps){assert(caps==MALLOC_CAP_DMA);++heapQueries;return largest;}
 extern "C" bool __real_ll_cam_dma_sizes(void*){++calls;return sdkOk;}
-extern "C" int __real_cam_config(const camera_config_t*,int size,uint16_t pid){
- assert(size==5&&pid==0x3660);assert(__wrap_ll_cam_dma_sizes(&camera)==sdkOk);return sdkResult;
-}
+extern "C" int __real_cam_config(const camera_config_t*,int,uint16_t){assert(__wrap_ll_cam_dma_sizes(&camera)==sdkOk);return sdkResult;}
 int main(){
  const camera_config_t jpeg{4,20000000};
  for(size_t available:{size_t(0),size_t(4096),size_t(5119),size_t(5120),size_t(7412),size_t(8180),size_t(9215),size_t(9216),size_t(17407),size_t(17408),size_t(50000)}){
@@ -76,6 +75,7 @@ int main(){
   assert(__wrap_cam_config(&config,5,0x3660)==0&&!memcmp(&camera,&before,sizeof camera)&&heapQueries==0);
  }
 #endif
+ const camera_config_t raw{3,24000000};camera={1,24576,12288,2,3072,0xabcdef12};Camera untouched=camera;heapQueries=0;assert(__wrap_cam_config(&raw,10,0x3660)==0&&!memcmp(&camera,&untouched,sizeof camera)&&heapQueries==0);
  sdkOk=false;sdkResult=-1;camera={};heapQueries=0;
  assert(__wrap_cam_config(&jpeg,5,0x3660)==-1&&camera.buffer==16384&&heapQueries==0);
  sdkOk=true;assert(__wrap_ll_cam_dma_sizes(nullptr));

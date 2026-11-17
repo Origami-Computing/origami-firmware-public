@@ -18,6 +18,10 @@ Target prepare(); // Empty on invalid naming or an existing destination.
 // refresh at enqueue: tutorial review and offline uploads can be delayed.
 void markCaptured(Target& target);
 bool write(const Target& target, const uint8_t* jpeg, size_t length);
+// Insert a complete bounded Exif APP1 segment without copying/re-encoding JPEG.
+// A zero segment length preserves the original write path (metadata unavailable).
+bool write(const Target& target, const uint8_t* jpeg, size_t length,
+           const uint8_t* exif, size_t exifLength);
 // Queue failure retains the saved photo for local browsing; no implicit deletion.
 bool enqueue(const Target& saved);
 } }

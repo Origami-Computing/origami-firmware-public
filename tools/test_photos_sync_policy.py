@@ -15,6 +15,9 @@ with tempfile.TemporaryDirectory() as temp:
 #include "core/health_policy.h"
 enum {PH_EMPTY,PH_VIEWING,PH_SYNCING};
 int s_state=PH_VIEWING,s_count=1,s_idx=0,s_thumbnailIndex=0,closed=0,cleared=0;
+bool s_scrollPending=false,s_presentPending=false;
+namespace hal {namespace display {void setFlushObserver(void*){}}}
+struct Preview {void close(){}} s_preview;
 bool s_browsePending=false,s_actionsOpen=true;char s_resumePath[96]={};
 struct File {const char* path="/videos/fixture.avi";};
 struct Library {File file;const File& operator[](int){return file;}void close(){++closed;}} s_library;

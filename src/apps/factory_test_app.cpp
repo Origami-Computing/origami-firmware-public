@@ -5,7 +5,7 @@
 #include "services/manufacturing_access.h"
 #include "hal/hal_power.h"
 #include "core/release_policy.h"
-#include "apps/camera_menu_app.h"
+#include "apps/cine_camera_app.h"
 #include "services/onboarding_progress.h"
 #include "services/vibration.h"
 #include "hal/hal_display.h"
@@ -60,7 +60,7 @@ void tick(uint32_t now){
         if(step==unsigned(Check::Speaker)){
             const int volume=sfx::volume();sfx::setVolume(100);sfx::play(sfx::kSfxAlarmChimePreview);sfx::setVolume(volume);
         }else if(step==unsigned(Check::Vibration))services::vibration::preview(1,3000);
-        else if(step==unsigned(Check::CameraQuality)){cleanup();NavHandler::instance().push(&apps::camera_menu::app);}
+        else if(step==unsigned(Check::CameraQuality)){cleanup();NavHandler::instance().push(&apps::cine_camera::app);}
         else if(step!=unsigned(Check::Buttons)&&(!manual()||step==unsigned(Check::AudioQuality)))session.start(static_cast<Check>(step),now);
         // Hardware startup may block and reset its measurement start time.
         // Refresh the frame timestamp before evaluating that new session.

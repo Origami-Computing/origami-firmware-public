@@ -1,5 +1,6 @@
 #include "services/video_recording.h"
 #include "core/jpeg_envelope.h"
+#include "services/uploads.h"
 #include "core/mjpeg_avi.h"
 #include "hal/hal_sd.h"
 #include "hal/hal_tasks.h"
@@ -30,6 +31,7 @@ bool VideoRecording::beginCommon(uint16_t width, uint16_t height,bool withAudio)
     withAudio_=withAudio;
     captureFailed_=false;captureStats_={};
     error_ = ""; path_[0] = 0; submissions_ = {}; writerStats_ = {};
+    byteHead_ = 0; byteTail_ = 0;
     head_ = 0; tail_ = 0; frames_ = 0; stopping_ = false;
     audioHead_=0;audioTail_=0;audioWritten_=0;repeatedFrames_=0;
     micStarted_=false;micFailure_=MicFailure::None;
@@ -40,7 +42,7 @@ bool VideoRecording::beginCommon(uint16_t width, uint16_t height,bool withAudio)
         error_ = "Unsupported video size"; state_ = State::Failed; return false;
     }
     width_ = width; height_ = height;
-    buffers_ = static_cast<uint8_t*>(heap_caps_malloc(kSlots * kFrameBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    buffers_ = static_cast<uint8_t*>(heap_caps_malloc(kQueueBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     index_ = static_cast<uint8_t*>(heap_caps_malloc(kMaxFrames * 16 * (withAudio_?2:1), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
     if (!buffers_ || !index_) {
         releaseBuffers(); error_ = "Not enough video memory"; state_ = State::Failed; return false;
@@ -64,10 +66,20 @@ bool VideoRecording::submitFrame(const uint8_t* jpeg, size_t length, uint32_t no
     if (!jpeg || length < 4) { ++submissions_.invalid; return false; }
     if (length > kFrameBytes) { ++submissions_.oversized; return false; }
     if (!core::images::singleJpegEnvelope(jpeg, length)) { ++submissions_.invalid; return false; }
-    if (head - tail >= kSlots) { ++submissions_.queueFull; return false; }
-    const uint32_t slot = head % kSlots;
-    memcpy(buffers_ + slot * kFrameBytes, jpeg, length);
-    slots_[slot] = {static_cast<uint32_t>(length), now};
+    // Keep each JPEG contiguous for the AVI writers. Charge any unused bytes
+    // at the end to this descriptor until the consumer finishes its SD write.
+    const uint32_t bytes = static_cast<uint32_t>(length);
+    const uint32_t remaining = kQueueBytes - byteHead_ % kQueueBytes;
+    const uint32_t start = byteHead_ + (bytes > remaining ? remaining : 0);
+    const uint32_t end = start + bytes;
+    if (head - tail >= kSlots || end - byteTail_.load() > kQueueBytes) {
+        ++submissions_.queueFull;
+        return false;
+    }
+    const uint32_t offset = start % kQueueBytes;
+    memcpy(buffers_ + offset, jpeg, bytes);
+    slots_[head % kSlots] = {bytes, now, offset, end};
+    byteHead_ = end;
     ++submissions_.accepted;
     if (head-tail+1 > submissions_.maxQueued) submissions_.maxQueued=head-tail+1;
     head_.store(head + 1); // Publishes bytes/metadata to the single consumer.
@@ -88,18 +100,25 @@ void VideoRecording::run(void* self) {
     hal::tasks::recordCurrentStack(hal::tasks::Id::VideoWrite);
     hal::tasks::deleteCurrent(hal::tasks::Id::VideoWrite);
 }
+bool VideoRecording::prepareOutput(char* temporary, size_t capacity) {
+    if (!hal::sd::ensureDir("/videos")) return false;
+    for (unsigned attempt = 0; attempt < 16; ++attempt) {
+        char reserved[64]{};
+        auto* queue = services::uploads::readyQueue();
+        if (!queue && services::uploads::ensureInit()) queue = services::uploads::readyQueue();
+        const uint32_t id = queue ? queue->generatePath("VID_C", ".avi", reserved, sizeof(reserved)) : 0;
+        if (id) snprintf(path_, sizeof(path_), "/videos/%s", strrchr(reserved, '/') + 1);
+        else snprintf(path_, sizeof(path_), "/videos/VID_%08lx.avi", (unsigned long)esp_random());
+        snprintf(temporary, capacity, "%s.part", path_);
+        if (!hal::sd::exists(path_) && !hal::sd::exists(temporary)) return true;
+    }
+    return false;
+}
 void VideoRecording::write() {
     if (withAudio_) {writeAudio();return;}
     hal::sd::StreamWriter file;
     char temporary[56]{};
-    bool ok = hal::sd::ensureDir("/videos");
-    bool available = false;
-    for (unsigned attempt = 0; ok && attempt < 16; ++attempt) {
-        snprintf(path_, sizeof(path_), "/videos/VID_%08lx.avi", (unsigned long)esp_random());
-        snprintf(temporary, sizeof(temporary), "%s.part", path_);
-        if (!hal::sd::exists(path_) && !hal::sd::exists(temporary)) { available = true; break; }
-    }
-    ok = ok && available && hal::sd::openWriter(temporary, &file);
+    bool ok = prepareOutput(temporary,sizeof(temporary)) && hal::sd::openWriter(temporary,&file);
     uint8_t header[core::avi::kHeaderBytes];
     core::avi::header(header, width_, height_, 0, 0, 0, 0);
     if (ok) ok = hal::sd::writeStream(&file, header, sizeof(header));
@@ -113,7 +132,7 @@ void VideoRecording::write() {
             continue;
         }
         const auto slot = slots_[tail % kSlots];
-        const uint8_t* jpeg = buffers_ + (tail % kSlots) * kFrameBytes;
+        const uint8_t* jpeg = buffers_ + slot.offset;
         uint8_t chunk[8]; core::avi::chunk(chunk, slot.length);
         const uint8_t pad = 0;
         ok = hal::sd::writeStream(&file, chunk, sizeof(chunk)) &&
@@ -126,6 +145,7 @@ void VideoRecording::write() {
         if (!count) firstAt = slot.at;
         lastAt = slot.at;
         frames_.store(++count);
+        byteTail_.store(slot.end);
         tail_.store(tail + 1); // Slot can now be reused by producer.
         if (count == kMaxFrames || lastAt - firstAt >= kMaxDurationMs || movieBytes >= 256u * 1024 * 1024) break;
     }

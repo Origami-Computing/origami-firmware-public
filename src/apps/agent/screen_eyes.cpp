@@ -8,7 +8,7 @@
 #include "apps/agent/agent_flow.h"
 #include "apps/agent/agent_render.h"
 #include "apps/agent_app.h"
-#include "apps/camera_menu_app.h"
+#include "apps/cine_camera_app.h"
 #include "apps/voice_recorder_app.h"
 #include "apps/menu_app.h"
 #include "services/eyes_asset.h"
@@ -36,7 +36,7 @@ namespace {
 // Input contract:
 //   Rotary       → push the app menu
 //   Lone A tap   → push Audio Recorder
-//   Lone B tap   → push Camera
+//   Lone B tap   → push Cine camera
 //   C tap        → no action while awake (C wakes in the sleep service)
 //   C hold       → battery sleep via the shared input/power handler
 //   A+B chord    → start a PTT recording immediately (release of *both*
@@ -145,7 +145,7 @@ void onInput(AgentState& s, hal::input::InputEvent ev) {
         return;
     }
     if (ev.type == ET::ButtonB_Tap) {
-        NavHandler::instance().push(&apps::camera_menu::app);
+        NavHandler::instance().push(&apps::cine_camera::app);
         return;
     }
 }

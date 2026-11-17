@@ -76,6 +76,8 @@ public:
     void stop();
     bool running() const;
     void settle(uint32_t milliseconds);
+    bool setStillPreviewSize(bool fullResolution);
+    bool configureCineIsp(const hal::camera::CineIspRequest& request,hal::camera::CineIspReadback* output);
     bool read(hal::camera::CameraFrame* frame);
     void returnFrame();
     bool captureToFile(const char* path);

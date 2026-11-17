@@ -21,7 +21,7 @@
 #include "app.h"
 #include "apps/alarm_clock_app.h"
 #include "apps/audio_recordings_app.h"
-#include "apps/camera_menu_app.h"
+#include "apps/cine_camera_app.h"
 #include "apps/doodle_jump_app.h"
 #include "apps/dumb_flappy_bird_app.h"
 #include "apps/mp3_menu_app.h"
@@ -77,7 +77,7 @@ struct PageDef {
 };
 
 static const MenuEntry kMainEntries[] = {
-    {"Camera", &apps::camera_menu::app, PAGE_COUNT, icons::kCamera},
+    {"Camera", &apps::cine_camera::app, PAGE_COUNT, icons::kCamera},
     {"Photos", &apps::photos::app, PAGE_COUNT, icons::kPhotos},
     {"Audio", nullptr, PAGE_AUDIO, icons::kAudio},
     {"Music", &apps::mp3_menu::app, PAGE_COUNT, icons::kMusic},

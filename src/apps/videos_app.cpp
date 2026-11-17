@@ -32,6 +32,7 @@ static uint32_t s_decodeMaxMs=0,s_presentMaxMs=0;
 static uint32_t s_imageNumber=0,s_presentedMs=0,s_decoded=0,s_held=0;
 static uint32_t s_tickExit=0,s_tickOutside=0,s_tickWork=0,s_tickCalls=0,s_tickGapMax=0;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
+static uint32_t s_peakTransferUs=0;
 static uint32_t s_profileFrames=0,s_profilePresentUs=0,s_profileSyncUs=0,s_profileTransferUs=0,s_profileSyncMisses=0;
 #endif
 static const char* s_message="Loading videos...";
@@ -85,6 +86,7 @@ static bool finishIfDone() {
 
 static void present() {
     if (!s_frame) return;
+    hal::display::enterOptimizedRender(true);
     const auto& info=s_library.info();
     const uint32_t durationMs=std::max(uint32_t((uint64_t(info.frames)*info.intervalUs+999)/1000),
         uint32_t(uint64_t(info.audioSamples)*1000/core::avi::kAudioRate));
@@ -107,11 +109,12 @@ static void present() {
     ++s_profileFrames;s_profilePresentUs+=uint32_t(micros()-profileStarted);
     s_profileSyncUs+=presentation.syncWaitUs;s_profileTransferUs+=presentation.transferUs;
     s_profileSyncMisses+=presentation.syncMissed;
+    s_peakTransferUs=std::max(s_peakTransferUs,presentation.transferUs);
     if (s_profileFrames==16) {
-        Serial.printf("[video-present] frames=%lu total_us=%lu sync_us=%lu transfer_us=%lu sync_misses=%lu\n",
+        Serial.printf("[video-present] frames=%lu total_us=%lu sync_us=%lu transfer_us=%lu sync_misses=%lu peak_transfer_us=%lu\n",
             (unsigned long)s_profileFrames,(unsigned long)s_profilePresentUs,
-            (unsigned long)s_profileSyncUs,(unsigned long)s_profileTransferUs,(unsigned long)s_profileSyncMisses);
-        s_profileFrames=s_profilePresentUs=s_profileSyncUs=s_profileTransferUs=s_profileSyncMisses=0;
+            (unsigned long)s_profileSyncUs,(unsigned long)s_profileTransferUs,(unsigned long)s_profileSyncMisses,(unsigned long)s_peakTransferUs);
+        s_peakTransferUs=s_profileFrames=s_profilePresentUs=s_profileSyncUs=s_profileTransferUs=s_profileSyncMisses=0;
     }
 #endif
     s_presentMaxMs=std::max(s_presentMaxMs,uint32_t(millis()-started));
@@ -125,7 +128,7 @@ static void selectClip(bool autoplay=false) {
     s_frame=false;s_playing=autoplay;s_ended=false;s_number=0;s_dirty=true;s_failed=false;
     s_elapsedMs=s_skipped=s_decoded=s_held=0;s_startedMs=millis();s_audioTail=false;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
-    s_profileFrames=s_profilePresentUs=s_profileSyncUs=s_profileTransferUs=s_profileSyncMisses=0;
+    s_peakTransferUs=s_profileFrames=s_profilePresentUs=s_profileSyncUs=s_profileTransferUs=s_profileSyncMisses=0;
 #endif
     s_tickExit=s_tickOutside=s_tickWork=s_tickCalls=s_tickGapMax=0;
     s_message="Loading preview...";
@@ -188,7 +191,7 @@ static void tickAsync(uint32_t now) {
         s_decodeMaxMs=std::max(s_decodeMaxMs,(decoded.decodeUs+999)/1000);
         if (s_frame&&s_pendingNumber>s_number) s_skipped+=s_pendingNumber-s_number-1;
         if (!s_frame) {
-            s_startedMs=millis();hal::display::enterOptimizedRender();
+            s_startedMs=millis();
             if (s_playing&&!s_library.startAudio()) {failPlayback(s_library.error());return;}
         }
         s_frame=true;s_number=s_pendingNumber;s_imageNumber=s_pendingImage;++s_decoded;paint=true;
@@ -281,7 +284,7 @@ static void tick(uint32_t now) {
     s_library.release();
     if (!decoded) {failPlayback("Cannot decode video");return;}
     if (!s_frame) {
-        s_startedMs=millis();hal::display::enterOptimizedRender();
+        s_startedMs=millis();
         if (s_playing && !s_library.startAudio()) {failPlayback(s_library.error());return;}
     }
     s_frame=true;s_number=number;s_imageNumber=imageNumber;++s_decoded;

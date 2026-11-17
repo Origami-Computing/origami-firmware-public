@@ -31,6 +31,20 @@ constexpr uint64_t sequenceDigits(const char* digits, uint64_t value = 0) {
        sequenceDigits(digits + 1, value * 10 + (*digits - '0'))) :
       (equal(digits, ".jpg") || equal(digits, ".jpeg") ? value : 0);
 }
+inline uint32_t videoSequence(const char* name) {
+  const char prefix[] = "vid_c_";
+  for (char c : prefix) {
+    if (!c) break;
+    if (lower(*name++) != c) return 0;
+  }
+  uint32_t id = 0;
+  while (*name >= '0' && *name <= '9') {
+    const unsigned digit = *name++ - '0';
+    if (id > (UINT32_MAX - digit) / 10) return 0;
+    id = id * 10 + digit;
+  }
+  return equal(name, ".avi") ? id : 0;
+}
 constexpr uint64_t sequenceName(const char* name) {
   return lower(name[0]) == 'i' && lower(name[1]) == 'm' && lower(name[2]) == 'g' && name[3] == '_' ?
       sequenceDigits(name + 4) : 0;
@@ -47,6 +61,7 @@ constexpr int newestFirst(uint64_t aTime, const char* aName, uint64_t bTime, con
 struct PhotoFile {
   char path[272];  // FAT long filename plus /photos/ and terminator.
   uint64_t modified;
+  uint32_t captureOrder;
   bool video = false;
 };
 

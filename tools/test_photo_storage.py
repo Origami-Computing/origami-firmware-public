@@ -15,11 +15,12 @@ namespace services {namespace uploads {bool ensureInit();Queue& queue();}}
     write('hal/hal_sd.h',r'''#pragma once
 #include <stddef.h>
 #include <stdint.h>
-namespace hal {namespace sd {bool ensureDir(const char*);bool mounted();bool exists(const char*);bool writeFile(const char*,const uint8_t*,size_t);bool removeFile(const char*);}}
+namespace hal {namespace sd {bool ensureDir(const char*);bool ensureMediaMounted();bool mounted();bool exists(const char*);bool writeFile(const char*,const uint8_t*,size_t);struct FilePart{const uint8_t* data;size_t length;};bool writeFileParts(const char*,const FilePart*,size_t);bool removeFile(const char*);}}
 ''')
     write('core/board_time.h', '#pragma once\n#include <time.h>\nnamespace core {namespace time {bool isSynced();}}\n')
     write('main.cpp',r'''
 #include "services/photo_storage.h"
+#include "hal/hal_sd.h"
 #include "services/uploads.h"
 #include <cassert>
 #include <cstdio>
@@ -36,14 +37,20 @@ namespace services {namespace uploads {bool ensureInit(){++initializes;return in
 uint32_t Queue::generatePath(const char* prefix,const char* ext,char*out,size_t cap){assert(!strcmp(prefix,"IMG")&&!strcmp(ext,".jpg"));snprintf(out,cap,"%s",generated.c_str());return seq;}
 bool Queue::enqueue(const char* kind,const char* path,const char* mime,bool remove,uint32_t capture){sentCapture=capture;++queued;assert(!strcmp(kind,"image")&&!strcmp(mime,"image/jpeg")&&!remove);assert(files.count(path));return queueOk;}
 namespace hal {namespace sd {
+bool mountSucceeds=true;
+bool ensureMediaMounted(){return ::mounted || (::mounted=mountSucceeds);}
 bool mounted(){return ::mounted;}
 bool ensureDir(const char*p){++directories;assert(!strcmp(p,"/photos"));return dirOk;}
 bool exists(const char*p){return files.count(p);}
 bool writeFile(const char*p,const uint8_t*data,size_t n){++writes;files[p]=writeOk?std::string((const char*)data,n):"partial";return writeOk;}
+bool writeFileParts(const char*,const FilePart*,size_t){assert(false);return false;}
 bool removeFile(const char*p){++deletes;return files.erase(p);}
 }}
 int main(){namespace photos=services::photos;
-assert(photos::initialize()&&initializes==1&&directories==1);
+mounted=false;hal::sd::mountSucceeds=false;
+assert(!photos::initialize() && initializes==0 && directories==0);
+hal::sd::mountSucceeds=true;
+assert(photos::initialize()&&mounted&&initializes==1&&directories==1);
 initOk=false;assert(photos::initialize()&&directories==2);dirOk=false;assert(!photos::initialize());
 assert(photos::available());mounted=false;assert(!photos::available());
 auto target=photos::prepare();assert(target.valid()&&target.sequence==42&&!strcmp(target.path,"/photos/IMG_00042.jpg"));
@@ -64,6 +71,6 @@ generated=std::string(63,'x');assert(!photos::prepare().valid());
 generated="IMG_00043.jpg";target=photos::prepare();assert(target.valid()&&!strcmp(target.path,"/photos/IMG_00043.jpg"));
 }
 ''')
-    subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(root),'-I'+str(ROOT/'include'),str(ROOT/'src/services/photo_storage.cpp'),str(root/'main.cpp'),'-o',str(root/'test')],check=True)
+    subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(root),'-I'+str(ROOT/'include'),str(ROOT/'src/services/photo_storage.cpp'),str(ROOT/'src/core/cine_exif.cpp'),str(root/'main.cpp'),'-o',str(root/'test')],check=True)
     subprocess.run([str(root/'test')],check=True)
 print('PASS photo naming/metadata, collisions, path bounds, partial-write cleanup and queue-failure retention under sanitizers')

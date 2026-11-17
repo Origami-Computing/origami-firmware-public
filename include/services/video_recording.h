@@ -90,9 +90,14 @@ private:
     // Six frames cover about 200 ms at 30 Hz, including the slot being written.
     // Device writes have stalled for 115 ms despite average spare bandwidth.
     // Bounded 768 KiB PSRAM; sustained overload still rejects submissions.
-    static constexpr uint32_t kSlots = 6, kFrameBytes = core::avi::kJpegFrameBytes, kMaxFrames = core::avi::kMaxFrames;
-    struct Slot { uint32_t length, at; } slots_[kSlots]{};
+    static constexpr uint32_t kSlots = 32, kFrameBytes = core::avi::kJpegFrameBytes, kMaxFrames = core::avi::kMaxFrames;
+    // Same PSRAM budget as six maximum-size JPEGs. Short camera frames share it.
+    static constexpr uint32_t kQueueBytes = 6 * kFrameBytes;
+    struct Slot { uint32_t length, at, offset, end; } slots_[kSlots]{};
+    uint32_t byteHead_ = 0; // Producer-owned until the capture worker joins.
+    std::atomic<uint32_t> byteTail_{0};
     static void run(void* self);
+    bool prepareOutput(char* temporary, size_t capacity);
     void write();
     bool beginCommon(uint16_t width, uint16_t height, bool withAudio);
     bool prepareAudio();

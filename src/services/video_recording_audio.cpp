@@ -81,13 +81,7 @@ void VideoRecording::captureAudio() {
 void VideoRecording::writeAudio() {
     hal::sd::StreamWriter file;
     char temporary[56]{};
-    bool ok=hal::sd::ensureDir("/videos"),available=false;
-    for (unsigned attempt=0;ok && attempt<16;++attempt) {
-        snprintf(path_,sizeof(path_),"/videos/VID_%08lx.avi",(unsigned long)esp_random());
-        snprintf(temporary,sizeof(temporary),"%s.part",path_);
-        if (!hal::sd::exists(path_) && !hal::sd::exists(temporary)) {available=true;break;}
-    }
-    ok=ok && available && hal::sd::openWriter(temporary,&file);
+    bool ok = prepareOutput(temporary,sizeof(temporary)) && hal::sd::openWriter(temporary,&file);
     uint8_t header[core::avi::kAudioHeaderBytes];
     core::avi::audioHeader(header,width_,height_,0,0,0,0,0,0);
     if (ok) ok=hal::sd::writeStream(&file,header,sizeof(header));
@@ -144,7 +138,7 @@ void VideoRecording::writeAudio() {
         const uint32_t tail=tail_.load();
         if (tail!=head_.load()) {
             const Slot slot=slots_[tail%kSlots];
-            const uint8_t* jpeg=buffers_+(tail%kSlots)*kFrameBytes;
+            const uint8_t* jpeg=buffers_+slot.offset;
             const int32_t delta=int32_t(slot.at-audioOriginMs_.load());
             if (delta>=0 && uint32_t(delta)<kMaxDurationMs) {
                 const uint32_t target=uint64_t(uint32_t(delta))*kTimelineFps/1000;
@@ -165,6 +159,7 @@ void VideoRecording::writeAudio() {
                 // replacing it with a discarded submission changes the image
                 // inside an interval that was supposed to repeat the previous one.
             }
+            byteTail_.store(slot.end);
             tail_.store(tail+1);
         } else if (stopping_.load() && !captureRunning_.load() && !micRunning_.load() && audioHead_.load()==audioTail_.load()) break;
         else vTaskDelay(pdMS_TO_TICKS(1));

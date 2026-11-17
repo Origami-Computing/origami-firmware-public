@@ -59,7 +59,7 @@ namespace hal{namespace display{extern bool optimized;extern TFT_eSPI panel,dire
 #include "core/usage_events.h"
 #include <vector>
 SerialStub Serial;uint32_t clockMs=1000;
-int powerSleeps=0;bool alertCapture=false;
+int powerSleeps=0;bool alertCapture=false;int consumedHolds=0;bool holdConsumed=true;bool consumeHold(){++consumedHolds;return holdConsumed;}
 int bars=0,directBars=0,glyphBars=0,hints=0,draws=0;bool clipped=false;
 namespace hal{namespace display{bool optimized=false;TFT_eSPI panel,direct;}}
 void beginScreenChrome(const void*){}bool takeScreenChromeRepaint(){return false;}
@@ -174,6 +174,11 @@ int main(){
  nav.pop();selectedRuntime=core::health::RuntimePolicy{};
  alertCapture=true;nav.dispatch({hal::input::EventType::PowerSleep});assert(powerSleeps==2);
  alertCapture=false;nav.dispatch({hal::input::EventType::PowerSleep});assert(powerSleeps==3);
+ // App-specific holds consume standby only on the visible app, never alerts.
+ app.onPowerHold=consumeHold;nav.dispatch({hal::input::EventType::PowerSleep});assert(powerSleeps==3&&consumedHolds==1);
+ alertCapture=true;nav.dispatch({hal::input::EventType::PowerSleep});assert(powerSleeps==3&&consumedHolds==1);alertCapture=false;
+ nav.push(&covered);nav.dispatch({hal::input::EventType::PowerSleep});assert(powerSleeps==4&&consumedHolds==1);nav.pop();
+ holdConsumed=false;nav.dispatch({hal::input::EventType::PowerSleep});assert(powerSleeps==5&&consumedHolds==2);app.onPowerHold=nullptr;
  // A covered root's background constraints survive until explicit change.
  selectedRuntime.allowBackgroundUploads=false;selectedRuntime.allowAutomaticUpdate=false;
  nav.runtimePolicyChanged();

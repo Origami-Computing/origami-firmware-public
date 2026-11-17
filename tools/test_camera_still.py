@@ -11,6 +11,9 @@ with tempfile.TemporaryDirectory() as directory:
 #include <stddef.h>
 namespace hal {namespace camera {
 struct Tuning {int tag=42;};struct CameraFrame {};
+struct CineIspRequest {};struct CineIspReadback {};
+inline bool setStillPreviewSize(bool) { return true; }
+bool configureCineIsp(const CineIspRequest&,CineIspReadback*);
 bool init(int,int,const Tuning*,int);void deinit();bool initialized();void settleAutoExposure(uint32_t);
 bool getFrame(CameraFrame*);void returnFrame();bool captureToFile(const char*);bool captureToSd();const char* lastInitError();size_t availablePsramKb();
 }}
@@ -53,6 +56,7 @@ namespace hal {
 namespace wifi {void stop(){trace.push_back("wifi-stop");}void powerDown(){trace.push_back("wifi-off");}void restore(){}void scheduleRestore(){}}
 namespace io {bool reinitAfterI2CRestart(){return true;}}
 namespace camera {
+bool configureCineIsp(const CineIspRequest&,CineIspReadback*){assert(false);return false;}
 bool init(int size,int format,const Tuning*t,int quality){assert(quality==-1);assert(format==4&&t->tag==42);sizes.push_back(size);trace.push_back("start"+std::to_string(size));live=starts.empty()?true:starts.front();if(!starts.empty())starts.erase(starts.begin());return live;}
 void deinit(){trace.push_back("stop");live=false;}bool initialized(){return live;}
 void settleAutoExposure(uint32_t ms){trace.push_back("settle"+std::to_string(ms));}

@@ -15,6 +15,9 @@ def main():
 #include <stdint.h>
 namespace hal { namespace camera {
 struct Tuning {}; struct CameraFrame {};
+struct CineIspRequest {};struct CineIspReadback {};
+inline bool setStillPreviewSize(bool) { return true; }
+bool configureCineIsp(const CineIspRequest&,CineIspReadback*);
 bool init(int,int,const Tuning*,int); void deinit(); bool initialized();
 void settleAutoExposure(uint32_t); bool getFrame(CameraFrame*); void returnFrame();
 bool captureToFile(const char*);bool captureToSd(); const char* lastInitError();
@@ -58,6 +61,7 @@ void TransportPause::release(){if(!held_)return;held_=false;trace+='a';}
 namespace hal { namespace io { bool reinitAfterI2CRestart(){trace+='r';return true;} }
 namespace wifi { void stop(){trace+='W';} void powerDown(){trace+='D';} void restore(){trace+='w';} void scheduleRestore(){trace+='d';} }
 namespace camera {
+bool configureCineIsp(const CineIspRequest&,CineIspReadback*){return true;}
 bool init(int size,int format,const Tuning* tuning,int quality){lastQuality=quality;lastSize=size;lastFormat=format;lastTuning=tuning;trace+='I';live=initOk;return live;}
 void deinit(){trace+='S';if(!stopBlocked)live=false;}
 bool initialized(){return live;}
@@ -83,7 +87,10 @@ int main(){
    assert(!reader.acquire(session));
    assert(session.prepareCapture(false)==Result::Ready);
    assert(session.start());
-   assert(session.read(&frame));assert(!reader.acquire(session));
+   hal::camera::CineIspRequest isp;hal::camera::CineIspReadback readback;
+   assert(session.configureCineIsp(isp,&readback));
+   assert(session.read(&frame));
+   assert(!session.configureCineIsp(isp,&readback));
    session.returnFrame();assert(reader.acquire(session));
    assert(!reader.acquire(session)&&!other.acquire(session));
    std::mutex mutex;std::condition_variable cv;bool borrowed=false,release=false;
@@ -98,6 +105,7 @@ int main(){
    session.releaseBackground();session.restoreUi(Session::Resume::Immediate);
    session.settle(100);assert(!session.start());
    assert(!session.captureToFile("/unused")&&!session.captureDiagnosticToSd());
+   assert(!session.configureCineIsp(isp,&readback));
    assert(session.prepareCapture(false)==Result::CameraBusy);
    hal::camera::Tuning tuning;
    assert(!session.openPreview(8,tuning,prepareViewfinder));

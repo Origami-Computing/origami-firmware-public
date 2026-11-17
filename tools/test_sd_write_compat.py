@@ -1,10 +1,10 @@
 """Exercise the exact pinned, patched SD multi-block write function with SPI fakes."""
 from pathlib import Path
-import importlib.util, subprocess, tempfile
+import importlib.util, os, subprocess, tempfile
 ROOT=Path(__file__).resolve().parents[1]
 spec=importlib.util.spec_from_file_location('sd_overlay',ROOT/'scripts/sd_write_compat.py')
 overlay=importlib.util.module_from_spec(spec);spec.loader.exec_module(overlay)
-framework=Path.home()/'.platformio/packages/framework-arduinoespressif32/libraries/SD/src/sd_diskio.cpp'
+framework=Path(os.environ.get('PLATFORMIO_CORE_DIR',str(Path.home()/'.platformio')))/'packages/framework-arduinoespressif32/libraries/SD/src/sd_diskio.cpp'
 source=framework.read_bytes()
 patched=overlay.patched_source(source).decode()
 assert framework.read_bytes()==source

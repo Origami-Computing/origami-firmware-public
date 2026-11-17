@@ -13,11 +13,14 @@
 #include "core/telemetry.h"
 #include "core/jpeg_envelope.h"
 #include "camera_event_diagnostics.h"
+#include "core/cine_shutter.h"
+#include "core/cine_isp.h"
 
 namespace hal {
 namespace camera {
 
 static bool s_initialized = false;
+static bool s_qxgaBuffers = false;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 static bool s_reportedJoinedFrame = false;
 #endif
@@ -128,9 +131,11 @@ static bool initAttempt(int frameSize, int pixelFormat, const Tuning* tuning,
 #endif
     if (pfmt == PIXFORMAT_JPEG) {
       if (fsize >= FRAMESIZE_UXGA) {
-        // High-res: always single buffer. Quality stays at 12 — output JPEG file size scales with
-        // quality but the alloc doesn't, so no point starving the file size.
-        fbcount = 1;
+        // High-resolution sessions default to a single buffer.
+        // QXGA uses about 630 KiB per buffer. Leave room for decoder surfaces,
+        // SD work and capture; the existing init retry uses a single buffer.
+        fbcount = fsize == FRAMESIZE_QXGA && tuning && tuning->continuousStillPreview &&
+                  freeContig >= 3u * 1024u * 1024u ? 2 : 1;
         jpegQ   = 12;
       } else if (fsize >= FRAMESIZE_HD) {
         fbcount = (freeContig >= 500u * 1024u) ? 2 : 1;
@@ -191,7 +196,7 @@ static bool initAttempt(int frameSize, int pixelFormat, const Tuning* tuning,
     .jpeg_quality = jpegQ,
     .fb_count = fbcount,
     .fb_location = fbloc,
-    .grab_mode = (fsize >= FRAMESIZE_UXGA) ? CAMERA_GRAB_WHEN_EMPTY : CAMERA_GRAB_LATEST,
+    .grab_mode = (fsize >= FRAMESIZE_UXGA && fbcount == 1) ? CAMERA_GRAB_WHEN_EMPTY : CAMERA_GRAB_LATEST,
     .sccb_i2c_port = 1,
   };
 
@@ -253,6 +258,7 @@ static bool initAttempt(int frameSize, int pixelFormat, const Tuning* tuning,
                 detectedSensor ? (unsigned)detectedSensor->id.PID : 0u);
 
   s_initialized = true;
+  s_qxgaBuffers = fsize == FRAMESIZE_QXGA && pfmt == PIXFORMAT_JPEG;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
   s_reportedJoinedFrame = false;
 #endif
@@ -348,7 +354,7 @@ void deinit() {
     cameraEventFinish();
 #endif
     s_initialized = false;
-  }
+    }
   
   // Power down camera
   hal::io::setCameraPwdn(true);
@@ -550,6 +556,8 @@ static bool applyTuningInternal(const Tuning& t) {
   Serial.printf("[camera] orientation hmirror=%d vflip=%d\n",
                 t.hmirror ? 1 : 0, t.vflip ? 1 : 0);
 
+
+
   // Load the OV5640 autofocus firmware while SCCB is still ours. After this
   // function returns init() leaves Wire1 installed for Arduino and we'd no longer be
   // able to talk to the sensor's MCU over the shared I2C bus.
@@ -643,6 +651,194 @@ bool ovReadReg(uint16_t reg, uint8_t* outVal) {
   return true;
 }
 }  // namespace
+
+namespace {
+bool jpegShutterRead(ShutterInfo& value){
+ uint8_t p[4],hi,lo,e[3],g[2],manual,gainMode;
+ for(unsigned i=0;i<4;++i)if(!ovReadReg(0x303a+i,&p[i]))return false;
+ // Pinned OV3660 JPEG profiles, fixed external 24MHz: multiplier24/30,
+ // predivide3 (factor3), seld5=0 (factor1), SYSCLK = multiplier *2MHz.
+ if(p[0]!=0||p[2]!=0x11||p[3]!=0x30||(p[1]!=24&&p[1]!=30))return false;
+ if(!ovReadReg(0x380c,&hi)||!ovReadReg(0x380d,&lo))return false;value.hts=(uint16_t(hi&15)<<8)|lo;
+ if(!ovReadReg(0x380e,&hi)||!ovReadReg(0x380f,&lo))return false;value.vts=(uint16_t(hi)<<8)|lo;
+ if(!value.hts||value.vts<=4)return false;value.clockHz=uint32_t(p[1])*2000000;
+ for(unsigned i=0;i<3;++i)if(!ovReadReg(0x3500+i,&e[i]))return false;
+ if(!ovReadReg(0x350a,&g[0])||!ovReadReg(0x350b,&g[1])||!ovReadReg(0x3503,&manual)||!ovReadReg(0x3509,&gainMode)||(gainMode&8))return false;
+ value.ticks=(uint32_t(e[0]&15)<<16)|(uint32_t(e[1])<<8)|e[2];value.gainQ4=(uint16_t(g[0]&3)<<8)|g[1];
+ value.actualUs=core::cine::shutterMicros(value.ticks,value.hts,value.clockHz);value.frameUs=uint32_t((uint64_t(value.hts)*value.vts*1000000+value.clockHz/2)/value.clockHz);
+ value.manual=(manual&3)==3;value.valid=true;return true;
+}
+}
+bool setStillPreviewSize(bool fullResolution) {
+  if (!s_initialized || !s_qxgaBuffers || s_detectedPid != 0x3660 || s_lastFb ||
+      !hal::bus::lockI2c(kI2cLockTimeout))
+    return false;
+  auto* sensor = esp_camera_sensor_get();
+  const auto size = fullResolution ? FRAMESIZE_QXGA : FRAMESIZE_QVGA;
+  const bool ok = sensor && sensor->set_framesize(sensor, size) == 0;
+  hal::bus::unlockI2c();
+  return ok;
+}
+bool readJpegShutter(ShutterInfo* output){
+ if(!output||!s_initialized||s_detectedPid!=0x3660||!hal::bus::lockI2c(kI2cLockTimeout))return false;
+ ShutterInfo value;const bool ok=jpegShutterRead(value);hal::bus::unlockI2c();if(ok)*output=value;return ok;
+}
+bool configureCineIsp(const CineIspRequest &request, CineIspReadback *output) {
+  if (!output || !core::cine::validColor(request.colorMode) ||
+      request.shutterUs < 1000 || request.shutterUs > 100000 || request.gainQ4 < 16 ||
+      request.gainQ4 > core::cine::gainCeilingQ4 || !s_initialized || s_detectedPid != 0x3660 ||
+      s_lastFb)
+    return false;
+  auto *sensor = esp_camera_sensor_get();
+  if (!sensor || sensor->pixformat != PIXFORMAT_JPEG || !hal::bus::lockI2c(kI2cLockTimeout))
+    return false;
+  // No OTP, reset, pin, rail or clock writes. These volatile ISP/exposure
+  // registers are restored on failure; the next normal init resets the sensor.
+  const uint16_t regs[] = {0x3503, 0x3500, 0x3501, 0x3502, 0x350a, 0x350b, 0x380e, 0x380f, 0x3400,
+                           0x3401, 0x3402, 0x3403, 0x3404, 0x3405, 0x3406, 0x5000, 0x5001, 0x5308,
+                           0x5302, 0x5303, 0x530b, 0x530c, 0x5481, 0x5482, 0x5483, 0x5484, 0x5485,
+                           0x5486, 0x5487, 0x5488, 0x5489, 0x548a, 0x548b, 0x548c, 0x548d, 0x548e,
+                           0x548f, 0x5490, 0x5381, 0x5382, 0x5383, 0x5384, 0x5385, 0x5386, 0x5387,
+                           0x5388, 0x5389, 0x538a, 0x538b, 0x3a00, 0x3a02, 0x3a03, 0x3a14, 0x3a15,
+                           0x3a18, 0x3a19, 0x3a0f, 0x3a10, 0x3a1b, 0x3a1e, 0x3a11, 0x3a1f};
+  uint8_t old[sizeof(regs) / sizeof(regs[0])];
+  bool ok = true;
+  for (unsigned i = 0; i < sizeof(old); ++i)
+    ok = ovReadReg(regs[i], &old[i]) && ok;
+  ShutterInfo shutter;
+  uint8_t route = 255, compression = 0;
+  ok = ovReadReg(0x501f, &route) && ovReadReg(0x3821, &compression) && ok;
+  ok = ok && (route & 7) == 0 && (compression & 0x20) && jpegShutterRead(shutter);
+  // Manual startup may freeze settled AE on the safe ladder; Auto keeps live integration.
+  uint32_t requestedUs = request.shutterUs;
+  uint16_t requestedGain = request.gainQ4;
+  bool mutated = false;
+  auto write = [&](uint16_t reg, uint8_t value) {
+    if (!ok)
+      return;
+    mutated = true;
+    ok = ovWriteReg(reg, value);
+    uint8_t actual = 0;
+    if (ok)
+      ok = ovReadReg(reg, &actual) && actual == value;
+  };
+  if (ok) {
+    write(0x3503, old[0] | 3);
+    if (request.autoExposure) {
+      // Fixed native frame cadence: night-mode extension stays disabled. Restore
+      // the session's original VTS after a slow manual shutter, without a restart.
+      const uint16_t vts = request.autoVts ? request.autoVts : shutter.vts;
+      if (vts <= 8)
+        ok = false;
+      write(0x380e, vts >> 8);
+      write(0x380f, vts & 255);
+      shutter.vts = vts;
+      uint32_t maxRows = uint64_t(100000) * shutter.clockHz / (uint64_t(shutter.hts) * 1000000);
+      if (maxRows > uint32_t(vts - 4))
+        maxRows = vts - 4;
+      write(0x3a02, maxRows >> 8);
+      write(0x3a03, maxRows & 255);
+      write(0x3a14, maxRows >> 8);
+      write(0x3a15, maxRows & 255);
+      // OV3660 uses Q4 real gain here. The generic driver's enum write is not
+      // a real-gain ceiling. Keep the sensor limit and manual handoff bound equal.
+      write(0x3a18, core::cine::gainCeilingQ4 >> 8);
+      write(0x3a19, core::cine::gainCeilingQ4 & 255);
+      uint8_t aeControl = 0;
+      ok = ovReadReg(0x3a00, &aeControl) && ok;
+      write(0x3a00, aeControl & ~5u); // no night mode and no AEC freeze
+      // Same target/fast-zone formula as the pinned OV3660 vendor driver.
+      const unsigned target = (core::cine::aeLevel + 5) * 10 + 5;
+      const unsigned low = target * 23 / 25, high = target * 27 / 25;
+      write(0x3a0f, high);
+      write(0x3a10, low);
+      write(0x3a1b, high);
+      write(0x3a1e, low);
+      write(0x3a11, high * 2 > 255 ? 255 : high * 2);
+      write(0x3a1f, low / 2);
+    }
+    const uint32_t needed =
+        uint32_t((uint64_t(requestedUs) * shutter.clockHz + uint64_t(shutter.hts) * 1000000 - 1) /
+                 (uint64_t(shutter.hts) * 1000000)) +
+        8;
+    if (needed > 65535)
+      ok = false;
+    if (!request.autoExposure && needed > shutter.vts) {
+      write(0x380e, needed >> 8);
+      write(0x380f, needed & 255);
+      shutter.vts = needed;
+    }
+    const uint32_t capTicks =
+        core::cine::shutterTicks(100000, shutter.hts, shutter.vts, shutter.clockHz);
+    // Color/target updates in Auto must not replay a stale startup exposure. Preserve
+    // live sub-millisecond integration too; only cap it when restoring native VTS.
+    const uint32_t ticks =
+        request.autoExposure
+            ? (shutter.ticks > capTicks ? capTicks : shutter.ticks)
+            : core::cine::shutterTicks(requestedUs, shutter.hts, shutter.vts, shutter.clockHz);
+    if (request.autoExposure)
+      requestedGain = shutter.gainQ4 < 16 ? 16 : shutter.gainQ4 > core::cine::gainCeilingQ4 ? core::cine::gainCeilingQ4 : shutter.gainQ4;
+    write(0x3500, (ticks >> 16) & 15);
+    write(0x3501, (ticks >> 8) & 255);
+    write(0x3502, ticks & 255);
+    write(0x350a, (requestedGain >> 8) & 3);
+    write(0x350b, requestedGain & 255);
+    // Every Color mode starts with the same Sunny sensor WB. Color changes
+    // only gamma/CMX, never illuminant estimation or geometry.
+    const uint16_t sunnyWb[3] = {0x5e0, 0x410, 0x540};
+    for (unsigned i = 0; i < 3; ++i) {
+      write(0x3400 + i * 2, sunnyWb[i] >> 8);
+      write(0x3401 + i * 2, sunnyWb[i] & 255);
+    }
+    write(0x3406, 1);
+    const auto &profile = core::cine::colorProfile(core::cine::ColorMode(request.colorMode));
+    write(0x5000, (old[15] | 0x21) & ~0x80);
+    write(0x5001, (old[16] | 3) & ~0x80);
+    // Zero manual sharpening offsets; denoise settings are held fixed.
+    write(0x5308, old[17] | 0x40);
+    write(0x5302, 0);
+    write(0x5303, 0);
+    write(0x530b, 0);
+    write(0x530c, 0);
+    for (unsigned i = 0; i < 16; ++i)
+      write(0x5481 + i, profile.gamma[i]);
+    for (unsigned i = 0; i < 11; ++i)
+      write(0x5381 + i, profile.matrix[i]);
+    if (request.autoExposure)
+      write(0x3503, old[0] & ~3u);
+    if (ok) {
+      CineIspReadback result;
+      ok = jpegShutterRead(result.shutter);
+      ok = ok && (request.autoExposure ? !result.shutter.manual
+                                       : result.shutter.manual && result.shutter.ticks == ticks &&
+                                             result.shutter.gainQ4 == requestedGain);
+      for (unsigned i = 0; i < 16; ++i)
+        ok = ovReadReg(0x5481 + i, &result.gamma[i]) && ok;
+      for (unsigned i = 0; i < 11; ++i)
+        ok = ovReadReg(0x5381 + i, &result.cmx[i]) && ok;
+      ok = ovReadReg(0x5000, &result.flags[0]) && ovReadReg(0x5001, &result.flags[1]) && ok;
+      for (unsigned i = 0; i < 3; ++i) {
+        uint8_t hi = 0, lo = 0;
+        ok = ovReadReg(0x3400 + i * 2, &hi) && ovReadReg(0x3401 + i * 2, &lo) && ok;
+        result.wb[i] = (uint16_t(hi) << 8) | lo;
+      }
+      if (ok) {
+        result.shutter.requestedUs = request.autoExposure ? 0 : requestedUs;
+        result.colorMode = request.colorMode;
+        result.valid = true;
+        *output = result;
+      }
+    }
+  }
+  if (!ok && mutated) {
+    for (unsigned i = 1; i < sizeof(old); ++i)
+      (void)ovWriteReg(regs[i], old[i]);
+    (void)ovWriteReg(regs[0], old[0]);
+    output->valid = false;
+  }
+  hal::bus::unlockI2c();
+  return ok;
+}
 
 bool triggerAutofocus(uint32_t timeoutMs) {
   if (!s_initialized) return false;

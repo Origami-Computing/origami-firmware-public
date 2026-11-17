@@ -4,8 +4,9 @@
 
 namespace services { namespace photos {
 // UI-task gallery operations. The app owns selection, menus and sync-view timing.
-// Mixed JPEG/AVI entries are ordered newest-first by SD timestamp, with stable
-// camera-ID/name fallback when timestamps tie. The library owns catalog storage and browsing/network exclusion. No rendering.
+// Photos use monotonic camera IDs, independent of clock sync. Mixed JPEG/AVI
+// libraries merge by timestamp, correcting camera clock rollback in memory.
+// The library owns catalog storage and browsing/network exclusion. No rendering.
 class Library {
 public:
     enum class BrowseResult { Ready, UploadsBusy, NetworkBusy, Pending };

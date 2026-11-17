@@ -281,7 +281,7 @@ uint32_t UploadQueue::generatePath(const char* prefix, const char* ext,
                                    char* outPath, size_t outPathSize) {
     MutexGuard g(m_mutex);
     uint32_t seq;
-    if (strncmp(prefix, "IMG", 3) == 0) {
+    if (!strcmp(prefix, "IMG") || !strcmp(prefix, "VID_C")) {
         seq = m_nextImgId++;
     } else {
         seq = m_nextAudId++;

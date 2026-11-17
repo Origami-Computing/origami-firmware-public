@@ -76,6 +76,16 @@ int main(){using namespace hal::sd;
  {PhotoCatalog c;assert(c.load(true)==PhotoCatalogResult::Ok&&c.count()==3);
  assert(!strcmp(c[0].path,"/photos/IMG_00010.jpg"));assert(c[1].video&&!strcmp(c[1].path,"/videos/VID_a.AVI"));assert(!c[2].video);
  removeOk=false;assert(!c.removeAt(1)&&c.count()==3);assert(c.removeAt(1,true)&&c.count()==2);
+ // A new Cine/Stock capture before clock sync must precede older camera IDs.
+ dirs["/photos"].push_back("IMG_00204.jpg");timestamps["/photos/IMG_00204.jpg"]=0;
+ assert(c.load(true)==PhotoCatalogResult::Ok&&c.count()==4);
+ assert(!strcmp(c[0].path,"/photos/IMG_00204.jpg"));
+ assert(!strcmp(c[1].path,"/photos/IMG_00010.jpg"));assert(c[2].video);
+ auto videos=dirs["/videos"];dirs["/videos"].clear();
+ assert(c.load(true)==PhotoCatalogResult::Ok&&c.count()==3);
+ assert(!strcmp(c[0].path,"/photos/IMG_00204.jpg"));
+ assert(c.timings().metadataReads==0); // no AVI: don't open every camera JPEG
+ dirs["/videos"]=videos;
  c.clear();allocation=false;assert(c.load(true)==PhotoCatalogResult::NoMemory);allocation=true;
  dirs.erase("/photos");assert(c.load(true)==PhotoCatalogResult::Ok&&c.count()==1&&c[0].video);
  assert(c.load()==PhotoCatalogResult::Ok&&c.count()==0);

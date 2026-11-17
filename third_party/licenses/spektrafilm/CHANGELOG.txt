@@ -1,0 +1,16 @@
+2026-11-12: Gold and Portra ISP matrix data in include/core/cine_film_matrices.h.
+Derived from spektrafilm by Andrea Volpato, https://github.com/andreavolpato/spektrafilm
+Source commit: 3bb2c2d2801ff68b92019cf1dbcbb133d60832bc. CC BY-SA 4.0.
+Modified/fitted for thesephist's Kami Color study.
+Gold 200 and Portra 400 profiles baked with Kodak Portra Endura paper, sRGB input/output,
+33^3 LUTs, stops_above_midgray=log2(1/0.18), no grain/halation/spatial effects.
+Retained model chroma with original input encoded luminance (selected G5/P5).
+Least-squares fit of UV rows to natural-image colors and moderate synthetic colors,
+fixed Sunny Y row, no affine offset. Quantized signed Q7, magnitudes/signs encoded
+for OV3660 0x5381-0x538B. This approximates nonlinear data; it is not a full film model.
+No spektrafilm simulator source or full LUT is compiled into firmware.
+
+2026-11-12: Applied the shared Sunny greenward correction to the fitted Gold/Portra
+matrices. Exact signed-Q7 row deltas: U [-1,-2,0], V [-1,-4,0], Y unchanged.
+This is the existing quantized C5-minus-C3 correction (nominal -0.025Y/-0.045Y).
+Gamma, WB gains and original fitted profile attribution are unchanged.
