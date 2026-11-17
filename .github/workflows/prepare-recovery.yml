@@ -32,7 +32,27 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir public-release
-          gh release download "$VERSION" --dir public-release --pattern firmware.bin --pattern latest.json
+          gh release download "$VERSION" --dir public-release --pattern firmware.bin
+          gh release view "$VERSION" --json assets > public-release/assets.json
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, zipfile
+          root = pathlib.Path('public-release')
+          names = {a['name'] for a in json.loads((root/'assets.json').read_text())['assets']}
+          bundle = 'kamiOS-' + os.environ['VERSION'] + '.zip'
+          if bundle in names:
+              subprocess.run(['gh', 'release', 'download', os.environ['VERSION'], '--dir', str(root), '--pattern', bundle], check=True)
+              with zipfile.ZipFile(root/bundle) as archive:
+                  if archive.namelist().count('latest.json') != 1:
+                      raise SystemExit('Expected one signed manifest in release bundle')
+                  if archive.read('firmware.bin') != (root/'firmware.bin').read_bytes():
+                      raise SystemExit('Bundle firmware differs from published binary')
+                  (root/'latest.json').write_bytes(archive.read('latest.json'))
+          elif 'latest.json' in names:
+              # Older releases retain a standalone manifest.
+              subprocess.run(['gh', 'release', 'download', os.environ['VERSION'], '--dir', str(root), '--pattern', 'latest.json'], check=True)
+          else:
+              raise SystemExit('Release has no signed manifest or complete bundle')
+          PY
       - name: Verify exact Public bytes and sign compatibility metadata
         env:
           OTA_SIGNING_KEY: ${{ secrets.OTA_SIGNING_KEY }}

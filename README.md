@@ -104,6 +104,18 @@ flowchart TD
 
 Backend account setup is separate. Two slots do not guarantee automatic recovery after a bad boot; recovery depends on the installed bootloader and device state.
 
+## OTA not working? Recover over USB
+
+**[Open the Kami recovery page](https://origami-computing.github.io/origami-firmware-public/)** in desktop Chrome or Edge.
+
+| Step | What to do |
+| --- | --- |
+| 1. Connect | Use a USB data cable and close other device tools. Click **Connect my Kami**. |
+| 2. Recover | Choose **Install Public** and keep the cable connected until verification finishes. |
+| 3. Update | Restart Kami, connect to Wi-Fi, then use **Update Firmware** for the latest Public release. |
+
+The page currently installs Public **v1.0.5** as a recovery bridge, not the latest release. It checks the existing layout and is designed to preserve account pairing, Wi-Fi, settings and SD files. Unsupported layouts stop before writing. It is for existing supported 16 MB Kami devices, not blank-device setup or recovery of deleted files. If it cannot connect or rejects the layout, follow its troubleshooting guidance or contact support; do not erase the device.
+
 ## If you need to flash over USB
 
 **Never write `firmware.bin` at address zero or erase the whole device.** It is an application image, not a factory installer.
@@ -111,7 +123,8 @@ Backend account setup is separate. Two slots do not guarantee automatic recovery
 | Situation | Use |
 | --- | --- |
 | Working device, normal upgrade | On-device **Update Firmware**. |
-| Development or recovery, compatible layout intact | USB application-only flashing into the confirmed boot slot. |
+| OTA failure on a supported existing device | [Guided USB recovery](https://origami-computing.github.io/origami-firmware-public/), then update on-device. |
+| Developer needs manual flashing | Application-only flashing into the confirmed boot slot. |
 | Blank device or damaged partition table | Matching factory/recovery package and provisioning procedure; this release ZIP is insufficient. |
 
 | USB step | Required check |

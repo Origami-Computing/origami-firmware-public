@@ -68,6 +68,12 @@ def render(changelog, version, metadata, previous=None):
             'Use the on-device updater for a normal upgrade. The ZIP is not a factory installer; '
             'do not flash firmware.bin at address zero. Preserve settings and the partition layout.\n\n'
             'Use the two download links above. GitHub’s automatic “Source code” archives are repository snapshots, not update packages.\n\n'
+            '## OTA not working?\n\n'
+            '**[Recover Kami over USB](https://origami-computing.github.io/origami-firmware-public/)** '
+            'using Chrome or Edge on a computer and a USB data cable. Follow the page through verification, '
+            'then restart and update on-device to the latest Public release. The recovery version shown on '
+            'that page may be older than this release. It is for supported existing devices, not factory setup '
+            'or recovery of deleted files. It checks the layout and is designed to preserve settings and SD files.\n\n'
             '<details>\n<summary>Build details</summary>\n\n'
             f'Qualified source: [{commit[:7]}]({REPOSITORY}/commit/{commit})\n\n'
             f'Firmware SHA-256: `{digest}`\n\n</details>\n')

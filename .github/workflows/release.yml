@@ -110,10 +110,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          python3 - <<'PYNOTES'
+          import pathlib
+          provenance = pathlib.Path('dist/REVIEW.txt').read_text()
+          pathlib.Path('DRAFT-NOTES.md').write_text(
+              '## Internal test build — not a customer download\n\n'
+              'Retained for maintainer testing and release provenance. This draft does not publish an OTA update.\n\n'
+              '[Latest public firmware](https://github.com/Origami-Computing/origami-firmware-public/releases/latest)'
+              ' · [OTA troubleshooting and USB recovery](https://origami-computing.github.io/origami-firmware-public/)\n\n'
+              '<details>\n<summary>Candidate build record</summary>\n\n' + provenance + '\n</details>\n')
+          PYNOTES
           gh release create "$REVIEW_TAG" \
             --target "$GITHUB_SHA" --draft --latest=false \
-            --title "kamiOS 1.0 — qualification $REVIEW_TAG" \
-            --notes-file dist/REVIEW.txt \
+            --title "INTERNAL TEST BUILD — $REVIEW_TAG" \
+            --notes-file DRAFT-NOTES.md \
             dist/*
       - name: Retain signed legacy bridge for private migration
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
