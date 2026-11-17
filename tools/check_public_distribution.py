@@ -20,6 +20,8 @@ INTERNAL_FILES = {
     'scripts/tests/test_firmware_tool.py', 'scripts/tests/test_firmware_browser.js',
     'scripts/tests/test_bulk_flash.py', 'tools/ota/access_keys.py',
     'tools/ota/build_installers.py', 'docs/firmware-tool.md',
+    'docs/firmware tool setup.md', 'docs/firmware-tool-team-readme.md',
+    'setup.md', 'docs/setup.md',
 }
 LOCAL_NAMES = {'.firmware-tool.json', '.ota-provisioning.json'}
 

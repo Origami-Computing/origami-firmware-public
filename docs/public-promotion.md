@@ -54,6 +54,11 @@ copy them here during promotion. Retain public firmware services, public OTA
 publishing, host tests, licenses and required build helpers. Review shared
 dependencies before excluding them. No customer updater is required.
 
+The internal workstation setup guide also stays private: exclude
+`docs/firmware tool setup.md`, its previous name
+`docs/firmware-tool-team-readme.md`, and the `setup.md` / `docs/setup.md`
+aliases. Do not copy its contents or private README links into public docs.
+
 Run `python3 tools/check_public_distribution.py` before pushing a promotion
 branch. CI repeats this check. Source packaging checks its input paths; release,
 qualification and publication workflows also inspect the source archive with
