@@ -64,6 +64,6 @@ int main(){
             path = Path(directory)
             (path/'test.cpp').write_text(code)
             subprocess.run(['c++','-std=c++17','-fsanitize=address,undefined',
-                            '-DORIGAMI_PRODUCTION_BUILD=1', '-I'+str(ROOT/'include'),
+                            '-DOTA_BUILD_CHANNEL="private"', '-DORIGAMI_PRODUCTION_BUILD=1', '-I'+str(ROOT/'include'),
                             str(path/'test.cpp'),'-o',str(path/'test')],check=True)
             subprocess.run([str(path/'test')],check=True)

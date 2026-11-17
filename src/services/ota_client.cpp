@@ -133,7 +133,20 @@ static bool ensurePublicDefault() {
     return s_publicDefaultReady;
 }
 
+bool publicChannelOnly() {
+    return core::release_policy::productionOnly && strcmp(OTA_BUILD_CHANNEL, "public") == 0;
+}
+
+static bool buildAllowsChannel(ReleaseChannel channel) {
+    if (publicChannelOnly() && channel != ReleaseChannel::Public) {
+        setError("Public firmware uses Public updates");
+        return false;
+    }
+    return true;
+}
+
 ReleaseChannel releaseChannel() {
+    if (publicChannelOnly()) return ReleaseChannel::Public;
     if (!ensurePublicDefault() || !hasAuthToken()) return ReleaseChannel::Public;
     const uint8_t saved = core::store::getU8(kSettingsNamespace, kChannelKey, 0);
     return saved == 1 ? ReleaseChannel::Staging :
@@ -145,6 +158,7 @@ bool setReleaseChannel(ReleaseChannel channel) {
     if (channel != ReleaseChannel::Public && channel != ReleaseChannel::Staging && channel != ReleaseChannel::Private) {
         setError("Invalid update channel"); return false;
     }
+    if (!buildAllowsChannel(channel)) return false;
     if (!ensurePublicDefault()) { setError("Public default save failed; restart to retry"); return false; }
     if (channel != ReleaseChannel::Public) {
         // Missing enrollment is actionable even if another network owner is busy.
@@ -299,6 +313,7 @@ static bool decodeHash(const char* text, uint8_t out[32]) {
 // Public distribution is anonymous, but every manifest and image remains verified.
 // Developer authorization is required for both non-public channels on each request.
 static bool authorizeRelease(ReleaseChannel channel) {
+    if (!buildAllowsChannel(channel)) return false;
     if (channel == ReleaseChannel::Public) return true;
     if (channel != ReleaseChannel::Private && channel != ReleaseChannel::Staging) {
         setError("Invalid update channel"); return false;

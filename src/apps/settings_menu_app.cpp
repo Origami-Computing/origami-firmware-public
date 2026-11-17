@@ -906,7 +906,9 @@ void onInput(hal::input::InputEvent ev) {
       case ROW_SENSORS:
         showSensorsMenu();
         return;
-      case ROW_OTA_CHANNEL: beginValueEdit(); return;
+      case ROW_OTA_CHANNEL:
+        if (!services::ota_client::publicChannelOnly()) beginValueEdit();
+        return;
       case -1: // Conditional update notice uses the existing signed installer.
       case ROW_UPDATE_FW:
         s_resumeSub = SUB_MAIN;

@@ -6,6 +6,8 @@ s=(root/'src/services/ota_client.cpp').read_text()
 a=s.index('static bool s_publicDefaultAttempted');b=s.index('const char* releaseChannelName',a)
 code=r'''
 #include <cassert>
+namespace core { namespace release_policy { constexpr bool productionOnly=true; } }
+const char* OTA_BUILD_CHANNEL="public";
 #include <cstring>
 #include <cstdint>
 #include <initializer_list>
@@ -22,6 +24,14 @@ bool hasAuthToken(){return auth;}bool refreshAccess(){return auth;}void setError
 '''+s[a:b]+r'''
 void boot(){s_publicDefaultAttempted=s_publicDefaultReady=false;}
 int main(){
+ for(int old:{0,1,2}){
+  saved=old;marker=1;writes=0;boot();
+  assert(releaseChannel()==ReleaseChannel::Public);
+  assert(!setReleaseChannel(ReleaseChannel::Private));
+  assert(!setReleaseChannel(ReleaseChannel::Staging));
+  assert(writes==0);
+ }
+ OTA_BUILD_CHANNEL="private";
  for(int old:{0,1,2}){saved=old;marker=writes=failAt=0;boot();assert(releaseChannel()==ReleaseChannel::Public&&saved==0&&marker==1&&writes==2);
   for(int i=0;i<100;i++)assert(releaseChannel()==ReleaseChannel::Public);assert(writes==2);
   assert(setReleaseChannel(ReleaseChannel::Private));boot();assert(releaseChannel()==ReleaseChannel::Private);
