@@ -27,11 +27,20 @@ class DistributionTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 check_paths([path])
 
+    def test_private_setup_guides(self):
+        for name in ['docs/firmware tool setup.md', 'docs/firmware-tool-team-readme.md',
+                     'setup.md', 'docs/setup.md']:
+            for prefix in ['', 'application/']:
+                for path in [prefix + name, (prefix + name).upper().replace('/', '\\')]:
+                    with self.subTest(path=path), self.assertRaises(ValueError):
+                        check_paths([path])
+
     def test_actual_archives(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)/'source.tar.gz'
             for name, blocked in [('application/LICENSE', False),
-                                  ('application/scripts/firmware_tool.py', True)]:
+                                  ('application/scripts/firmware_tool.py', True),
+                                  ('application/docs/firmware tool setup.md', True)]:
                 with tarfile.open(path, 'w:gz') as archive:
                     entry = tarfile.TarInfo(name); entry.size = 4
                     archive.addfile(entry, io.BytesIO(b'test'))
