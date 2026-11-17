@@ -31,6 +31,9 @@ release. Automated checks enforce format and version, not the truth or completen
 of prose: the promotion reviewer must check every user-facing change against the
 public diff and actual verification. Do not claim device validation from a build.
 
-Use `## vX.Y.Z`, then `Changes since vA.B.C.`, then plain `- ` bullets. Historical
+Use `## vX.Y.Z`, then `Published: YYYY-MM-DD (UTC).`, then
+`Changes since vA.B.C.`, then plain `- ` bullets. Use the publication date in UTC
+and confirm it before publishing if the schedule changes. Backfilled entries use
+GitHub’s original `published_at` date, never the date the notes were edited. Historical
 entries stay as release records. For a tooling-only or repackaging release, say
 exactly that rather than inventing firmware fixes. See the [promotion runbook](docs/public-promotion.md).

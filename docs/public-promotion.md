@@ -212,6 +212,9 @@ Remaining blockers and owners:
 
 Before qualification, add the version's concise entry to [CHANGELOG.md](../CHANGELOG.md)
 and follow the [contribution requirements](../CONTRIBUTING.md#release-notes-are-part-of-a-production-promotion).
+Include the publication date as `Published: YYYY-MM-DD (UTC).` and confirm it
+against the actual publication day before publishing. Historical entries retain
+the original GitHub publication date.
 The baseline must be the latest published public version, not the previous private
 build or the original feature introduction. Review the full public diff for coverage.
 The publisher refuses missing, placeholder or mismatched notes and a stale baseline.

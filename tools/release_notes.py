@@ -1,5 +1,6 @@
 """Validate the release log and package already-verified public candidate assets."""
 import argparse
+from datetime import date
 import hashlib
 import json
 from pathlib import Path
@@ -38,6 +39,13 @@ def release_entry(changelog, version, previous=None):
         raise ValueError(f'Add a brief, reviewed CHANGELOG.md entry for {version}')
     body = entries[version].strip()
     lines = body.splitlines()
+    published = re.fullmatch(r'Published: (\d{4}-\d{2}-\d{2}) \(UTC\)\.', lines[0] if lines else '')
+    if not published:
+        raise ValueError('Entry must include Published: YYYY-MM-DD (UTC).')
+    date.fromisoformat(published[1])
+    lines = lines[1:]
+    while lines and not lines[0]:
+        lines.pop(0)
     match = re.fullmatch(r'Changes since (' + VERSION + r')\.', lines[0] if lines else '')
     if not match or version_tuple(match[1]) >= version_tuple(version):
         raise ValueError('Entry must identify an older release: Changes since vX.Y.Z.')

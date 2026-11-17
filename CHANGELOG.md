@@ -9,6 +9,8 @@ builds, not published updates; their changes are included under v1.0.8.
 
 ## v1.0.12
 
+Published: 2026-11-17 (UTC).
+
 Changes since v1.0.11.
 
 - Keep public firmware on the Public update channel, including devices with a saved private or staging preference.
@@ -19,12 +21,16 @@ Changes since v1.0.11.
 
 ## v1.0.11
 
+Published: 2026-11-16 (UTC).
+
 Changes since v1.0.10.
 
 - Add an A+B exit confirmation when replaying the tutorial, allowing users to leave the replay without completing every lesson.
 - Offer Resume or Exit and pause tutorial timing while the exit confirmation is open.
 
 ## v1.0.10
+
+Published: 2026-11-16 (UTC).
 
 Changes since v1.0.9.
 
@@ -33,6 +39,8 @@ Changes since v1.0.9.
 
 ## v1.0.9
 
+Published: 2026-11-14 (UTC).
+
 Changes since v1.0.8.
 
 - Show photo and video upload progress using transferred bytes, with sizes displayed in megabytes.
@@ -40,6 +48,8 @@ Changes since v1.0.8.
 - Remove manual and automatic bulk app sync from Custom Apps; individual App Store installation remains available.
 
 ## v1.0.8
+
+Published: 2026-11-13 (UTC).
 
 Changes since v1.0.5.
 
@@ -54,6 +64,8 @@ Changes since v1.0.5.
 
 ## v1.0.5
 
+Published: 2026-11-01 (UTC).
+
 Changes since v1.0.4.
 
 - Allow Public firmware updates without an OTA enrollment key, while keeping Private and Staging access restricted.
@@ -61,12 +73,16 @@ Changes since v1.0.4.
 
 ## v1.0.4
 
+Published: 2026-10-31 (UTC).
+
 Changes since v1.0.3.
 
 - Add on-device video recording, including microphone audio, and local video playback.
 - Include saved videos alongside still photos in Photos so clips can be browsed and opened from the gallery.
 
 ## v1.0.3
+
+Published: 2026-10-31 (UTC).
 
 Changes since v1.0.2.
 
@@ -76,6 +92,8 @@ Changes since v1.0.2.
 
 ## v1.0.2
 
+Published: 2026-10-30 (UTC).
+
 Changes since v1.0.1.
 
 - Add structured device-usage reporting with buffered, batched delivery and retry-safe persistence.
@@ -83,6 +101,8 @@ Changes since v1.0.1.
 - Publish the security reporting policy and vulnerability-reporting contact.
 
 ## v1.0.1
+
+Published: 2026-10-28 (UTC).
 
 Initial published release.
 
