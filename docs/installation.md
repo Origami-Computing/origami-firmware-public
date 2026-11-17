@@ -10,6 +10,14 @@ Copy `sd_flash/eyes/` and `sd_flash/boot/` into the root of an existing FAT32 ca
 
 Use **Update Firmware** on the device and confirm the offered Public update. Public firmware since v1.0.5 needs no OTA enrollment key; Private and Staging remain restricted. Backend registration is separate. An application update preserves the existing partition layout, settings and SD files. See the [flash and update guide](../README.md#how-ota-works).
 
+## OTA failure: guided recovery
+
+Start at **[Kami recovery](https://origami-computing.github.io/origami-firmware-public/)** using Chrome or Edge on a computer and a USB data cable. Close other device tools, choose **Connect my Kami**, then **Install Public**, and wait for verification.
+
+The page currently installs Public v1.0.5 on supported existing 16 MB devices. After restarting, connect to Wi-Fi and use the device updater to reach the latest Public release without an OTA enrollment key. This is a firmware recovery bridge, not a deleted-file recovery tool or factory installer.
+
+The recovery page checks the installed layout and is designed to preserve pairing, Wi-Fi, settings and SD files. Unsupported layouts stop before writing. Follow the page's troubleshooting steps or contact support if it cannot proceed; do not substitute erase-all or a factory reset.
+
 ## USB recovery and new hardware
 
 Do not write application-only firmware at address zero or assume `0x10000` is the active slot. Confirm the device hardware, partition table and selected OTA slot first. A recovery procedure must preserve NVS, SD data and the shipping partition. Merged images and erase-all can destroy settings and credentials.

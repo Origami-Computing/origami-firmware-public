@@ -11,6 +11,7 @@ on:
         required: true
         type: string
 permissions:
+  actions: read
   contents: read
 concurrency:
   group: public-firmware-publication
@@ -21,6 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
+      actions: read
       contents: write
       id-token: write
     env:
@@ -88,7 +90,7 @@ jobs:
               raise SystemExit('Candidate tag must match the stable release version')
           PYCODE
           mkdir dist
-          gh release download "$CANDIDATE_TAG" --dir dist --pattern firmware.bin --pattern latest.json --pattern REVIEW.json --pattern REVIEW.txt --pattern LICENSE --pattern THIRD_PARTY_NOTICES.md --pattern source-review.tar.gz --pattern NOTICES-REVIEW.txt --pattern SHA256SUMS.txt
+          python3 tools/fetch_release_candidate.py --tag "$CANDIDATE_TAG" --directory dist
           python3 tools/verify_release_candidate.py --directory dist --version "$VERSION"
           python3 tools/check_public_distribution.py --archive dist/source-review.tar.gz
           python3 tools/release_notes.py --version "$VERSION" --directory dist

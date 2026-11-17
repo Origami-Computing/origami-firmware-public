@@ -1,4 +1,4 @@
-name: Build firmware draft release
+name: Build firmware qualification candidate
 on:
   workflow_dispatch:
     inputs:
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read
     env:
       REVIEW_TAG: ${{ inputs.tag }}
     steps:
@@ -106,15 +106,13 @@ jobs:
           paths=sorted(p for p in Path('dist').iterdir() if p.name!='SHA256SUMS.txt')
           Path('dist/SHA256SUMS.txt').write_text(''.join(hashlib.sha256(p.read_bytes()).hexdigest()+'  '+p.name+'\n' for p in paths))
           PY
-      - name: Create draft release only
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$REVIEW_TAG" \
-            --target "$GITHUB_SHA" --draft --latest=false \
-            --title "kamiOS 1.0 — qualification $REVIEW_TAG" \
-            --notes-file dist/REVIEW.txt \
-            dist/*
+      - name: Retain candidate outside GitHub Releases
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-${{ inputs.tag }}
+          path: dist/*
+          retention-days: 90
+          if-no-files-found: error
       - name: Retain signed legacy bridge for private migration
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
