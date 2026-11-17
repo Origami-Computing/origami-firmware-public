@@ -35,6 +35,7 @@ jobs:
               raise SystemExit('Use a versioned public-review tag')
           PY
           python3 tools/check_release_approval.py --digest > /tmp/source-digest.txt
+          python3 tools/release_notes.py
           python3 tools/check_tracked_secrets.py
           python3 tools/check_architecture_dependencies.py
           python3 tools/test_architecture_dependencies.py

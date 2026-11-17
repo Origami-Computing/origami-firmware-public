@@ -43,6 +43,12 @@ jobs:
           configured=re.search(r'OTA_FIRMWARE_VERSION=.*?(v\d+\.\d+\.\d+)',pathlib.Path('platformio.ini').read_text()).group(1)
           if version != configured: raise SystemExit('Tag must match the reviewed build version')
           PY
+      - name: Require changes since the latest public release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PREVIOUS_VERSION=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          python3 tools/release_notes.py --version "$VERSION" --previous-version "$PREVIOUS_VERSION"
       - name: Security regressions
         run: |
           python3 tools/check_architecture_dependencies.py
@@ -85,12 +91,8 @@ jobs:
           gh release download "$CANDIDATE_TAG" --dir dist --pattern firmware.bin --pattern latest.json --pattern REVIEW.json --pattern REVIEW.txt --pattern LICENSE --pattern THIRD_PARTY_NOTICES.md --pattern source-review.tar.gz --pattern NOTICES-REVIEW.txt --pattern SHA256SUMS.txt
           python3 tools/verify_release_candidate.py --directory dist --version "$VERSION"
           python3 tools/check_public_distribution.py --archive dist/source-review.tar.gz
-          python3 - <<'PYCODE'
-          import os,json,pathlib
-          metadata=json.loads(pathlib.Path('dist/REVIEW.json').read_text())
-          pathlib.Path('RELEASE.txt').write_text('kamiOS 1.0 ('+os.environ['VERSION']+')\nQualified source: '+metadata['source_commit']+'\nFirmware SHA-256: '+metadata['firmware_sha256']+'\nApplication image only. Preserve NVS and partition layout.\n')
-          PYCODE
-      - name: Create draft containing public binary and source
+          python3 tools/release_notes.py --version "$VERSION" --directory dist
+      - name: Create draft with firmware and complete release bundle
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -103,9 +105,18 @@ jobs:
               if not release['isDraft'] or release['targetCommitish'] != sha:
                   raise SystemExit('Refusing to overwrite a published release or another source revision')
           else:
-              subprocess.run(['gh','release','create',version,'--target',sha,'--draft','--title','kamiOS 1.0 ('+version+')','--notes-file','RELEASE.txt'],check=True)
+              subprocess.run(['gh','release','create',version,'--target',sha,'--draft','--title','kamiOS 1.0 ('+version+')','--notes-file','release-output/RELEASE-NOTES.md'],check=True)
           PY
-          gh release upload "$VERSION" dist/* --clobber
+          gh release edit "$VERSION" --notes-file release-output/RELEASE-NOTES.md
+          gh release upload "$VERSION" dist/firmware.bin "release-output/kamiOS-$VERSION.zip" --clobber
+          # Fail closed on an unexpected draft asset instead of deleting it silently.
+          gh release view "$VERSION" --json assets > release-output/assets.json
+          python3 - <<'PY'
+          import json, os, pathlib
+          names = {a['name'] for a in json.loads(pathlib.Path('release-output/assets.json').read_text())['assets']}
+          if names != {'firmware.bin', 'kamiOS-' + os.environ['VERSION'] + '.zip'}:
+              raise SystemExit('Unexpected draft assets; review before publication')
+          PY
       - name: Use public-channel publisher role
         uses: aws-actions/configure-aws-credentials@ff717079ee2060e4bcee96c4779b553acc87447c
         with:

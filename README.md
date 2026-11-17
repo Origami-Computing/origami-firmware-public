@@ -30,15 +30,54 @@ pio run -e esp32-s3-menu-n16r8-production
 
 This produces a **custom production-policy build**, not an official signed OTA release. The pinned Arduino framework, libraries, and compatibility wrappers are part of the build contract. See [building](docs/building.md).
 
-## Firmware
+## Updates and downloads
 
-This source targets **v1.0.6**. It adds a reworked onboarding flow and Wi-Fi setup by sound, an App Store that installs signed native apps by QR or six-digit code, IMU calibration, a clock that survives deep sleep, battery sleep with alarm wake, faster wake to Home, automatic upload of saved recordings, and memory and network recovery fixes. Native app packages load only with a valid publisher signature and matching hashes.
+For a normal update, use **Update Firmware** on the device, review the offered version, and confirm installation over Wi-Fi. Read the [release log](CHANGELOG.md) for exactly what changed since the previous version.
 
-Earlier releases added on-device video recording with audio and local playback within Photos (v1.0.4) and Public updates without an OTA enrollment key (v1.0.5).
+For manual downloads, open the [latest release](https://github.com/Origami-Computing/origami-firmware-public/releases/latest):
 
-Run `python3 tools/test_mp3_metadata.py` and `python3 tools/test_playback_start_admission.py` for the metadata, decoder, seeking and failed-start regression checks.
+| Download | Choose this when… |
+| --- | --- |
+| **firmware.bin** | You need the application image for an existing compatible device. |
+| **kamiOS-vX.Y.Z.zip** | You want the complete release bundle: the same image, release notes, corresponding source, licenses and verification files. |
 
-`firmware.bin` is an application image, not a full-device installer. Do not write it at address zero. [Installation notes](docs/installation.md) explain the current review boundary. Credentials and OTA access must be provisioned separately; they are never distributed with this repository. The minimal owner-confirmed SD artwork is included under `sd_flash/`.
+There is **one release ZIP**. GitHub's additional “Source code (zip)” and “Source code (tar.gz)” links are [automatic repository snapshots](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases), not install packages; you do not need them to update. The complete bundle is not a factory installer either. The source version is in `platformio.ini`; main may contain changes newer than the published release.
+
+## Where firmware and custom apps live
+
+The device has **16 MiB of flash** for persistent storage, **8 MiB of PSRAM** for working memory, and an SD card for media and apps. PSRAM is cleared on power-off; it is not extra storage.
+
+| Flash area | Purpose |
+| --- | --- |
+| Firmware slot A — 6 MiB | One complete kamiOS image. |
+| Firmware slot B — 6 MiB | A second image, so an update can be written without overwriting the running firmware. |
+| Settings and system areas | Wi-Fi/settings, boot selection, crash information and shipping state. |
+| Optional custom-app area — about 3.8 MiB | Separate persistent storage for native apps, **only on devices provisioned with the compatible `customapps` partition**. |
+
+The [current partition table](partitions_ota_n16r8.csv) does **not** declare that optional app partition. The storage code supports it at `0xC30000` with size `0x3D0000`, but unused flash is not automatically an app filesystem. Native App Store downloads fall back to SD storage when that partition is absent. Enabling it needs a separately verified partition migration; installing a firmware update alone does not create it.
+
+Custom apps do not consume the spare OTA slot. Lua widgets run from SD without rebuilding kamiOS. Signed native apps install separately through App Store and load into memory when opened; their ELF payload is currently limited to 512 KiB, with actual execution also limited by available memory and API compatibility. Adding C++ directly to the firmware is different: it increases the OS image, which must fit inside one 6 MiB slot. Photos, recordings and videos stay on SD.
+
+## How OTA works
+
+1. The device fetches update information over HTTPS and checks the signed manifest, version, expected image hash, hardware and partition-layout compatibility.
+2. After you confirm, it downloads the image into the inactive firmware slot. The currently running image stays intact during the download.
+3. The downloaded bytes are checked against the signed hash. Only a successfully validated image is selected for the next boot. The device then restarts into the update.
+
+A normal OTA update replaces firmware only. It preserves settings, SD files and a separately provisioned custom-app partition; it does not resize partitions or install a bootloader. Keeping two images does not guarantee automatic recovery from every failure after reboot—recovery also depends on the installed bootloader and device state.
+
+Public firmware updates since v1.0.5 need no OTA enrollment key. Private and Staging channels retain developer authorization. Backend account setup is separate from permission to download an OS update.
+
+## If you need to flash over USB
+
+Use USB for development or recovery when the normal updater cannot be used. **Do not write `firmware.bin` at address zero or erase the whole device.** It contains the OS application, not the bootloader, partition table or factory configuration.
+
+1. Confirm the board is rev-4 ESP32-S3 N16R8 and inspect its installed partition table and selected boot slot. Do not guess the slot from the filename.
+2. Back up the device privately, including settings and partition/boot information. Close other serial monitors and keep power stable.
+3. Verify the download hash and write only the application image to the confirmed compatible application slot. The standard slot addresses are `0x10000` and `0x610000`; which one to use depends on the device's boot selection. Preserve all other flash regions.
+4. Verify the written bytes, reboot, and confirm the version, settings, SD access and the affected features.
+
+A blank device or a damaged partition table needs a matching recovery/factory package and provisioning procedure; this release bundle is not sufficient. See [installation and recovery](docs/installation.md) before writing anything. The included SD artwork lives in `sd_flash/` in the source companion.
 
 ## Explore
 
@@ -53,5 +92,3 @@ Run `python3 tools/test_mp3_metadata.py` and `python3 tools/test_playback_start_
 ## License
 
 Origami’s original source is offered under [MIT](LICENSE), as selected for this migration. Existing third-party licenses continue to govern their respective components. Origami confirmed ownership of its artwork and generated font for this migration. Upstream components retain their own licenses; see [distribution requirements](docs/distribution.md).
-
-Public updates since v1.0.5 require no OTA enrollment key. HTTPS, signed manifests, image hashes, hardware/layout checks and update confirmation remain mandatory. Private and Staging retain developer authorization. This change only takes effect after installation; legacy recovery is qualified separately for each supported updater and partition layout.
