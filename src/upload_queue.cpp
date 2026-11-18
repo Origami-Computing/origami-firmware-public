@@ -1057,6 +1057,7 @@ UploadQueue::View UploadQueue::view(const char* preferredId, int fallbackIndex) 
     MutexGuard g(m_mutex);
     View v;
     if (!g.taken || !m_items) return v;
+    v.counts=countsUnlocked();
     v.count=m_count; v.paused=m_uploadPaused; v.resetPending=m_resetAfterFlight;
     if (!m_count) return v;
     v.index=constrain(fallbackIndex,0,m_count-1);
@@ -1206,7 +1207,11 @@ UploadQueue::Counts UploadQueue::countsUnlocked() const {
     result.confirmed = m_confirmedCount;
     result.total = m_count;
     for (int i = 0; i < m_count; i++) {
-        if (m_items[i].status == QSTATUS_PENDING) ++result.pending;
+        if (m_items[i].status == QSTATUS_PENDING) {
+            ++result.pending;
+            if (m_items[i].lastError[0] && strncmp(m_items[i].lastError,"Aborted",7))
+                ++result.retrying;
+        }
         if (m_items[i].status == QSTATUS_UPLOADING) ++result.active;
         if (m_items[i].status == QSTATUS_FAILED) ++result.failed;
     }
@@ -1220,8 +1225,8 @@ void UploadQueue::dumpDebugState() {
         return;
     }
     const uint32_t now = millis();
-    Serial.printf("QUEUE STATUS count=%d pending=%d worker=%u metadata=PSRAM\n",
-                  m_count, countsUnlocked().pending, workerRunning() ? 1u : 0u);
+    Serial.printf("QUEUE STATUS count=%d pending=%d worker=%u metadata=PSRAM paused=%u\n",
+                  m_count, countsUnlocked().pending, workerRunning() ? 1u : 0u, m_uploadPaused.load() ? 1u : 0u);
     for (int i = 0; i < m_count; i++) {
         const QueueItem& item = m_items[i];
         const uint32_t waitMs = upload_queue_policy::deadlinePending(now, item.nextEligibleAt)

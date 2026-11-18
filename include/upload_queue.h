@@ -95,7 +95,8 @@ public:
     };
 
     // One mutex-protected observation; pending excludes active transfers.
-    struct Counts { int total = 0, pending = 0, failed = 0, active = 0; uint32_t confirmed = 0; };
+    // retrying is the subset of pending items retaining a non-cancellation error.
+    struct Counts { int total = 0, pending = 0, failed = 0, active = 0, retrying = 0; uint32_t confirmed = 0; };
     Counts counts() const;
     int  size()         const { return counts().total; }
     int  pendingCount() const { return counts().pending; }
@@ -115,6 +116,7 @@ public:
 
     struct View {
         QueueItem item{};
+        Counts counts{};
         int count = 0, index = -1;
         uint32_t waitMs = 0;
         bool paused = false, forced = false, resetPending = false;

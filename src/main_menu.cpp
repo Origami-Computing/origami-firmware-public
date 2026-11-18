@@ -347,6 +347,17 @@ static void uiTask(void*) {
 #endif
         }
         const bool extPower = s_extPowerCached;
+        // Automatic sleep gets a fresh interval after unplugging. Keep this
+        // separate from lastActivityMs: return-to-home still tracks interaction
+        // while the device is connected to external power.
+        static bool s_wasExtPower = false;
+        static uint32_t s_batteryIdleStartMs = 0;
+        if (extPower) {
+            s_wasExtPower = true;
+        } else if (s_wasExtPower) {
+            s_batteryIdleStartMs = now;
+            s_wasExtPower = false;
+        }
 
         // Use a signed delta so a lastActivityMs that is momentarily *ahead* of
         // `now` does not underflow. `now` is sampled once at the top of the loop,
@@ -356,6 +367,8 @@ static void uiTask(void*) {
         int32_t idleDelta = (int32_t)(now - services::lastActivityMs());
         if (idleDelta < 0) idleDelta = 0;
         const uint32_t idleDur = (uint32_t)idleDelta;
+        const uint32_t batteryIdleDur = (uint32_t)(now - s_batteryIdleStartMs);
+        const uint32_t sleepIdleDur = idleDur < batteryIdleDur ? idleDur : batteryIdleDur;
 
         if (runtimePolicy.allowIdleReturn && !fsBusy) {
             if (idleDur >= IDLE_RETURN_TO_KAMI_HOME_MS) {
@@ -364,15 +377,15 @@ static void uiTask(void*) {
                 } else if (!apps::agent::isAtHomescreen()) {
                     apps::agent::returnToHomescreen();
                 }
-                // Do not reset the idle timer — the user is still away; sleep should
-                // fire at the configured timeout from the last real interaction.
+                // Do not reset the idle timer: returning home is not activity.
+                // Automatic sleep uses the later of interaction and unplugging.
             }
         }
 
         if (runtimePolicy.allowBatterySleep && !fsBusy) {
             if (!extPower &&
                 core::sleep_timer::enabled() &&
-                idleDur >= core::sleep_timer::milliseconds() &&
+                sleepIdleDur >= core::sleep_timer::milliseconds() &&
                 !services::automation::shouldDeferBatterySleep()) {
                 services::doBatterySleep();
             }

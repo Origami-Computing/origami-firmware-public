@@ -663,7 +663,7 @@ void onInput(hal::input::InputEvent ev) {
       } else if(s_uploadField==1) {
         const auto result=settingsUploadQueue().forceSend(s_uploadId);
         uploadNotice(result==UploadQueue::ForceResult::Scheduled?"Attempt requested":
-                     result==UploadQueue::ForceResult::Busy?"Another force send\nis already pending":
+                     result==UploadQueue::ForceResult::Busy?"Another send is pending":
                      result==UploadQueue::ForceResult::AlreadyUploading?"Already uploading":"Item no longer queued");
       } else if (s_uploadField == 2) {
         const bool reset=settingsUploadQueue().resetRetryHistory();
@@ -1159,32 +1159,63 @@ static void buildSettingsScene(ui::scene::Scene& scene, int16_t width, int16_t h
     case SUB_UPLOADS: {
       refreshUploadView();
       const auto& v=s_uploadView;
-      char header[40],name[32],detail[80];
-      snprintf(header,sizeof(header),"%d queued | %s",v.count,hal::wifi::connected()?"Online":"Offline");
-      scene.addLabel("uploads.summary",{14,46,(int16_t)(width-28),22},header,kUiFg,kUiBg,2,ui::scene::TextAlign::MiddleCenter,2);
-      if(v.index<0) strlcpy(name,"No queued items",sizeof(name));
-      else if(strlen(v.item.fileName)>20) snprintf(name,sizeof(name),"%.17s...",v.item.fileName);
+      const auto counts=v.counts;
+      const auto server=core::secrets::serverMode();
+      char title[32],metric[12],name[40],state[80],position[24];
+      snprintf(title,sizeof(title),"UPLOADS  /  %s",core::secrets::serverModeName(server));
+      scene.addLabel("uploads.title",{16,38,(int16_t)(width-32),20},title,kUiFg,kUiBg,2,ui::scene::TextAlign::TopLeft,2);
+      scene.addRect("uploads.rule",{16,63,(int16_t)(width-32),1},kUiPanel,0,2);
+      const int16_t metricX[3]={24,112,200};
+      const int metricCount[3]={counts.pending,counts.active,counts.failed};
+      const char* const metricName[3]={"WAITING","SENDING","FAILED"};
+      for(int i=0;i<3;++i) {
+        char id[32];
+        snprintf(metric,sizeof(metric),"%d",metricCount[i]);
+        snprintf(id,sizeof(id),"uploads.metric.%d",i);
+        scene.addLabel(id,{metricX[i],72,64,25},metric,kUiFg,kUiBg,2,ui::scene::TextAlign::TopLeft,2);
+        snprintf(id,sizeof(id),"uploads.caption.%d",i);
+        scene.addLabel(id,{metricX[i],100,70,12},metricName[i],kUiMuted,kUiBg,1,ui::scene::TextAlign::TopLeft,2);
+      }
+      // The upload service has no byte count. Show a truthful activity state
+      // instead of a progress bar that would imply measured completion.
+      const bool online=hal::wifi::connected();
+      const bool configured=core::secrets::backendConfig().apiKey[0];
+      if(v.index<0) strlcpy(name,"Nothing to send",sizeof(name));
+      else if(strlen(v.item.fileName)>17) snprintf(name,sizeof(name),"%.14s...",v.item.fileName);
       else strlcpy(name,v.item.fileName,sizeof(name));
-      ui::editField(scene,physicalSurface,"uploads.item",{14,76,(int16_t)(width-28),28},name,s_uploadField==0,s_uploadEditing,s_uploadBlink);
-      if(s_uploadNotice[0] && millis()-s_uploadNoticeMs<3500u) strlcpy(detail,s_uploadNotice,sizeof(detail));
-      else if(s_uploadEditing) snprintf(detail,sizeof(detail),"Item %d of %d\nTurn to pick. C: Done",v.index+1,v.count);
-      else if(!v.count) strlcpy(detail,"New recordings and\nphotos appear here",sizeof(detail));
-      else if(v.item.status==QSTATUS_UPLOADING) strlcpy(detail,v.resetPending?"Uploading; reset\nafter completion":"Uploading to Agent",sizeof(detail));
-      else if(v.item.status==QSTATUS_FAILED) snprintf(detail,sizeof(detail),"Failed | Force to retry\n%s",v.item.lastError);
-      else if(v.paused) strlcpy(detail,"Waiting for device\nto finish audio/I/O",sizeof(detail));
-      else if(!hal::wifi::connected()) strlcpy(detail,"Waiting for Wi-Fi",sizeof(detail));
-      else if(v.forced) strlcpy(detail,"Force send scheduled",sizeof(detail));
-      else if(v.waitMs) snprintf(detail,sizeof(detail),"Retry in %lum %lus\n%s",
-          (unsigned long)(v.waitMs/60000u),(unsigned long)((v.waitMs/1000u)%60),v.item.lastError);
-      else snprintf(detail,sizeof(detail),"Ready | %u attempts\n%s",v.item.attempts,v.item.lastError);
-      ui::morning_style::text(scene,"uploads.detail",detail,{14,108,(int16_t)(width-28),40},2);
-      const bool flash=s_uploadNotice[0] && millis()-s_uploadNoticeMs<500u;
-      // Scroll the two action slots to reveal full file sync below queue reset.
-      if (s_uploadField < 3)
-        ui::editField(scene,physicalSurface,"uploads.force",{14,154,(int16_t)(width-28),28},"Force send item",s_uploadField==1,flash,true);
-      ui::editField(scene,physicalSurface,"uploads.reset",{14,(int16_t)(s_uploadField==3?154:190),(int16_t)(width-28),28},"Force reset queue",s_uploadField==2,flash,true);
-      if (s_uploadField == 3)
-        ui::editField(scene,physicalSurface,"uploads.sync",{14,190,(int16_t)(width-28),28},"Sync to web",true,false,true);
+      if(!v.count) strlcpy(state,"Photos and recordings appear here",sizeof(state));
+      else if(v.item.status==QSTATUS_FAILED) snprintf(state,sizeof(state),"Failed: %.28s",v.item.lastError);
+      else if(v.item.status==QSTATUS_UPLOADING) strlcpy(state,"Sending to your account",sizeof(state));
+      else if(!online) strlcpy(state,"Waiting for WiFi",sizeof(state));
+      else if(!configured) strlcpy(state,"Pair device in WiFi Setup",sizeof(state));
+      else if(!strcmp(v.item.lastError,"HTTP 401") || !strcmp(v.item.lastError,"HTTP 403"))
+        strlcpy(state,"Account rejected - pair in WiFi Setup",sizeof(state));
+      else if(v.paused) strlcpy(state,"Paused while Kami is busy",sizeof(state));
+      else if(v.forced) strlcpy(state,"Send requested",sizeof(state));
+      else if(v.waitMs) snprintf(state,sizeof(state),"Retry in %lum %lus",
+          (unsigned long)(v.waitMs/60000u),(unsigned long)((v.waitMs/1000u)%60));
+      else strlcpy(state,"Ready to send",sizeof(state));
+      auto* card=scene.addRect("uploads.card",{12,120,(int16_t)(width-24),60},kUiBg,8,1);
+      if(card) {card->strokeColor=kUiPanel;card->strokeWidth=1;}
+      scene.addLabel("uploads.file",{24,128,(int16_t)(width-48),24},name,kUiFg,kUiBg,2,ui::scene::TextAlign::TopLeft,2);
+      scene.addLabel("uploads.state",{24,157,(int16_t)(width-48),18},state,kUiMuted,kUiBg,1,ui::scene::TextAlign::TopLeft,2);
+      if(v.count) {
+        snprintf(position,sizeof(position),"%d / %d",v.index+1,v.count);
+        scene.addLabel("uploads.position",{static_cast<int16_t>(width-65),110,50,12},position,kUiMuted,kUiBg,1,ui::scene::TextAlign::TopLeft,2);
+      }
+      static const char* const actions[]={"Browse files","Send file now","Reset retries","Sync web files"};
+      const char* action=s_uploadEditing?"Turn file  C done":actions[s_uploadField];
+      auto* actionCard=scene.addRect("uploads.action",{12,188,(int16_t)(width-24),32},kUiBg,6,1);
+      if(actionCard) {actionCard->strokeColor=kUiFg;actionCard->strokeWidth=1;}
+      scene.addLabel("uploads.action.label",{24,192,(int16_t)(width-68),25},action,kUiFg,kUiBg,2,ui::scene::TextAlign::TopLeft,2);
+      if(!s_uploadEditing) {
+        snprintf(position,sizeof(position),"%d/4",s_uploadField+1);
+        scene.addLabel("uploads.action.index",{static_cast<int16_t>(width-45),195,32,17},position,kUiMuted,kUiBg,1,ui::scene::TextAlign::TopLeft,2);
+      }
+      const bool notice=s_uploadNotice[0] && millis()-s_uploadNoticeMs<3500u;
+      scene.addLabel("uploads.hint",{16,224,(int16_t)(width-32),13},
+          notice?s_uploadNotice:"Turn: action   C: select   LB: back",kUiMuted,kUiBg,1,ui::scene::TextAlign::TopLeft,2);
+
       break;
     }
   }

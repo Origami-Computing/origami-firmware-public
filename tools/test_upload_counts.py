@@ -46,6 +46,7 @@ void xSemaphoreGive(TestMutex* m) { assert(heldMutex==m); heldMutex=nullptr; m->
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include "freertos/FreeRTOS.h"
 #define private public
@@ -73,6 +74,14 @@ int main() {
     auto counts=queue.counts();
     assert(counts.total==4 && counts.pending==1 && counts.failed==1 && counts.active==1);
     assert(queue.size()==4 && queue.pendingCount()==1 && queue.failedCount()==1);
+    strcpy(items[0].lastError,"HTTP 401");
+    assert(queue.counts().retrying==1 && queue.counts().pending==1);
+    items[0].status=QSTATUS_UPLOADING;
+    assert(queue.counts().retrying==0);
+    items[0].status=QSTATUS_PENDING;
+    strcpy(items[0].lastError,"Aborted for voice");
+    assert(queue.counts().retrying==0);
+    items[0].lastError[0]=0;
     queue.dumpDebugState(); // Already owns lock; must use unlocked aggregation.
     assert(Serial.text.find("count=4 pending=1 worker=0")!=std::string::npos);
     refuseLock=true; assert(queue.counts().total==0); refuseLock=false;

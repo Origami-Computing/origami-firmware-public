@@ -85,7 +85,7 @@ JsonMemory s_jsonMemory;
 static bool s_syncRequested = false; // Protected together with status by s_statusMux.
 static portMUX_TYPE s_statusMux = portMUX_INITIALIZER_UNLOCKED;
 static SyncStatus s_status = {
-    false, false, true, 0, 1, 0, "idle", "Ready",
+    false, false, true, 0, 1, 0, "idle", "Ready", 0, SyncStatus::Direction::None,
 };
 
 void setStatusLocked(const char* phase, const char* detail, uint32_t value, uint32_t max,
@@ -109,9 +109,13 @@ void setStatus(const char* phase, const char* detail, uint32_t value, uint32_t m
 
 void finishPollStatus(uint32_t opTotal, uint32_t pending) {
   portENTER_CRITICAL(&s_statusMux);
+  if (!s_syncRequested) {
+    s_status.remaining = pending;
+    s_status.direction = SyncStatus::Direction::None;
+  }
   if (opTotal == 0 && pending > 0) {
     // Server retry leases are still active work, even in an empty poll.
-    setStatusLocked("Sync retrying", "Waiting for transfers", 0, pending, true, false, true);
+    setStatusLocked("Sync retrying", "Waiting for transfers", 0, pending, true, false, s_status.ok);
   } else if (s_status.active) {
     if (opTotal == 0)
       setStatusLocked("Sync complete", "Up to date", 1, 1, false, true, true);
@@ -724,7 +728,16 @@ bool poll() {
 
   JsonDocument doc(&s_jsonMemory);
   int code = httpGetJson(DEVICE_FS_OPS_PATH, doc);
-  if (!ok2xx(code)) return false;
+  if (!ok2xx(code)) {
+    portENTER_CRITICAL(&s_statusMux);
+    if (!s_syncRequested && (s_status.active || s_status.remaining)) {
+      setStatusLocked("Sync unavailable", "Could not check changes", 0, 1, false, true, false);
+      // Keep the last known work count while the server is unreachable.
+      s_status.direction = SyncStatus::Direction::None;
+    }
+    portEXIT_CRITICAL(&s_statusMux);
+    return false;
+  }
   JsonArray ops = doc["ops"].as<JsonArray>();
   if (ops.isNull()) {
     finishPollStatus(0, doc["pending"] | 0u);
@@ -743,11 +756,16 @@ bool poll() {
     const char* url  = op["url"]  | "";
     LOGV("device_fs", "Executing %s op %s", type, id);
     const char* phase = "Syncing";
-    if (!strcmp(type, "push")) phase = "Uploading";
-    else if (!strcmp(type, "pull")) phase = "Downloading";
+    auto direction = SyncStatus::Direction::None;
+    if (!strcmp(type, "push")) { phase = "Uploading"; direction = SyncStatus::Direction::Upload; }
+    else if (!strcmp(type, "pull")) { phase = "Downloading"; direction = SyncStatus::Direction::Download; }
     else if (!strcmp(type, "delete")) phase = "Deleting";
     else if (!strcmp(type, "mkdir")) phase = "Creating folder";
-    setStatus(phase, path, opIndex - 1, opTotal);
+    portENTER_CRITICAL(&s_statusMux);
+    s_status.remaining = opTotal - opIndex + 1;
+    s_status.direction = direction;
+    setStatusLocked(phase, path, opIndex - 1, opTotal, true, false, true);
+    portEXIT_CRITICAL(&s_statusMux);
     if      (!strcmp(type, "manifest")) doManifest(id);
     else if (!strcmp(type, "push"))     doPush(path, id);
     else if (!strcmp(type, "pull"))     doPull(path, url, id);
@@ -767,6 +785,8 @@ void requestSync(SyncRequest request) {
   if (request == SyncRequest::Interactive) (void)services::net_poll::start();
   portENTER_CRITICAL(&s_statusMux);
   setStatusLocked("Syncing", "Starting...", 0, 1, true, false, true);
+  if (s_status.remaining == 0) s_status.remaining = 1;
+  s_status.direction = SyncStatus::Direction::None;
   s_syncRequested = true;
   portEXIT_CRITICAL(&s_statusMux);
   LOGI("device_fs", "sync requested");
