@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 
 /**
  * Lightweight non-blocking sound-effect engine. Generates square/saw/sine/noise
@@ -51,6 +52,27 @@ namespace sfx {
  * subsystem already owns I2S TX (MP3 playback, agent reply).
  */
 void play(const SfxDef& def);
+
+/** Borrowed mono signed 16-bit PCM at the SFX rate (22050 Hz). */
+struct PcmClip {
+    const int16_t* samples;
+    size_t frames;
+};
+
+/** UI-task-only, synchronous finite playback using the shared SFX session and
+ * route volume. Returns false on busy/invalid input or incomplete output.
+ * Does not retain the clip. Like synthesized one-shots, may block for its duration.
+ */
+bool play(const PcmClip& clip);
+
+/** UI-task finite cue followed by an immediate owned-TX release. Drains queued
+ * PCM first; never closes another owner's session. Use before video acquisition
+ * so an idle SFX DMA stream does not run throughout silent video capture.
+ */
+// Optional progress runs synchronously on the UI task after queued audio writes.
+// Keep it below one DMA window (~46 ms); do not wait, dispatch input, change
+// audio ownership or re-enter playback. The callback is not retained.
+bool playAndRelease(const PcmClip& clip, void (*progress)() = nullptr);
 
 /** UI-task-only SFX volume, 0..100. Route profiles apply; local volume is not synchronized. */
 int volume();

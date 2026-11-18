@@ -104,9 +104,9 @@ PhotoCatalogResult PhotoCatalog::load(bool includeVideos) {
       // A photo-only library stays newest-first by monotonic capture ID even
       // before clock sync, and avoids opening every JPEG just for metadata.
       if (hasVideos || !sequence || end-first>1) for (size_t index=first;index<end;++index) {
-        File entry=SD.open(files_[index].path,FILE_READ);
-        if (!entry) {clear();return PhotoCatalogResult::ReadError;}
-        const time_t modified=entry.getLastWrite();
+        size_t bytes=0;
+        uint32_t modified=0;
+        if (!fileInfo(files_[index].path,bytes,modified)) {clear();return PhotoCatalogResult::ReadError;}
         files_[index].modified=modified>0?uint64_t(modified):0;
         ++timings_.metadataReads;
       }

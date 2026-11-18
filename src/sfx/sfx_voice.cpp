@@ -22,6 +22,9 @@ static uint32_t s_ownedTxGen        = 0;
 static bool     s_playbackConfigured = false;
 static uint32_t s_seenCodecGen      = 0;
 
+// Shared by synthesized and recorded one-shots on the single UI/audio task.
+alignas(4) static int16_t s_samples[kChunkFrames * 2];
+
 static float oscillator(SfxWaveform wave, float phase) {
     switch (wave) {
         case SFX_SQUARE:
@@ -115,6 +118,63 @@ void resetPlaybackSessionState() {
     s_seenCodecGen = hal::audio::codecConfigGeneration();
 }
 
+static bool playPcm(const PcmClip& clip, void (*progress)()) {
+    if (!clip.samples || !clip.frames) return false;
+    const int gain = scaledVolumeBasisPoints();
+    if (!gain) return true;
+    if (!beginPlaybackSession()) return false;
+
+    bool complete = true;
+    for (size_t pos = 0; pos < clip.frames;) {
+        const size_t n = (clip.frames - pos < kChunkFrames)
+            ? clip.frames - pos : kChunkFrames;
+        for (size_t i = 0; i < n; ++i) {
+            const int16_t sample = int32_t(clip.samples[pos + i]) * gain / 10000;
+            s_samples[i * 2] = s_samples[i * 2 + 1] = sample;
+        }
+        size_t written = 0;
+        const esp_err_t err = hal::audio::txWrite(
+            s_samples, n * 2, &written, pdMS_TO_TICKS(40));
+        if (err != ESP_OK || written != n * 2 * sizeof(int16_t)) {
+            complete = false;
+            break;
+        }
+        pos += n;
+        // Prime two chunks before a presentation update can consume CPU time.
+        if (progress && pos >= kChunkFrames * 2) progress();
+    }
+    // Complete the last DMA buffer even after a partial/failed write.
+    const bool finished = hal::audio::txFinishBuffer(pdMS_TO_TICKS(40));
+    notePlaybackActivity(millis() + kTeardownMarginMs);
+    return complete && finished;
+}
+
+bool play(const PcmClip& clip) { return playPcm(clip, nullptr); }
+
+bool playAndRelease(const PcmClip& clip, void (*progress)()) {
+    const bool played = playPcm(clip, progress);
+    if (!s_sessionActive || s_ownedTxGen != hal::audio::txGeneration()) return played;
+    // txFinishBuffer pads, but does not drain, I2S. At 22050 Hz HAL's largest
+    // queue is 4x256 frames. Push that many zeros plus one scratch chunk so all
+    // audible samples leave DMA before teardown; only silence may be truncated.
+    for (auto& sample : s_samples) sample = 0;
+    bool drained = true;
+    for (unsigned i = 0; i < 3; ++i) {
+        size_t written = 0;
+        if (hal::audio::txWrite(s_samples, kChunkFrames * 2, &written,
+                              pdMS_TO_TICKS(40)) != ESP_OK ||
+            written != sizeof(s_samples)) {
+            drained = false;
+            break;
+        }
+        if (progress) progress();
+    }
+    const uint32_t now = millis();
+    notePlaybackActivity(now);
+    endPlaybackSessionIfIdle(now);
+    return played && drained;
+}
+
 void SfxVoice::start(const SfxDef& defIn) {
     def    = defIn;
     pos    = 0;
@@ -140,7 +200,7 @@ bool SfxVoice::pump() {
     const float deviceGain = (float)scaledVolumeBasisPoints() / 10000.0f;
     // SFX run on the single UI/audio owner task. Static scratch avoids spending
     // another 2 KB of its deliberately tight stack on every pump call.
-    alignas(4) static int16_t buf[kChunkFrames * 2];
+    int16_t* const buf = s_samples;
 
     for (int i = 0; i < n; i++) {
         const float t     = (float)(pos + i) / (float)totalFrames;

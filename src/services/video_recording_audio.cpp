@@ -126,6 +126,7 @@ void VideoRecording::writeAudio() {
         if (repeated && storedLength) {
             ++writerStats_.repeatedJpegChunks;writerStats_.repeatedJpegBytes+=storedLength;
         }
+        if (!count) Serial.printf("[video-first] written_ms=%lu\n", (unsigned long)millis());
         largest=std::max(largest,length);frames_.store(++count);
         if (repeated) repeatedFrames_.fetch_add(1);
         return true;

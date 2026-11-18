@@ -705,11 +705,15 @@ bool loadBmpRegion(const char* path, uint16_t* imageBuffer, int32_t maxWidth, in
 }
 
 bool fileInfo(const char* path, size_t& bytes, uint32_t& modified) {
-  if (!s_mounted || !path || !hal::bus::lockSpi()) return false;
-  File file = SD.open(path, FILE_READ);
-  const bool ok = file && !file.isDirectory();
-  if (ok) { bytes = file.size(); modified = (uint32_t)file.getLastWrite(); }
-  file.close();
+  if (!s_mounted || !path || path[0] != '/') return false;
+  char fullPath[sizeof(kMountPath) + 272];
+  if (snprintf(fullPath, sizeof(fullPath), "%s%s", kMountPath, path) >= int(sizeof(fullPath))) return false;
+  if (!hal::bus::lockSpi()) return false;
+  // Metadata does not require an open file. Arduino SD.open/getLastWrite
+  // repeats path lookups and allocates a FILE just to obtain this same stat.
+  struct stat info;
+  const bool ok = ::stat(fullPath, &info) == 0 && S_ISREG(info.st_mode);
+  if (ok) { bytes = size_t(info.st_size); modified = (uint32_t)info.st_mtime; }
   hal::bus::unlockSpi();
   return ok;
 }

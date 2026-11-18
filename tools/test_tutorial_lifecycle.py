@@ -57,7 +57,7 @@ unsigned photoTakes=0,copyRefreshes=0,motionPreparations=0;
 void refreshCopy(){++copyRefreshes;}
 void prepareMotion(){++motionPreparations;}
 struct {void println(const char*){}} Serial;
-namespace apps {namespace camera_menu {
+namespace apps {namespace cine_camera {
 services::photos::Target takeTutorialPhoto(){++photoTakes;auto result=photoResult;photoResult={};return result;}
 }}
 unsigned s_started=0,s_lastDraw=99,now=1234,loads=0,saves=0,takes=0,savedPage=99;

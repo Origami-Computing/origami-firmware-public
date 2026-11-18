@@ -80,6 +80,7 @@ bool VideoRecording::submitFrame(const uint8_t* jpeg, size_t length, uint32_t no
     memcpy(buffers_ + offset, jpeg, bytes);
     slots_[head % kSlots] = {bytes, now, offset, end};
     byteHead_ = end;
+    if (!submissions_.accepted) Serial.printf("[video-first] accepted_ms=%lu sensor_ms=%lu\n", (unsigned long)millis(), (unsigned long)now);
     ++submissions_.accepted;
     if (head-tail+1 > submissions_.maxQueued) submissions_.maxQueued=head-tail+1;
     head_.store(head + 1); // Publishes bytes/metadata to the single consumer.
@@ -142,7 +143,7 @@ void VideoRecording::write() {
         core::avi::index(index_ + count * 16, movieBytes + 4, slot.length);
         movieBytes += core::avi::chunkBytes(slot.length);
         if (slot.length > largest) largest = slot.length;
-        if (!count) firstAt = slot.at;
+        if (!count) { firstAt = slot.at; Serial.printf("[video-first] written_ms=%lu\n", (unsigned long)millis()); }
         lastAt = slot.at;
         frames_.store(++count);
         byteTail_.store(slot.end);

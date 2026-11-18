@@ -37,7 +37,7 @@ enum class Setting { Capture };
 } }
 struct { services::camera::CaptureResolution capture=services::camera::CaptureResolution::Vga;
   void save(services::camera::Setting) {} } cameraSettings;
-bool microphone=true, clipActive=false;
+bool microphone=true, clipActive=false, tutorialCapture=false;
 struct List{int selected=0,totalItems=3;void scroll(int delta){selected+=delta;if(selected<0)selected=0;if(selected>2)selected=2;}}settingsList;
 struct Session{struct Status{bool open=true;}s;int shutter=0,wb=0;void adjustShutter(int d){shutter+=d;}void adjustColor(int d){wb+=d;}int autoResumes=0;bool resumeAutoExposure(){++autoResumes;return s.open;}const Status& status(){return s;}}session;
 enum class View{Menu,Opening,Preview,Error};View current=View::Preview;

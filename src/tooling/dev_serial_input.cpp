@@ -54,7 +54,7 @@
 #include "core/store.h"
 #include "core/board_time.h"
 #ifdef MENU_APP
-#include "apps/camera_menu_app.h"
+#include "apps/cine_camera_app.h"
 #include "apps/doodle_jump_app.h"
 #include "apps/trex_app.h"
 #include "apps/dumb_flappy_bird_app.h"
@@ -129,6 +129,8 @@
 #include "services.h"
 #include "sfx/sfx.h"
 #include "sfx/sfx_lib.h"
+#include "sfx/camera_shutter.h"
+#include "sfx/recording.h"
 #include "tooling/preview_registry.h"
 #include "ui/battery_indicator.h"
 #include "ui/scene.h"
@@ -311,6 +313,9 @@ static void printHelp() {
   Serial.println("  mp3 volume save    persist media profiles used by Music + Audio Recordings");
   Serial.println("  sfx volume [0..100] show or set device sound-effect volume");
   Serial.println("  sfx volume save    persist current device sound-effect volume");
+  Serial.println("  sfx shutter        play the embedded photo shutter recording");
+  Serial.println("  sfx recording-start | sfx recording-stop  play embedded video cues");
+  Serial.println("  sfx reference      play the normal menu tick for level comparison");
   Serial.println("  morning sound N    play one installed alarm motif (N=0..3)");
   Serial.println("  morning test N     repeat one installed alarm with the real wake screen");
   Serial.println("  morning stop       stop a Studio alarm preview");
@@ -3379,8 +3384,6 @@ static void handleLine(char* line, uint32_t nowMs) {
     // A diagnostic dump needs longer than the normal 5 ms logging budget.
     // Keep each row in one checked write without printf's heap allocation.
     TFT_eSprite& frame = hal::display::canvas();
-    if(NavHandler::instance().top()==&apps::camera_menu::app)
-      Serial.printf("[morning-frame] camera-composite=%u\n",apps::camera_menu::copyPreviewForDevelopment(frame));
     if(NavHandler::instance().top()==&apps::videos::app) {
       const bool copied=apps::videos::copyPreviewForDevelopment(frame);
       Serial.printf("[morning-frame] video-composite=%u\n",copied);
@@ -3516,6 +3519,25 @@ static void handleLine(char* line, uint32_t nowMs) {
   }
   if (handleMp3VolumeCommand(line)) return;
   if (handleSfxVolumeCommand(line)) return;
+  if (strcmp(line, "sfx reference") == 0) {
+    sfx::play(sfx::kSfxMenuTick);
+    Serial.printf("[sfx-reference] menu-tick gain_bp=%d\n", sfx::scaledVolumeBasisPoints());
+    return;
+  }
+  if (strcmp(line, "sfx recording-start") == 0 || strcmp(line, "sfx recording-stop") == 0) {
+    const bool start = strcmp(line, "sfx recording-start") == 0;
+    const bool played = sfx::play(start ? sfx::kRecordingStart : sfx::kRecordingStop);
+    Serial.printf("[video-sfx] %s diagnostic played=%u gain_bp=%d\n",
+        start ? "start" : "stop", played, sfx::scaledVolumeBasisPoints());
+    return;
+  }
+  if (strcmp(line, "sfx shutter") == 0) {
+    const bool mic = hal::audio::micReady(), tx = hal::audio::txReady();
+    const bool played = sfx::play(sfx::kCameraShutter);
+    Serial.printf("[camera-shutter] played=%u gain_bp=%d mic_before=%u tx_before=%u frames=%u\n",
+        played, sfx::scaledVolumeBasisPoints(), mic, tx, unsigned(sfx::kCameraShutter.frames));
+    return;
+  }
   if (handleDoodleCommand(line)) return;
   if (handleMicTuningCommand(line)) return;
 
@@ -3937,15 +3959,15 @@ static void handleLine(char* line, uint32_t nowMs) {
   }
   if (strcmp(line, "camera open") == 0) {
     services::notifyUserActivity();
-    if (NavHandler::instance().top() != &apps::camera_menu::app) {
-      NavHandler::instance().push(&apps::camera_menu::app);
+    if (NavHandler::instance().top() != &apps::cine_camera::app) {
+      NavHandler::instance().push(&apps::cine_camera::app);
     }
-    Serial.println("[camera-settle] OPEN");
+    Serial.println("[camera] OPEN app=cine-camera");
     return;
   }
   if (strcmp(line, "camera audio-test") == 0) {
     services::notifyUserActivity();
-    Serial.printf("[camera-audio] accepted=%d\n", apps::camera_menu::runAudioTrial());
+    Serial.printf("[camera-audio] accepted=%d\n", apps::cine_camera::runAudioTrial());
     return;
   }
   if (strncmp(line, "camera settle ", 14) == 0) {
@@ -3960,7 +3982,7 @@ static void handleLine(char* line, uint32_t nowMs) {
     } else if (sscanf(line + 14, "%lu %d %u %c", &runId, &frames, &repeat, &extra) != 3) {
       Serial.println("[camera-settle] ERR usage: camera settle RUN FRAMES REPEAT");
     } else {
-      (void)apps::camera_menu::runSettleTrial((uint32_t)runId, frames, repeat);
+      Serial.println("[camera-settle] ERR retired-legacy-trial; use the normal Camera workflow");
     }
     return;
   }

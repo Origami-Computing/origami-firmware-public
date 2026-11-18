@@ -13,6 +13,7 @@ namespace hal {namespace camera {
 struct Tuning {int tag=42;};struct CameraFrame {};
 struct CineIspRequest {};struct CineIspReadback {};
 inline bool setStillPreviewSize(bool) { return true; }
+inline bool setVideoPreviewSize(bool) { return true; }
 bool configureCineIsp(const CineIspRequest&,CineIspReadback*);
 bool init(int,int,const Tuning*,int);void deinit();bool initialized();void settleAutoExposure(uint32_t);
 bool getFrame(CameraFrame*);void returnFrame();bool captureToFile(const char*);bool captureToSd();const char* lastInitError();size_t availablePsramKb();

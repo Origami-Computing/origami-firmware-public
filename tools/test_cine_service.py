@@ -68,7 +68,7 @@ namespace services{namespace photos{struct Target{uint32_t sequence=0,capturedAt
 #include <map>
 #include <string>
 int allocations=0,budget=-1;int64_t clockUs=0;bool running=false,reserved=false,held=false,stopBlocked=false,failInit=false,failRead=false,failDecode=false,failWrite=false,failMeta=false,failTelemetry=false,failIsp=false,stale=false,badFrame=false;
-bool fullSize=false;
+bool fullSize=false;unsigned feedback=0;void cue(){assert(held&&fullSize);++feedback;}
 unsigned queued=0,marked=0;bool failQueue=false;uint32_t captureTime=1700000001;std::string queuedPath;
 unsigned liveUs=10000,liveGain=32;
 unsigned sequence=0,reads=0,configs=0;hal::camera::CineIspRequest last;std::vector<uint8_t> jpeg={255,216,255,192,0,8,8,6,0,8,0,1,255,217};std::map<std::string,std::vector<uint8_t>> files;
@@ -118,8 +118,8 @@ int main(){using services::cine_camera::Session;using services::cine_camera::Col
  auto count=configs;c.adjustShutter(1);assert(configs==count);
  c.adjustColor(1);assert(!c.autoExposure()&&c.shutter().requestedUs==100000&&last.gainQ4==128);
  c.adjustShutter(INT_MIN);assert(c.shutter().requestedUs==1000);c.adjustShutter(-1);assert(c.autoExposure()&&last.autoVts==1564);count=configs;assert(c.resumeAutoExposure()&&configs==count);
- assert(!c.capture());clockUs+=1000000;assert(c.preview());stale=true;n=reads;assert(!c.capture()&&!held&&reads==n+12);stale=false;
- clockUs+=1000000;assert(c.capture()&&!held&&c.status().saved&&files[c.status().photoPath]==jpeg&&!embeddedExif.empty());std::string meta(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"embedded_exif\":true")!=std::string::npos);assert(meta.find("\"jpeg_quantization_scale\":8")!=std::string::npos);assert(meta.find("\"color_name\":")!=std::string::npos&&meta.find("\"wb_preset\":1")!=std::string::npos);assert(meta.find("\"automatic\":true")!=std::string::npos&&meta.find("\"sample_valid\":true")!=std::string::npos&&meta.find("\"output_width\":2048")!=std::string::npos);
+ assert(!c.capture());clockUs+=1000000;assert(c.preview());stale=true;n=reads;assert(!c.capture(cue)&&!held&&reads==n+12&&feedback==0);stale=false;
+ clockUs+=1000000;assert(c.capture(cue)&&feedback==1&&c.status().capturedAtUnix==captureTime&&!held&&c.status().saved&&files[c.status().photoPath]==jpeg&&!embeddedExif.empty());std::string meta(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"embedded_exif\":true")!=std::string::npos);assert(meta.find("\"jpeg_quantization_scale\":8")!=std::string::npos);assert(meta.find("\"color_name\":")!=std::string::npos&&meta.find("\"wb_preset\":1")!=std::string::npos);assert(meta.find("\"automatic\":true")!=std::string::npos&&meta.find("\"sample_valid\":true")!=std::string::npos&&meta.find("\"output_width\":2048")!=std::string::npos);
  clockUs+=1000000;stale=true;assert(!c.capture());stale=false;clockUs+=1000000;
  failTelemetry=true;assert(c.capture()&&c.autoExposure());meta=std::string(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"sample_valid\":false")!=std::string::npos);failTelemetry=false;
  clockUs+=1000000;std::string overlongVersion(90,'x');firmware=overlongVersion.c_str();assert(c.capture()&&embeddedExif.empty()&&strstr(c.status().message,"metadata failed"));meta=std::string(files[c.status().metadataPath].begin(),files[c.status().metadataPath].end());assert(meta.find("\"embedded_exif\":false")!=std::string::npos);firmware="v1.0.5";
@@ -131,6 +131,7 @@ int main(){using services::cine_camera::Session;using services::cine_camera::Col
  assert(c.capture()&&c.status().queued&&queued==beforeQueued+1&&marked==beforeMarked+1&&queuedPath==c.status().photoPath);
  clockUs+=1000000;beforeQueued=queued;failWrite=true;assert(!c.capture()&&!c.status().queued&&queued==beforeQueued);failWrite=false;
  clockUs+=1000000;failQueue=true;assert(c.capture()&&!c.status().queued&&files.count(c.status().photoPath)&&strstr(c.status().message,"not queued"));failQueue=false;
+ clockUs+=1000000;beforeQueued=queued;assert(c.capture(nullptr,false)&&!c.status().queued&&queued==beforeQueued);
  clockUs+=1000000;captureTime=0;assert(c.capture()&&queuedPath==c.status().photoPath);
  clockUs+=1000000;auto original=jpeg;jpeg[7]=0;jpeg[8]=240;jpeg[9]=1;jpeg[10]=64;
  failWrite=false;assert(!c.capture()&&!fullSize&&!held);jpeg=original;

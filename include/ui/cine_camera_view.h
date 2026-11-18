@@ -5,8 +5,12 @@
 // A opens settings; the wheel starts in Color and toggles Color/shutter. Popup is transient.
 namespace ui {
 namespace cine_view {
+// Original photographer pulse: 35 ms white hold, then fade out by 140 ms.
+inline unsigned shutterAlpha(uint32_t ageMs) {
+  return ageMs < 35 ? 15 : ageMs < 140 ? (140 - ageMs) * 15 / 105 : 0;
+}
 template <class C>
-void image(C &c, const uint16_t *source, unsigned width, unsigned height, bool pulse = false) {
+void image(C &c, const uint16_t *source, unsigned width, unsigned height, unsigned pulseAlpha = 0) {
   if (!source || !width || !height) {
     c.fillRect(0, 0, 280, 240, 0);
     return;
@@ -19,8 +23,8 @@ void image(C &c, const uint16_t *source, unsigned width, unsigned height, bool p
     const auto *src = source + size_t(y * height / 240) * width;
     for (unsigned x = 0; x < 280; ++x) {
       row[x] = src[sourceX[x]];
-      if (pulse)
-        row[x] = raster::blend(0xffff, row[x], 12);
+      if (pulseAlpha)
+        row[x] = raster::blend(0xffff, row[x], pulseAlpha);
     }
     c.pushImage(0, y, 280, 1, row);
   }

@@ -63,6 +63,7 @@ static unsigned s_lastNonblack = 0;
 static uint32_t s_openStartedMs = 0;
 static uint32_t s_openMs = 0;
 static uint32_t s_pauseMs = 0;
+static uint32_t s_pauseStartedMs = 0;
 static bool s_openPending = false;
 static bool s_browsePending = false, s_reloadAfterPause = false;
 
@@ -105,9 +106,9 @@ static void loadPhotos() {
     s_state = PH_ERROR;
     s_thumbnail.clear();s_thumbnailIndex=-1;
     s_library.clear();
-    const uint32_t pauseStarted = millis();
+    if (!s_browsePending) s_pauseStartedMs = millis();
     const bool paused = pauseBrowsingIo();
-    s_pauseMs = millis() - pauseStarted;
+    s_pauseMs = millis() - s_pauseStartedMs;
     if (paused) {
         const auto result = s_library.load();
         switch (result) {

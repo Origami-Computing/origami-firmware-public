@@ -12,7 +12,7 @@
 #include "apps/alarm_clock_app.h"
 #include "apps/audio_recordings_app.h"
 #include "apps/boot_app.h"
-#include "apps/camera_menu_app.h"
+#include "apps/cine_camera_app.h"
 #include "apps/doodle_jump_app.h"
 #include "apps/dumb_flappy_bird_app.h"
 #include "apps/hardware_test_app.h"
@@ -238,32 +238,12 @@ static const InputBinding kWifiSetupInputs[] = {
 
 // Screen-specific contracts: generic list/direct actions are not valid here.
 static const InputBinding kCameraViewfinderInputs[] = {
-    {"A tap", "leave Camera", "nav:pop"},
-    {"B press", "capture photo using the selected capture preset", "camera:viewfinder"},
-    {"C tap", "open camera settings", "camera:settings"},
-    {"rotary", "no viewfinder setting change", "camera:viewfinder"},
-    {"A+B", "pop Camera", "nav:pop"},
-};
-static const InputBinding kCameraSettingsInputs[] = {
-    {"rotary", "select row; while editing adjust the draft value", "camera:settings"},
-    {"C tap", "edit/commit value; Manual row or committed Manual mode opens manual controls", "self-or-child"},
-    {"A tap", "cancel draft edit; otherwise return to viewfinder", "self-or-child"},
-    {"A+B", "pop Camera", "nav:pop"},
-};
-static const InputBinding kCameraManualInputs[] = {
-    {"rotary", "select row; while editing adjust the draft value", "camera:manual"},
-    {"C tap", "edit/commit value; README row opens help", "self-or-child"},
-    {"A tap", "cancel draft edit; otherwise return to camera settings", "self-or-child"},
-    {"A+B", "pop Camera", "nav:pop"},
-};
-static const InputBinding kCameraReadmeInputs[] = {
-    {"rotary", "scroll help text", "camera:readme"},
-    {"A tap", "return to manual controls", "camera:manual"},
-    {"A+B", "pop Camera", "nav:pop"},
-};
-static const InputBinding kCameraErrorInputs[] = {
-    {"A tap", "leave Camera", "nav:pop"},
-    {"A+B", "pop Camera", "nav:pop"},
+    {"A tap", "open settings; in tutorial return", "cine-camera:main"},
+    {"B tap / hold", "take photo / start video; tap to stop video", "cine-camera:main"},
+    {"C tap", "toggle color/shutter wheel; edit settings row", "cine-camera:main"},
+    {"rotary", "adjust color/shutter; navigate settings", "cine-camera:main"},
+    {"C hold", "restore automatic exposure", "cine-camera:main"},
+    {"A+B", "leave Camera", "nav:pop"},
 };
 static const InputBinding kTimerSetInputs[] = {
     {"rotary", "select minutes/seconds/sound/vibration/Start; while editing adjust value", "timer:set"},
@@ -446,11 +426,7 @@ static const ScreenHints kBootHints[] = {
 };
 
 static const ScreenHints kCameraHints[] = {
-    HINTS("viewfinder", "scene-screen/direct-panel", "src/apps/camera_menu_app.cpp", kCameraViewfinderInputs),
-    HINTS("settings", "scene-screen", "src/apps/camera_menu_app.cpp", kCameraSettingsInputs),
-    HINTS("manual", "scene-screen", "src/apps/camera_menu_app.cpp", kCameraManualInputs),
-    HINTS("readme", "scene-screen", "src/apps/camera_menu_app.cpp", kCameraReadmeInputs),
-    HINTS("error", "scene-screen", "src/apps/camera_menu_app.cpp", kCameraErrorInputs),
+    HINTS("main", "scene-screen", "src/apps/cine_camera_app.cpp", kCameraViewfinderInputs),
 };
 
 static const ScreenHints kSettingsHints[] = {
@@ -578,7 +554,7 @@ static const AppInfo kApps[] = {
     {&apps::agent::app, kKamiHints, static_cast<uint8_t>(sizeof(kKamiHints) / sizeof(kKamiHints[0]))},
     {&apps::menu::app, kMenuHints, static_cast<uint8_t>(sizeof(kMenuHints) / sizeof(kMenuHints[0]))},
     {&apps::boot::app, kBootHints, static_cast<uint8_t>(sizeof(kBootHints) / sizeof(kBootHints[0]))},
-    {&apps::camera_menu::app, kCameraHints, static_cast<uint8_t>(sizeof(kCameraHints) / sizeof(kCameraHints[0]))},
+    {&apps::cine_camera::app, kCameraHints, static_cast<uint8_t>(sizeof(kCameraHints) / sizeof(kCameraHints[0]))},
     {&apps::settings_menu::app, kSettingsHints, static_cast<uint8_t>(sizeof(kSettingsHints) / sizeof(kSettingsHints[0]))},
     {&apps::steps::app, kStepsHints, static_cast<uint8_t>(sizeof(kStepsHints) / sizeof(kStepsHints[0]))},
     {&apps::pomodoro::app, kPomodoroHints, static_cast<uint8_t>(sizeof(kPomodoroHints) / sizeof(kPomodoroHints[0]))},

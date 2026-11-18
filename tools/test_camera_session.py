@@ -17,6 +17,7 @@ namespace hal { namespace camera {
 struct Tuning {}; struct CameraFrame {};
 struct CineIspRequest {};struct CineIspReadback {};
 inline bool setStillPreviewSize(bool) { return true; }
+inline bool setVideoPreviewSize(bool) { return true; }
 bool configureCineIsp(const CineIspRequest&,CineIspReadback*);
 bool init(int,int,const Tuning*,int); void deinit(); bool initialized();
 void settleAutoExposure(uint32_t); bool getFrame(CameraFrame*); void returnFrame();
@@ -88,9 +89,9 @@ int main(){
    assert(session.prepareCapture(false)==Result::Ready);
    assert(session.start());
    hal::camera::CineIspRequest isp;hal::camera::CineIspReadback readback;
-   assert(session.configureCineIsp(isp,&readback));
+   assert(session.configureCineIsp(isp,&readback));assert(session.setVideoPreviewSize(false));
    assert(session.read(&frame));
-   assert(!session.configureCineIsp(isp,&readback));
+   assert(!session.configureCineIsp(isp,&readback));assert(!session.setVideoPreviewSize(true));
    session.returnFrame();assert(reader.acquire(session));
    assert(!reader.acquire(session)&&!other.acquire(session));
    std::mutex mutex;std::condition_variable cv;bool borrowed=false,release=false;
@@ -101,11 +102,11 @@ int main(){
    });
    {std::unique_lock<std::mutex> lock(mutex);cv.wait(lock,[&]{return borrowed;});}
    trace.clear();
-   assert(!session.read(&frame));session.returnFrame();session.stop();
+   assert(!session.read(&frame));assert(!session.setVideoPreviewSize(false));session.returnFrame();session.stop();
    session.releaseBackground();session.restoreUi(Session::Resume::Immediate);
    session.settle(100);assert(!session.start());
    assert(!session.captureToFile("/unused")&&!session.captureDiagnosticToSd());
-   assert(!session.configureCineIsp(isp,&readback));
+   assert(!session.configureCineIsp(isp,&readback));assert(!session.setVideoPreviewSize(true));
    assert(session.prepareCapture(false)==Result::CameraBusy);
    hal::camera::Tuning tuning;
    assert(!session.openPreview(8,tuning,prepareViewfinder));
