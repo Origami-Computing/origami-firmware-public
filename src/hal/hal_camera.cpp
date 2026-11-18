@@ -24,6 +24,7 @@ static bool s_qxgaBuffers = false;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 static bool s_reportedJoinedFrame = false;
 #endif
+static unsigned s_frameBufferCount = 0;
 static uint16_t s_detectedPid = 0;
 bool supportsAutofocus() { return s_detectedPid == 0x5640; }
 static camera_fb_t* s_lastFb = nullptr;
@@ -48,6 +49,21 @@ struct StartupFailure {
   StartupFailure(const char* stage_ = "none", esp_err_t code_ = ESP_OK)
       : stage(stage_), code(code_) {}
 };
+
+// Caller holds I2C. Keep cold initialization and live switches on one profile.
+static bool applyVideoResolutionProfile(sensor_t* sensor, int size) {
+#if defined(ORIGAMI_VIDEO_HD_CROP_TRIAL)
+  // Preserve the existing native 1280x720 crop and 30Hz readout timing.
+  if (size == FRAMESIZE_HD && sensor && sensor->pixformat == PIXFORMAT_JPEG &&
+      sensor->id.PID == 0x3660) {
+    const int result = sensor->set_res_raw ? sensor->set_res_raw(
+        sensor, 384, 408, 1695, 1139, 16, 6, 1604, 1247, 1280, 720, false, false) : -1;
+    Serial.printf("[camera-hd-crop] result=%d window=1280x720 hts=1604 vts=1247\n", result);
+    return result == 0;
+  }
+#endif
+  return true;
+}
 
 // One hardware attempt. Public init() owns cleanup, retry, and Fleet logging.
 // Never emit durable telemetry while holding I2C: it can acquire the SD bus.
@@ -231,7 +247,7 @@ static bool initAttempt(int frameSize, int pixelFormat, const Tuning* tuning,
    * were overdriving the sensor: +1 brightness, +2 contrast, manual aec_value=400, manual
    * agc_gain=2, gainceiling 4X. That combination forced exposure/gain off-auto and crushed AWB,
    * producing the "uncalibrated / not real" tint. Tuning struct (default-constructed) below uses
-   * neutral values; callers (camera_menu_app) can pass their own struct in to override.
+   * neutral values; callers (camera session) can pass their own struct in to override.
    *
    * SCCB borrows the already-installed accessory-I²C controller, so this
    * configuration and later Wire1 autofocus operations share the same bus.
@@ -240,20 +256,7 @@ static bool initAttempt(int frameSize, int pixelFormat, const Tuning* tuning,
   bool tuningOk = applyTuningInternal(effective);
   sensor_t* detectedSensor = esp_camera_sensor_get();
   s_detectedPid = detectedSensor ? detectedSensor->id.PID : 0;
-#if defined(ORIGAMI_VIDEO_HD_CROP_TRIAL)
-  // The stock HD preset scales a 1920x1080 sensor window and retains its
-  // slower readout timing. This isolated trial uses centered, unbinned native
-  // 1280x720 pixels, retaining the existing PLL (no clock increase). The smaller
-  // field of view is deliberate. HTS*VTS targets 30 Hz at the driver's 60 MHz
-  // system clock with this board's external 24 MHz input; measure actual FPS.
-  if (fsize == FRAMESIZE_HD && pfmt == PIXFORMAT_JPEG && detectedSensor &&
-      detectedSensor->id.PID == 0x3660) {
-    const int result=detectedSensor->set_res_raw ? detectedSensor->set_res_raw(
-        detectedSensor,384,408,1695,1139,16,6,1604,1247,1280,720,false,false) : -1;
-    tuningOk=tuningOk && result==0;
-    Serial.printf("[camera-hd-crop] result=%d window=1280x720 hts=1604 vts=1247\n",result);
-  }
-#endif
+  tuningOk = applyVideoResolutionProfile(detectedSensor, fsize) && tuningOk;
   Serial.printf("[camera] Sensor ISP configured (PID=0x%04X) — natural defaults\n",
                 detectedSensor ? (unsigned)detectedSensor->id.PID : 0u);
 
@@ -262,6 +265,7 @@ static bool initAttempt(int frameSize, int pixelFormat, const Tuning* tuning,
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
   s_reportedJoinedFrame = false;
 #endif
+  s_frameBufferCount = fbcount;
 #if defined(ORIGAMI_CAMERA_EVENT_DIAGNOSTICS)
   // Read only during initialization under the accessory I2C lock, before a
   // caller can acquire frames. OV3660 datasheet v1.3 DVP/VFIFO controls let
@@ -676,6 +680,17 @@ bool setStillPreviewSize(bool fullResolution) {
   auto* sensor = esp_camera_sensor_get();
   const auto size = fullResolution ? FRAMESIZE_QXGA : FRAMESIZE_QVGA;
   const bool ok = sensor && sensor->set_framesize(sensor, size) == 0;
+  hal::bus::unlockI2c();
+  return ok;
+}
+bool setVideoPreviewSize(bool hd) {
+  if (!s_initialized || !s_qxgaBuffers || s_frameBufferCount < 2 || s_detectedPid != 0x3660 || s_lastFb ||
+      !hal::bus::lockI2c(kI2cLockTimeout)) return false;
+  auto* sensor = esp_camera_sensor_get();
+  const bool ok = sensor && sensor->pixformat == PIXFORMAT_JPEG &&
+      sensor->set_framesize(sensor, hd ? FRAMESIZE_HD : FRAMESIZE_VGA) == 0 &&
+      sensor->set_quality(sensor, hd ? 16 : 12) == 0 &&
+      applyVideoResolutionProfile(sensor, hd ? FRAMESIZE_HD : FRAMESIZE_VGA);
   hal::bus::unlockI2c();
   return ok;
 }

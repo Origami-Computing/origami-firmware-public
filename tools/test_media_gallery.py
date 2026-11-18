@@ -12,7 +12,7 @@ with tempfile.TemporaryDirectory() as td:
 #include <cstddef>
 namespace hal {namespace sd {
 struct StreamReader {void* handle=nullptr;size_t size=0,position=0;};
-bool mounted();bool removeFile(const char*);
+bool mounted();bool removeFile(const char*);bool fileInfo(const char*,size_t&,uint32_t&);
 bool openStream(const char*,StreamReader*);size_t readStream(StreamReader*,uint8_t*,size_t);bool seekStream(StreamReader*,size_t);void closeStream(StreamReader*);
 }}
 ''')
@@ -56,6 +56,7 @@ void freePsram(void*& p){if(p){--allocations;free(p);p=nullptr;}}
 }}
 namespace hal {namespace sd {
 bool mounted(){return ::mounted;}bool removeFile(const char*p){return removeOk && timestamps.erase(p);}
+bool fileInfo(const char* p,size_t& size,uint32_t& modified){auto it=timestamps.find(p);if(it==timestamps.end())return false;size=1;modified=it->second;return true;}
 bool openStream(const char*,StreamReader*r){r->size=bytes.size();r->position=0;++streams;return true;}
 size_t readStream(StreamReader*r,uint8_t*out,size_t n){n=std::min({n,size_t(7),r->size-r->position,cut>r->position?cut-r->position:0});memcpy(out,bytes.data()+r->position,n);r->position+=n;return n;}
 bool seekStream(StreamReader*r,size_t at){if(at>r->size)return false;r->position=at;return true;}
@@ -86,6 +87,10 @@ int main(){using namespace hal::sd;
  assert(!strcmp(c[0].path,"/photos/IMG_00204.jpg"));
  assert(c.timings().metadataReads==0); // no AVI: don't open every camera JPEG
  dirs["/videos"]=videos;
+ // A failed metadata lookup must discard the partial catalog and release storage.
+ timestamps.erase("/videos/VID_a.AVI");
+ assert(c.load(true)==PhotoCatalogResult::ReadError&&c.count()==0&&allocations==0);
+ timestamps["/videos/VID_a.AVI"]=20;
  c.clear();allocation=false;assert(c.load(true)==PhotoCatalogResult::NoMemory);allocation=true;
  dirs.erase("/photos");assert(c.load(true)==PhotoCatalogResult::Ok&&c.count()==1&&c[0].video);
  assert(c.load()==PhotoCatalogResult::Ok&&c.count()==0);

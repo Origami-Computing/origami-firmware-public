@@ -5,7 +5,8 @@ import subprocess, tempfile
 
 R = Path(__file__).resolve().parents[1]
 s = (R / "src/hal/hal_camera.cpp").read_text()
-code = s[
+profile = s[s.index("static bool applyVideoResolutionProfile("):s.index("// One hardware attempt.")]
+code = profile + s[
     s.index("namespace {\nbool jpegShutterRead(") : s.index("\nbool triggerAutofocus(")
 ]
 with tempfile.TemporaryDirectory() as td:
@@ -23,11 +24,20 @@ with tempfile.TemporaryDirectory() as td:
 #include <vector>
 #include <cstring>
 #include <cstdio>
-constexpr int PIXFORMAT_JPEG=4,FRAMESIZE_QXGA=17,FRAMESIZE_QVGA=5;
-struct Sensor{int pixformat=PIXFORMAT_JPEG,size=0;int set_framesize(Sensor*,int next){size=next;return 0;}};Sensor sensor;
+constexpr int PIXFORMAT_JPEG=4,FRAMESIZE_QXGA=17,FRAMESIZE_QVGA=5,FRAMESIZE_HD=11,FRAMESIZE_VGA=8;
+#define ORIGAMI_VIDEO_HD_CROP_TRIAL 1
+struct {template<class...T> void printf(const char*,T...){} } Serial;
+struct Sensor;
+int rawCalls=0;bool rawFail=false;
+int raw(Sensor*,int a,int b,int c,int d,int e,int f,int g,int h,int i,int j,bool k,bool l){
+ ++rawCalls;assert(a==384&&b==408&&c==1695&&d==1139&&e==16&&f==6&&g==1604&&h==1247&&i==1280&&j==720&&!k&&!l);return rawFail?-1:0;}
+struct Sensor{int pixformat=PIXFORMAT_JPEG,size=0,quality=0;struct{unsigned PID=0x3660;}id;
+ decltype(&raw) set_res_raw=raw;
+ int set_quality(Sensor*,int q){quality=q;return 0;}int set_framesize(Sensor*,int next){size=next;return 0;}};
+using sensor_t=Sensor;Sensor sensor;
 Sensor* esp_camera_sensor_get(){return &sensor;}
 namespace hal{namespace bus{bool lockI2c(unsigned){return true;}void unlockI2c(){}}namespace camera{
-bool s_qxgaBuffers=false,s_initialized=true;unsigned s_detectedPid=0x3660;void* s_lastFb=nullptr;constexpr unsigned kI2cLockTimeout=10;
+unsigned s_frameBufferCount=2;bool s_qxgaBuffers=false,s_initialized=true;unsigned s_detectedPid=0x3660;void* s_lastFb=nullptr;constexpr unsigned kI2cLockTimeout=10;
 std::array<uint8_t,65536> registers{};std::vector<unsigned> writes;int failRegister=-1,failReadRegister=-1;
 bool ovReadReg(uint16_t a,uint8_t* out){if(a==failReadRegister)return false;*out=registers[a];return true;}
 bool ovWriteReg(uint16_t a,uint8_t v){writes.push_back(a);if(a==failRegister){failRegister=-1;return false;}registers[a]=v;return true;}
@@ -40,6 +50,13 @@ int main(){using namespace hal::camera;
  assert(setStillPreviewSize(false)&&sensor.size==FRAMESIZE_QVGA);
  s_lastFb=&sensor;assert(!setStillPreviewSize(true)&&sensor.size==FRAMESIZE_QVGA);s_lastFb=nullptr;
  assert(setStillPreviewSize(true)&&sensor.size==FRAMESIZE_QXGA);
+ assert(setVideoPreviewSize(false)&&sensor.size==FRAMESIZE_VGA&&sensor.quality==12);
+ assert(rawCalls==0);assert(setVideoPreviewSize(true)&&sensor.size==FRAMESIZE_HD&&sensor.quality==16&&rawCalls==1);
+ rawFail=true;assert(!setVideoPreviewSize(true));rawFail=false;
+ s_lastFb=&sensor;assert(!setVideoPreviewSize(false));s_lastFb=nullptr;
+ s_qxgaBuffers=false;assert(!setVideoPreviewSize(true));s_qxgaBuffers=true;
+ s_frameBufferCount=1;assert(!setVideoPreviewSize(true));s_frameBufferCount=2;
+ s_detectedPid=0x5640;assert(!setVideoPreviewSize(false));s_detectedPid=0x3660;
  registers[0x303b]=24;registers[0x303c]=0x11;registers[0x303d]=0x30;
  registers[0x380c]=2300>>8;registers[0x380d]=2300&255;registers[0x380e]=1564>>8;registers[0x380f]=1564&255;
  registers[0x350b]=16;registers[0x3821]=0x20;registers[0x5000]=0xa7;registers[0x5001]=0xa3;

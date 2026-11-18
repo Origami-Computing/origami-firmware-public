@@ -57,6 +57,7 @@ struct sensor_t {
 #define SETTER(name) int name(sensor_t*, int) { return 0; }
   pixformat_t pixformat = PIXFORMAT_JPEG;
   SETTER(set_framesize)
+  SETTER(set_quality)
   SETTER(set_special_effect) SETTER(set_colorbar) SETTER(set_brightness)
   SETTER(set_contrast) SETTER(set_saturation) SETTER(set_sharpness)
   SETTER(set_whitebal) SETTER(set_awb_gain) SETTER(set_wb_mode)

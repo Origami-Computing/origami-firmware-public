@@ -55,7 +55,12 @@ static void renderBitmap(TFT_eSPI& c, const Node& n) {
         }
     }
 }
-int main(int argc,char** argv){assert(argc==3);std::vector<uint16_t> source(224*168);FILE* f=fopen(argv[1],"rb");assert(f&&fread(source.data(),2,source.size(),f)==source.size());fclose(f);
+int main(int argc,char** argv){
+ assert(ui::cine_view::shutterAlpha(0)==15&&ui::cine_view::shutterAlpha(34)==15);
+ assert(ui::cine_view::shutterAlpha(35)==15&&ui::cine_view::shutterAlpha(70)==10);
+ assert(ui::cine_view::shutterAlpha(105)==5&&ui::cine_view::shutterAlpha(140)==0);
+ for(unsigned t=1;t<200;++t)assert(ui::cine_view::shutterAlpha(t)<=ui::cine_view::shutterAlpha(t-1));
+assert(argc==3);std::vector<uint16_t> source(224*168);FILE* f=fopen(argv[1],"rb");assert(f&&fread(source.data(),2,source.size(),f)==source.size());fclose(f);
  core::cine::WheelControl control;assert(control.color()&&!control.visible()&&!control.shown(0));
  control.show(100);assert(control.shown(100)&&control.shown(2099)&&!control.shown(2100));assert(!control.expire(2099)&&control.visible());assert(control.expire(2100)&&!control.visible());
  control.toggle(3000);assert(!control.color()&&control.shown(3000));control.toggle(3100);assert(control.color());
@@ -73,6 +78,12 @@ int main(int argc,char** argv){assert(argc==3);std::vector<uint16_t> source(224*
  auto untouched=backing.pixels;ui::cine_view::backdrop(backing,-1,0,20,28,128);ui::cine_view::backdrop(backing,2147483647,0,20,28,128);ui::cine_view::backdrop(backing,0,2147483647,20,28,128);ui::cine_view::backdrop(backing,0,0,1,28,128);ui::cine_view::backdrop(backing,0,0,20,2147483647,128);assert(backing.pixels==untouched);
  for(bool wb:{false,true}){Canvas selected;ui::cine_view::chrome(selected,"Portra","1/1000",0,wb,true);unsigned ss=0,whiteBalance=0;for(int y=43;y<103;++y)for(int x=134;x<268;++x)if(selected.at(x,y)==kUiEdit){if(y<73)++whiteBalance;else ++ss;}assert(wb?(whiteBalance>0&&ss==0):(ss>0&&whiteBalance==0));}
 
+ std::vector<uint16_t> dark(224*168,0);
+ for(unsigned age:{0u,35u,70u,105u,140u,200u}){
+  Canvas fade;ui::cine_view::image(fade,dark.data(),224,168,ui::cine_view::shutterAlpha(age));
+  const uint16_t expected=ui::raster::blend(0xffff,0,ui::cine_view::shutterAlpha(age));
+  for(auto pixel:fade.pixels)assert(pixel==expected);
+ }
  for(unsigned state=0;state<5;++state){Canvas canvas;ui::cine_view::image(canvas,source.data(),224,168);const auto before=canvas.pixels;ui::cine_view::chrome(canvas,state==2||state==3?"Portra":"Sunny","1/1000",state==4?5000:0,state==2||state==3,state==1||state==2||state==3);if(state==0||state==4)for(int y=43;y<103;++y)for(int x=134;x<268;++x)assert(canvas.pixels[y*280+x]==before[y*280+x]);for(int y=225;y<240;++y)for(int x=60;x<241;++x)assert(canvas.pixels[y*280+x]==before[y*280+x]);char path[1024];snprintf(path,sizeof(path),"%s/subtle-state-%u.ppm",argv[2],state);canvas.save(path);}
  Canvas reference;ui::cine_view::image(reference,source.data(),224,168);camera_photographer::overlays(reference,0);reference.fillRect(52,196,180,20,0);ui::pixel_text::text(reference,"B: PHOTO / HOLD: VIDEO",56,202,1,0xffff);char path[1024];snprintf(path,sizeof(path),"%s/stock-overlay.ppm",argv[2]);reference.save(path);
 }

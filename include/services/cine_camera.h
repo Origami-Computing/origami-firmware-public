@@ -8,7 +8,7 @@ namespace cine_camera {
 using ColorMode = core::cine::ColorMode;
 struct Status {
   bool open = false, saved = false, queued = false, previewInterrupted = false;
-  uint32_t sequence = 0;
+  uint32_t sequence = 0, capturedAtUnix = 0;
   char message[80] = {}, photoPath[64] = {}, metadataPath[64] = {};
 };
 // UI-owned, single 3MP ISP/JPEG pipeline. All frame loans end before input dispatch.
@@ -22,7 +22,10 @@ public:
   bool close(bool restoreUi = true);
   bool holdsResources() const { return camera_.backgroundHeld() || camera_.running(); }
   bool preview(bool (*shouldAbort)(void *) = nullptr, void *context = nullptr);
-  bool capture();
+  // UI task: notify after validating a fresh sensor frame, before storage.
+  // Callback may read status/present feedback, but must not mutate this session.
+  // Normal captures queue automatically; tutorial review defers admission.
+  bool capture(void (*onFrameReady)() = nullptr, bool enqueueUpload = true);
   bool beginClip(camera::VideoRecording &recorder, bool hd, bool microphone);
   bool previewClip(camera::VideoRecording &recorder);
   void adjustShutter(int delta);
@@ -55,7 +58,7 @@ private:
   hal::camera::CineIspReadback ispReadback_;
   bool configureExposure(ExposureMode mode, uint32_t shutterUs, unsigned gainQ4);
   bool switchStillSize(bool fullResolution, const hal::camera::CineIspRequest& settings);
-  bool saveStill();
+  bool saveStill(void (*onFrameReady)(), bool enqueueUpload);
   void releaseIspPreview();
   bool renderIspPreview(const hal::camera::CameraFrame &frame, bool (*shouldAbort)(void *),
                         void *context);

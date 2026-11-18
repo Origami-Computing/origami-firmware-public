@@ -171,7 +171,7 @@ void Session::adjustShutter(int delta) {
     return;
   configureExposure(ExposureMode::Manual, core::cine::shutterSpeedsUs[next], shutter_.gainQ4);
 }
-bool Session::capture() {
+bool Session::capture(void (*onFrameReady)(), bool enqueueUpload) {
   status_.saved = status_.queued = false;
   if (!status_.open)
     return false;
@@ -185,7 +185,7 @@ bool Session::capture() {
   const auto settings = captureSettings();
   if (!switchStillSize(true, settings))
     return false;
-  const bool saved = saveStill();
+  const bool saved = saveStill(onFrameReady, enqueueUpload);
   if (!switchStillSize(false, settings))
     return false;
   status_.saved = saved;
@@ -201,7 +201,7 @@ bool Session::switchStillSize(bool fullResolution, const hal::camera::CineIspReq
   return false;
 }
 
-bool Session::saveStill() {
+bool Session::saveStill(void (*onFrameReady)(), bool enqueueUpload) {
   const uint64_t started = esp_timer_get_time();
   status_.saved = false;
   status_.photoPath[0] = status_.metadataPath[0] = 0;
@@ -218,7 +218,9 @@ bool Session::saveStill() {
     if (!camera_.read(&frame))
       break;
     if (frame.dmaStartUs + 25000 >= started && frame.dmaStartUs >= shutterReadyUs_ &&
-        core::cine::hasJpegDimensions(frame.buf, frame.len, 2048, 1536)) {
+        core::cine::hasJpegDimensions(frame.buf, frame.len, 2048, 1536) &&
+        frame.format == PIXFORMAT_JPEG &&
+        core::cine::validJpeg(frame.buf, frame.len, frame.width, frame.height, 2048, 1536)) {
       acquired = true;
       break;
     }
@@ -229,8 +231,10 @@ bool Session::saveStill() {
     return false;
   }
   photos::markCaptured(target);
+  status_.capturedAtUnix = target.capturedAtUnix;
   const bool sampleValid = autoExposure() ? refreshExposure() : shutter_.valid;
   const auto exposure = sampleValid ? shutter_ : hal::camera::ShutterInfo{};
+  if (onFrameReady) onFrameReady();
   uint8_t exif[core::cine::exifCapacity];
   const core::cine::ExifInfo exifInfo{core::device::firmwareVersion(), colorName(colorMode_),
       exposure.valid ? exposure.actualUs : 0, uint16_t(frame.width), uint16_t(frame.height), autoExposure()};
@@ -243,7 +247,7 @@ bool Session::saveStill() {
   status_.saved = ok;
   // Persist the upload request only after the JPEG is saved and the sensor
   // frame is returned. The camera reservation defers network work until exit.
-  status_.queued = ok && photos::enqueue(target);
+  status_.queued = ok && enqueueUpload && photos::enqueue(target);
   snprintf(status_.photoPath, sizeof(status_.photoPath), "%s", target.path);
   snprintf(status_.metadataPath, sizeof(status_.metadataPath), "/cine/SHOT_%05lu.json",
            (unsigned long)status_.sequence);
@@ -274,7 +278,7 @@ bool Session::saveStill() {
       n > 0 && size_t(n) < sizeof(metadata) &&
       hal::sd::writeFile(status_.metadataPath, reinterpret_cast<const uint8_t *>(metadata), n);
   snprintf(status_.message, sizeof(status_.message),
-           ok ? (!status_.queued ? "Photo saved; not queued. Retry in Photos"
+           ok ? (enqueueUpload && !status_.queued ? "Photo saved; not queued. Retry in Photos"
                  : metadataOk && exifBytes ? "Photo saved" : "Photo saved; metadata failed")
               : "Save failed; partial files retained");
   return ok;

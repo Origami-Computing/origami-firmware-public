@@ -1,0 +1,26 @@
+{
+  "description": "Original project recordings, confirmed by the owner for public firmware distribution. Source WAV masters and conversion tools are retained.",
+  "assets": [
+    {
+      "path": "assets/sfx/camera_shutter.wav",
+      "sha256": "8b251bbded916a1cae47d26812f7ba3ce7994df5492beb3543d0bba99b817d80",
+      "source": "Original project recording; ownership confirmed by maintainer",
+      "generator": "tools/generate_camera_shutter.py",
+      "license": "MIT (see LICENSE)"
+    },
+    {
+      "path": "assets/sfx/recording_start.wav",
+      "sha256": "ca5bc76c013192b75081796e02298fc40fb3b683d6392d871c449cae95c52846",
+      "source": "Original project recording; ownership confirmed by maintainer",
+      "generator": "tools/generate_recording_sfx.py",
+      "license": "MIT (see LICENSE)"
+    },
+    {
+      "path": "assets/sfx/recording_stop.wav",
+      "sha256": "0001a70c7b8cd46030699af96f127bac8c259a644dead82b590370fefd34b942",
+      "source": "Original project recording; ownership confirmed by maintainer",
+      "generator": "tools/generate_recording_sfx.py",
+      "license": "MIT (see LICENSE)"
+    }
+  ]
+}

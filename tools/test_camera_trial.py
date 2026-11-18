@@ -1,6 +1,6 @@
 """Compare the original diagnostic with the extracted service under injected faults.
 
-Compiles actual old/new app entry functions and current service. Deterministic
+Compiles historical app and a test-only service adapter and current service. Deterministic
 HAL/storage stubs check frame lifetime, full operation traces, logs and CSV rows.
 """
 from pathlib import Path
@@ -14,7 +14,29 @@ def entry(source, name):
     return text.replace('runSettleTrial(', name+'(').replace(
         'NavHandler::instance().top() != &app || camState != CAM_VIEWFINDER', 'badView')
 old = (BASELINES/'camera_trial.cpp').read_text()
-new = (ROOT/'src/apps/camera_menu_app.cpp').read_text()
+# Test-only composition: the legacy app is gone; exercise its retained trial service.
+new = r'''bool runSettleTrial(uint32_t runId, int discardFrames, unsigned repeat) {
+  if (NavHandler::instance().top() != &app || camState != CAM_VIEWFINDER || s_video.busy() || s_videoPending) {
+    Serial.println("[camera-settle] ERR args_or_camera_not_ready");
+    return false;
+  }
+  services::camera::SettleTrial trial;
+  if (!trial.prepare(s_camera, runId, discardFrames, repeat)) return false;
+  const hal::camera::Tuning tuning = s_settings.tuning();
+  trial.begin(tuning, kModeLabels[(int)s_settings.mode]);
+  camShowShutterFrame();
+  const bool saved = trial.capture(s_camera, tuning,
+      [](services::camera::Session::PrepareResult result) { (void)camReportPreparation(result); });
+  if (saved) {
+    char label[24];
+    snprintf(label, sizeof(label), "%s R%u", trial.settingLabel(), repeat);
+    (void)camShowCapturedPreview(trial.photoPath(), label);
+    delay(900);
+  }
+  const bool restored = camRestorePreviewAfterCapture(500);
+  return trial.finish(restored);
+}
+#endif'''
 with tempfile.TemporaryDirectory() as directory:
     root = Path(directory)
     def write(name,text):

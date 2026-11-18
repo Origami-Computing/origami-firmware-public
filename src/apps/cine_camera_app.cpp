@@ -1,4 +1,6 @@
 #include "apps/cine_camera_app.h"
+#include "sfx/camera_shutter.h"
+#include "sfx/recording.h"
 #include "services/video_recording.h"
 #include "services/camera_settings.h"
 #include "services/uploads.h"
@@ -28,6 +30,10 @@ cine::Session session;
 services::camera::VideoRecording recorder;
 services::camera::Settings cameraSettings;
 bool microphone = true, clipActive = false, stopping = false;
+bool transitionPulse = false, tutorialRequested = false, tutorialCapture = false;
+bool transitionFlushPending = false;
+uint32_t transitionAt = 0, transitionPaintAt = 0, transitionPaintMaxUs = 0;
+services::photos::Target tutorialPhoto;
 uint32_t clipStartedAt = 0;
 core::cine::WheelControl wheel;
 ui::ListView settingsList;
@@ -97,7 +103,51 @@ bool close(bool keepReservation = false) {
 }
 void begin();
 void draw(TFT_eSprite &);
+void advanceShutter() {
+  const uint32_t paintStarted = micros();
+  if (transitionFlushPending) {
+    // Rendering plus transfer can exceed the audio DMA window. Refill PCM
+    // between those phases, using the display's existing canvas/scratch.
+    hal::display::flush();
+    transitionFlushPending = false;
+  } else {
+    if (!transitionPulse) return;
+    const uint32_t now = millis();
+    const bool expired = uint32_t(now - transitionAt) >= 140u;
+    if (!expired && uint32_t(now - transitionPaintAt) < 28u) return;
+    transitionPulse = !expired;
+    transitionPaintAt = now;
+    invalidate();
+    draw(hal::display::canvas());
+    transitionFlushPending = true;
+  }
+  const uint32_t paintedUs = micros() - paintStarted;
+  if (paintedUs > transitionPaintMaxUs) transitionPaintMaxUs = paintedUs;
+}
+void presentCue(const sfx::PcmClip& cue, const char* label) {
+  transitionPulse = true;
+  transitionFlushPending = false;
+  transitionAt = transitionPaintAt = millis();
+  transitionPaintMaxUs = 0;
+  invalidate();
+  draw(hal::display::canvas());
+  hal::display::flush();
+  const uint32_t shown = micros();
+  const bool played = sfx::playAndRelease(cue, advanceShutter);
+  // Muted, busy or failed audio still gets the same short visual feedback.
+  // Always remove the overlay before synchronous storage/sensor work begins.
+  while (transitionPulse || transitionFlushPending) {
+    advanceShutter();
+    if (transitionPulse && !transitionFlushPending) delay(1);
+  }
+  Serial.printf("[camera-sfx] %s visual_us=%lu played=%u fade_ms=%lu paint_us=%lu\n", label,
+                (unsigned long)shown, played, (unsigned long)(transitionPaintAt - transitionAt), (unsigned long)transitionPaintMaxUs);
+}
+void photoFeedback() { presentCue(sfx::kCameraShutter, "photo"); }
 void activate() {
+  tutorialCapture = tutorialRequested;
+  tutorialRequested = false;
+  tutorialPhoto = {};
   cameraSettings.load();
   microphone = true;
   restoreAfterClip = false;
@@ -132,16 +182,19 @@ void begin() {
 void snap() {
   if (current != View::Preview)
     return;
-  feedbackStage = 1;
-  feedbackAt = millis();
-  invalidate();
-  draw(hal::display::canvas());
-  hal::display::flush();
-  const bool saved = session.capture();
-  const auto& result = session.status();
-  Serial.printf("[camera-photo] saved=%u queued=%u path=%s\n",
-                result.saved, result.queued, result.photoPath);
-  feedbackStage = saved ? (result.queued ? 5 : 8) : 6;
+  // Secure the exposure before presenting the synchronized shutter feedback.
+  const bool saved = session.capture(photoFeedback, !tutorialCapture);
+  Serial.printf("[camera-photo] saved=%u queued=%u path=%s\n", saved, session.status().queued, session.status().photoPath);
+  if (saved && tutorialCapture) {
+    const auto& result = session.status();
+    tutorialPhoto.sequence = result.sequence;
+    tutorialPhoto.capturedAtUnix = result.capturedAtUnix;
+    snprintf(tutorialPhoto.path, sizeof(tutorialPhoto.path), "%s", result.photoPath);
+    Serial.printf("[tutorial-photo] captured sequence=%lu queued=0\n", (unsigned long)result.sequence);
+    NavHandler::instance().pop(); // Exit releases hardware before tutorial resumes.
+    return;
+  }
+  feedbackStage = saved ? (session.status().queued ? 5 : 8) : 6;
   feedbackAt = millis();
   invalidate();
   draw(hal::display::canvas());
@@ -163,11 +216,35 @@ void restoreStill(bool saved) {
   feedbackAt = millis();
   invalidate();
 }
+bool beginVideo() {
+  if (current != View::Preview || tutorialCapture || clipActive || recorder.busy()) return false;
+  const uint32_t requestedAt = millis();
+  clipSettings = session.captureSettings();
+  cancelTap = true;
+  feedbackStage = 0;
+  clipActive = true;
+  clipStartedAt = millis();
+  presentCue(sfx::kRecordingStart, "start");
+  const uint32_t cueDoneAt = millis();
+  const bool hd = cameraSettings.capture != services::camera::CaptureResolution::Vga;
+  if (!session.beginClip(recorder, hd, microphone)) {
+    recorder.close();
+    clipActive = false;
+    restoreStill(false);
+  }
+  Serial.printf("[video-start] press_ms=%lu request_ms=%lu cue_done_ms=%lu ready_ms=%lu accepted=%u\n",
+                (unsigned long)shutterPressedAt, (unsigned long)requestedAt,
+                (unsigned long)cueDoneAt, (unsigned long)millis(), clipActive);
+  invalidate();
+  return clipActive;
+}
 void tick(uint32_t) {
   const uint32_t now = millis();
   if (clipActive) {
     if (!recorder.busy()) {
-      restoreStill(finishClip());
+      const bool saved = finishClip();
+      if (saved) presentCue(sfx::kRecordingStop, "stop");
+      restoreStill(saved);
     } else {
       if (!stopping && now - clipStartedAt >= services::camera::VideoRecording::kMaxDurationMs) {
         stopping = true;
@@ -180,27 +257,13 @@ void tick(uint32_t) {
     }
     return;
   }
-  if (shutterHeld && current == View::Preview) {
+  if (shutterHeld && !tutorialCapture && current == View::Preview) {
     if (hal::input::buttonADown() || hal::input::buttonCDown()) {
       shutterHeld = false;
       cancelTap = true;
     } else if (hal::input::buttonBDown() && now - shutterPressedAt >= 1200u) {
       shutterHeld = false;
-      clipSettings = session.captureSettings();
-      cancelTap = true;
-      feedbackStage = 0;
-      clipActive = true;
-      clipStartedAt = now;
-      invalidate();
-      draw(hal::display::canvas());
-      hal::display::flush();
-      const bool hd = cameraSettings.capture != services::camera::CaptureResolution::Vga;
-      if (!session.beginClip(recorder, hd, microphone)) {
-        recorder.close();
-        clipActive = false;
-        restoreStill(false);
-      }
-      invalidate();
+      beginVideo();
       return;
     }
   }
@@ -278,7 +341,7 @@ void build(ui::scene::Scene &view, int16_t w, int16_t h) {
                                 ui::cine_view::settingsMask, 20, 20, 0xffff, 0);
     if (gear)
       gear->bitmapTransparent = true;
-    view.addLabel("cine.controls", {52, 196, 200, 20}, clipActive ? clipCaption() : "B: PHOTO / HOLD: VIDEO", 0xffff, 0, 1);
+    view.addLabel("cine.controls", {52, 196, 200, 20}, clipActive ? clipCaption() : (tutorialCapture ? "B: PHOTO" : "B: PHOTO / HOLD: VIDEO"), 0xffff, 0, 1);
     if (wheel.shown(millis())) {
       const uint16_t ss = wheel.color() ? 0xffff : kUiEdit,
                      color = wheel.color() ? kUiEdit : 0xffff;
@@ -337,7 +400,7 @@ void draw(TFT_eSprite &canvas) {
     const uint32_t at = micros();
     PreviewCanvas target{canvas};
     ui::cine_view::image(target, session.pixels(), cine::Session::previewWidth,
-                         cine::Session::previewHeight, feedbackStage == 1);
+                         cine::Session::previewHeight, transitionPulse ? ui::cine_view::shutterAlpha(millis() - transitionAt) : 0);
     char shutter[20];
     shutterValue(shutter, sizeof(shutter));
     ui::cine_view::chrome(target, cine::Session::colorName(session.colorMode()), shutter,
@@ -358,6 +421,7 @@ AppPresentation presentation() {
 void input(hal::input::InputEvent e) {
   using ET = hal::input::EventType;
   if (e.type == ET::ButtonA_Tap && current == View::Preview) {
+    if (tutorialCapture) { NavHandler::instance().pop(); return; }
     current = View::Menu;
     menuEditing = false;
     settingsList.totalItems = 5;
@@ -483,6 +547,11 @@ const ::scene::Screen screen = {"Camera", invalidate, nullptr, tick,  shutterInp
                                 chord,         draw,       "main",  build, &bg};
 const ::scene::Screen *const screens[] = {&screen};
 } // namespace
+void beginTutorialCapture() { tutorialRequested = true; NavHandler::instance().push(&app); }
+services::photos::Target takeTutorialPhoto() { auto result = tutorialPhoto; tutorialPhoto = {}; return result; }
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+bool runAudioTrial() { return NavHandler::instance().top() == &app && beginVideo(); }
+#endif
 App app = [] {
   App a = SCENE_APP_CATALOG_LIFECYCLE_HOOKS("Camera", "cine-camera", &screen, activate,
                                             resume, exit, "src/apps/cine_camera_app.cpp",

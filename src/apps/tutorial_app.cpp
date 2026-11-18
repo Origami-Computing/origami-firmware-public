@@ -18,7 +18,7 @@
 #include "services/vibration.h"
 #include "services/onboarding_progress.h"
 #include "apps/menu_app.h"
-#include "apps/camera_menu_app.h"
+#include "apps/cine_camera_app.h"
 #include "services/photo_storage.h"
 #include "hal/hal_sd.h"
 #include "ui/onboarding_approved_view.h"
@@ -180,7 +180,7 @@ void prepareWorkflow(){
  else if(s_flow.page==12){if(s_flow.interest||s_flow.setupPublished)s_flow.account=core::secrets::backendConfig().apiKey[0]!=0;s_flow.wifiReturned(apps::wifi_setup::takeTutorialResult());}
  else if(s_flow.page==19){s_flow.connected=s_flow.connected||hal::wifi::connected();s_flow.menuReturned();}
  else if(s_flow.page==129){auto result=apps::app_store::takeTutorialResult();s_flow.installed|=result==apps::app_store::TutorialResult::Installed;s_flow.setPage(result==apps::app_store::TutorialResult::Back?128:133);}
- else if(s_flow.page==30){auto photo=apps::camera_menu::takeTutorialPhoto();if(photo.valid()){s_photo=photo;s_photoQueued=false;s_flow.page=31;Serial.println("[tutorial-photo] review camera_released=1 reconnect_requested=1 queued=0");}else{s_photoTransport.release();s_flow.page=40;}}
+ else if(s_flow.page==30){auto photo=apps::cine_camera::takeTutorialPhoto();if(photo.valid()){s_photo=photo;s_photoQueued=false;s_flow.page=31;Serial.println("[tutorial-photo] review camera_released=1 reconnect_requested=1 queued=0");}else{s_photoTransport.release();s_flow.page=40;}}
  refreshCopy();
  save();
 }
@@ -250,7 +250,7 @@ void tick(uint32_t now){
   if(s_catalogJob&&widgets::storage::take(s_catalogJob,result,nullptr,s_apps)){s_catalogJob=0;s_dirty=true;}
  }
  if(s_flow.page==34){if(elapsed()>=6500){s_flow.outroFinished();finish();}return;}
- if(s_flow.page==30){if(s_photoTransport.pollAcquire())apps::camera_menu::beginTutorialCapture();return;}
+ if(s_flow.page==30){if(s_photoTransport.pollAcquire())apps::cine_camera::beginTutorialCapture();return;}
  if(s_flow.page==Flow::kSending){
   auto* queue=services::uploads::readyQueue();
   const auto delivery=queue?queue->delivery(s_photo.path):UploadQueue::Delivery{};

@@ -123,7 +123,8 @@ bool loadBmpRegion(const char* path, uint16_t* imageBuffer, int32_t maxWidth, in
 // out is a flat char array: out[i * maxNameLen] = full path of file i.
 // Skips subdirs and macOS ._* files. Sorts alphabetically. Returns file count.
 int listFiles(const char* dir, const char* ext, char* out, int maxFiles, int maxNameLen);
-// Read-only file metadata under the SPI guard; output is valid on success only.
+// Read-only regular-file metadata from one stat under the SPI guard, without
+// opening a file handle. Requires an absolute SD path; outputs change on success only.
 bool fileInfo(const char* path, size_t& bytes, uint32_t& modified);
 
 // Scan dir for subdirectories. out is a flat char array:

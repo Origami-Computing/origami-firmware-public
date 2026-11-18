@@ -69,13 +69,16 @@ jobs:
           python3 tools/test_ota_download_resume.py
           python3 tools/test_ota_versions.py
           python3 tools/test_mp3_metadata.py
-          python3 tools/test_camera_shutter.py
+          python3 tools/test_camera_workflow.py
+          python3 tools/test_cine_video_start.py
+          python3 tools/test_sd_file_info.py
+          python3 tools/test_sfx_pcm.py
           python3 tools/test_media_gallery.py
           python3 tools/test_photo_library.py
           python3 tools/test_video_library.py
           python3 tools/test_camera_session.py
           python3 tools/test_network_stack.py
-          python3 tools/test_camera_video_teardown.py
+          python3 tools/test_cine_service.py
           python3 tools/test_video_recording.py
           python3 tools/test_playback_start_admission.py
           python3 tools/test_ota_public_default.py

@@ -177,6 +177,8 @@ def native_frames(image, output, shutter_us=16667):
             "namespace hal { namespace display { Canvas& canvas() { assert(false); static Canvas c; return c; } }}\n"
             "namespace ui {\nconstexpr int kWifiIconSize=22;\n"
             "static TextField s_clockField;\n"
+            # This fixture renders disconnected states with no queued transfers.
+            "static void drawSyncGlyph(TFT_eSPI&, int, int, uint8_t, uint8_t, uint8_t count, uint16_t) { assert(count == 0); }\n"
             "enum BarPart : uint8_t { WifiPart=1, BatteryPart=2, ClockPart=4, AllParts=7 };\n"
             "uint32_t batteryAnimationTime() { return 1200; }\n"
             + function(wifi, "static uint16_t blendWifiInk(")

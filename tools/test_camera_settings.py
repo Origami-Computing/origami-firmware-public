@@ -1,6 +1,6 @@
-"""Verify Camera configuration and the actual app row-to-field save adapters.
+"""Verify Camera configuration retained sensor tuning and persistence.
 
-Compiles the real settings service, app adapters and HAL Tuning type with an in-memory
+Compiles the real settings service and HAL Tuning type with an in-memory
 store. Covers every byte value, per-field writes and nonpersisted manual state.
 This does not emulate NVS or exercise a sensor.
 """
@@ -9,20 +9,6 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-source = (ROOT/'src/apps/camera_menu_app.cpp').read_text()
-
-
-def block(marker):
-    start = source.index(marker)
-    end = source.index('{', start) + 1
-    depth = 1
-    while depth:
-        depth += (source[end] == '{') - (source[end] == '}')
-        end += 1
-    return source[start:end] + (';' if marker.startswith('enum ') else '')
-
-
-functions = ['static int settingsRowCount(', 'static SettingsRow settingsRowAt(', 'static hal::camera::Tuning camPreviewTuning(', 'static void persistTopLevelSetting(', 'static void persistManualSetting(']
 code = r'''
 #include "hal/hal_camera.h"
 #include "services/camera_settings.h"
@@ -50,7 +36,6 @@ bool putU8(const char* ns,const char* key,uint8_t value){
 bool putBool(const char* ns,const char* key,bool value){return putU8(ns,key,value);}
 }}
 '''
-code += '\n'.join(block('enum '+name+' {') for name in ['SettingsRow','ManualRow'])
 code += r'''
 using CapturePreset=services::camera::CaptureResolution;
 using CameraMode=services::camera::Mode;
@@ -64,32 +49,9 @@ auto& s_autofocusOn=s_settings.autofocus;
 auto& s_manualTuning=s_settings.manual;
 void loadCameraPrefs(){s_settings.load();}
 hal::camera::Tuning effectiveTuning(){return s_settings.tuning();}
-'''+'\n'.join(block(marker) for marker in functions)+r'''
+'''+r'''
 int clamp(int value,int low,int high){return std::max(low,std::min(high,value));}
 int main(){
- for(bool supported:{false,true})for(auto mode:{CM_DEFAULT,CM_MANUAL}){
-  autofocusSupported=supported;s_settings.mode=mode;
-  const std::vector<SettingsRow> base=supported ?
-    std::vector<SettingsRow>{SR_MODE,SR_AUTOFOCUS,SR_CAPTURE,SR_VIDEO} :
-    std::vector<SettingsRow>{SR_MODE,SR_CAPTURE,SR_VIDEO};
-  auto expected=base;if(mode==CM_MANUAL)expected.push_back(SR_MANUAL);
-  assert(settingsRowCount()==int(expected.size()));
-  for(int i=0;i<settingsRowCount();++i){
-   assert(settingsRowAt(i)==expected[i]);
-   writes.clear();persistTopLevelSetting(settingsRowAt(i));
-   if(expected[i]==SR_CAPTURE)assert(writes==std::vector<std::string>{"cap"});
-   if(expected[i]==SR_VIDEO||expected[i]==SR_MANUAL)assert(writes.empty());
-  }
- }
- s_settings.mode=CM_DEFAULT;saved.clear();writes.clear();reads.clear();
-
- for(int shoot=0;shoot<3;++shoot){
-  s_shootMode=shoot;auto t=camPreviewTuning();
-  assert(t.allowNightMode==(shoot==0));
-  assert(t.exposure_ctrl&&t.gain_ctrl);
-  assert(s_settings.tuning().allowNightMode); // Photo/settings profile unchanged.
- }
-
  const std::vector<std::string> expectedReads={"mode","af","cap","m_ae","m_gain","m_wb","m_sat","m_con","m_sharp"};
  loadCameraPrefs();assert(reads==expectedReads&&writes.empty());
  assert(s_cameraMode==CM_DEFAULT&&s_autofocusOn&&s_capturePreset==CR_VGA);
@@ -131,7 +93,7 @@ int main(){
  const unsigned values[]={3,1,2,126,3,4,130,127,125};
  for(int field=0;field<9;++field)for(bool ok:{false,true}){
   saved={{"unrelated",42}};writes.clear();writable=ok;
-  if(field<3)persistTopLevelSetting(field);else persistManualSetting(field-3);
+  s_settings.save(static_cast<services::camera::Setting>(field));
   assert(writes.size()==1&&writes[0]==keys[field]);
   assert(saved.size()==(ok?2u:1u)&&saved["unrelated"]==42);
   if(ok)assert(saved[keys[field]]==values[field]);
@@ -140,9 +102,7 @@ int main(){
  writes.clear();assert(!s_settings.save(services::camera::Setting(255)));assert(writes.empty());
  writable=false;assert(!s_settings.save(services::camera::Setting::Mode));
  writable=true;assert(s_settings.save(services::camera::Setting::Mode));
- writes.clear();persistTopLevelSetting(SR_MANUAL);persistTopLevelSetting(-1);
- persistManualSetting(MR_README);persistManualSetting(999);assert(writes.empty());
- puts("PASS Camera settings: defaults/read order, 256 byte values per field, preserved manual state, 8 profile/AF combinations, isolated successful/failed writes and non-setting rows");
+ puts("PASS Camera settings: defaults/read order, 256 byte values per field, preserved manual state, 8 profile/AF combinations, isolated successful/failed writes");
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

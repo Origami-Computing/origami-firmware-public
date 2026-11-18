@@ -7,6 +7,17 @@ hardware testing. [Release downloads](https://github.com/Origami-Computing/origa
 The published history starts at v1.0.1. Versions v1.0.6 and v1.0.7 were qualification
 builds, not published updates; their changes are included under v1.0.8.
 
+## v1.0.15
+
+Unreleased.
+
+Changes since v1.0.14.
+
+- Open Photos faster in large mixed photo/video libraries by reading each file’s metadata once while preserving gallery ordering.
+- Start video recording faster by reusing the live camera sensor and waiting for fresh frames instead of a fixed settling delay.
+- Play recorded shutter and recording start/stop sounds in sync with capture feedback.
+- Use the same Camera workflow for tutorial photos, preserving automatic uploads for normal captures and upload confirmation during the tutorial.
+
 ## v1.0.14
 
 Unreleased.
