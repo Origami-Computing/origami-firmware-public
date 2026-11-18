@@ -13,6 +13,7 @@ Unreleased.
 
 Changes since v1.0.12.
 
+- Wait a full inactivity interval after unplugging before automatic sleep; time on external power does not count toward the timer.
 - Fix automatic Camera photo uploads so saved photos are queued for delivery without a manual upload action.
 - Let the onboarding wheel lesson complete by turning C in either direction, with matching control illustrations and feedback.
 - Add a hold-C sleep/wake lesson that saves its checkpoint before sleep and resumes after the normal wake greeting.
