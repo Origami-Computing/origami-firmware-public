@@ -178,7 +178,7 @@ enum class Setting { Capture };
 } }
 struct { services::camera::CaptureResolution capture=services::camera::CaptureResolution::Vga;
   void save(services::camera::Setting) {} } cameraSettings;
-bool microphone=true, clipActive=false;
+bool microphone=true, clipActive=false, tutorialCapture=false;
 const char* clipCaption(){return nullptr;}
 cine::Session session;
 core::cine::WheelControl wheel;
@@ -241,7 +241,7 @@ int main(int argc, char **argv) {
       ui::scene::Scene scene;
       build(scene, 280, 240);
       scene.render(c);
-      ui::drawBarGlyphs(c, 280, 38, 4, 99, false, true, false, "--:--", 0, false, false, false,
+      ui::drawBarGlyphs(c, 280, 38, 4, 99, false, true, false, "--:--", 0, false, false, false, 0, 0, 0,
                         0xffff);
       std::string id = selected == 0   ? "settings-ss"
                        : selected == 1 ? "settings-color"
@@ -256,7 +256,7 @@ int main(int argc, char **argv) {
     ui::scene::Scene scene;
     build(scene, 280, 240);
     scene.render(c);
-    ui::drawBarGlyphs(c, 280, 38, 4, 99, false, true, false, "--:--", 0, false, false, false,
+    ui::drawBarGlyphs(c, 280, 38, 4, 99, false, true, false, "--:--", 0, false, false, false, 0, 0, 0,
                       0xffff);
     c.save(out + (state == View::Opening ? "/preparing.ppm" : "/error.ppm"));
   }
@@ -269,7 +269,7 @@ int main(int argc, char **argv) {
   centered("Opening", mid - 36, 1, kUiMuted);
   centered("Camera", mid - 6, 3, kUiFg);
   centered("...", mid + 28, 1, kUiAccent);
-  ui::drawBarGlyphs(splash, 280, 38, 4, 99, false, true, false, "--:--", 0, false, false, false,
+  ui::drawBarGlyphs(splash, 280, 38, 4, 99, false, true, false, "--:--", 0, false, false, false, 0, 0, 0,
                     0xffff);
   splash.save(out + "/opening.ppm");
 }
