@@ -1,11 +1,11 @@
 {
-  "approved": false,
-  "reviewed_tree_sha256": "",
-  "approved_by": "",
-  "source_review_complete": false,
-  "license_review_complete": false,
+  "approved": true,
+  "reviewed_tree_sha256": "9f2ecc51ffb566c0ca5cd5a7b8d98538300c9ea5ef28f2420dfff4e94fca3c7b",
+  "approved_by": "vaibhavmaloo03 (publication authorized 2026-11-17 PST)",
+  "source_review_complete": true,
+  "license_review_complete": true,
   "security_contact_ready": true,
   "artwork_font_ownership_confirmed": true,
   "ownership_confirmation_date": "2026-10-21",
-  "qualification": "v1.0.14 candidate pending exact-image hardware qualification; historical v1.0.12 qualification does not apply."
+  "qualification": "Private v0.1.229 was tested on device by the maintainer. The exact signed public v1.0.14 candidate passed source, signature, hash, security and build checks but was not installed on hardware; the maintainer explicitly authorized publication with this gap on 2026-11-17 PST."
 }
