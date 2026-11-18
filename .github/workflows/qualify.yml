@@ -1,9 +1,9 @@
-name: Deploy private Public-channel qualification candidate
+name: Deploy Public-channel qualification candidate
 on:
   workflow_dispatch:
     inputs:
       candidate_tag:
-        description: 'Signed candidate already USB-tested; deploys to existing Public key holders'
+        description: 'Signed candidate already USB-tested; advances the live Public OTA channel'
         required: true
         type: string
       version:
@@ -17,12 +17,23 @@ concurrency:
   group: public-firmware-publication
   cancel-in-progress: false
 jobs:
+  review:
+    if: github.ref == 'refs/heads/main'
+    environment: release-review
+    runs-on: ubuntu-24.04
+    permissions: {}
+    steps:
+      - name: Authorize live Public-channel qualification
+        run: echo 'Release-review gate completed for Public OTA qualification.'
   qualify:
-    if: github.ref == 'refs/heads/main' && github.event.repository.private
+    needs: review
+    timeout-minutes: 30
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
-      # GitHub requires write access to retrieve private draft releases.
-      contents: write
+      # Job-level permissions must explicitly allow Actions artifact downloads.
+      actions: read
+      contents: read
       id-token: write
     env:
       VERSION: ${{ inputs.version }}
@@ -33,7 +44,7 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           persist-credentials: false
-      - name: Download exact private candidate and verify source and signatures
+      - name: Download exact candidate and verify source and signatures
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
