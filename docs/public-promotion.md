@@ -264,3 +264,15 @@ Do not create internal test/qualification releases there. Archive any required
 candidate evidence outside Releases before removing historical drafts. Download
 candidate bytes from Actions for manual qualification rather than `gh release download`.
 Source approval, hardware qualification and exact-byte promotion still apply.
+
+## Recovery site hosting
+
+The USB recovery site is deployed by **Deploy USB recovery site** using GitHub
+Pages Actions. It no longer needs a `gh-pages` branch. The workflow pins the
+previously deployed recovery snapshot, retained by tag `recovery-site-2026-11-17`,
+so branch cleanup does not change its firmware, browser code or notices.
+
+A recovery update is a separate reviewed operation: retain its source and notices,
+qualify the installer, preserve its snapshot with a tag, update the pinned commit
+in the workflow, and verify the live recovery URL after deployment. This workflow
+does not advance the Public OTA channel or select an unqualified candidate.
