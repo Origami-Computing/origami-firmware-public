@@ -27,10 +27,12 @@ jobs:
         run: echo 'Release-review gate completed for Public OTA qualification.'
   qualify:
     needs: review
+    timeout-minutes: 30
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     permissions:
-      # Candidate artifacts are fetched from the successful qualification run.
+      # Job-level permissions must explicitly allow Actions artifact downloads.
+      actions: read
       contents: read
       id-token: write
     env:
