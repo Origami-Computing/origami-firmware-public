@@ -35,6 +35,7 @@ Use `## vX.Y.Z`, then `Published: YYYY-MM-DD at HH:MM AM/PM PST/PDT.`, then
 `Changes since vA.B.C.`, then plain `- ` bullets. Use the publication date and time in
 America/Los_Angeles (PST in winter, PDT during daylight saving time), with a
 12-hour clock. Confirm it before publishing if the schedule changes. Backfilled entries use
-GitHub’s original `published_at` timestamp converted to Pacific time, never the date the notes were edited. Historical
+GitHub’s original `published_at` timestamp converted to Pacific time, never the date the notes were edited. Use `Unreleased.` for a candidate until publication; the publisher supplies the
+Pacific timestamp in the release notes. Historical
 entries stay as release records. For a tooling-only or repackaging release, say
 exactly that rather than inventing firmware fixes. See the [promotion runbook](docs/public-promotion.md).

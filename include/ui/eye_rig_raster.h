@@ -4,6 +4,19 @@
 // Canonical coverage renderer shared by device surfaces and native previews.
 // Rerasterize vector geometry at its final size; never shrink a baked eye bitmap.
 namespace ui { namespace eye_rig {
+// Adapt rectangle-only scene canvases to the canonical rasterizer's row interface.
+template<class C> struct RectSurface {
+ C& c;uint16_t background;bool swap=false;
+ RectSurface(C& target,uint16_t bg):c(target),background(bg){}
+ bool getSwapBytes(){return swap;}void setSwapBytes(bool v){swap=v;}
+ uint16_t readPixel(int,int){return background;} // Non-composited callers only.
+ void pushImage(int x,int y,int w,int h,const uint16_t* data){
+  for(int row=0;row<h;++row)for(int col=0;col<w;){
+   const auto raw=data[row*w+col];int end=col+1;while(end<w&&data[row*w+end]==raw)++end;
+   c.fillRect(x+col,y+row,end-col,1,swap?raw:uint16_t((raw>>8)|(raw<<8)));col=end;
+  }
+ }
+};
 template<class Surface> void drawRaster(Surface& target,int x,int y,int w,int h,const Pose& pose,float closure,uint16_t background,float nominalEyeWidth,float offsetX,float offsetY,bool composite,uint8_t opacity,int firstRow,int lastRow,float spacing,float aperture) {
   if(w<=0 || h<=0 || w>280 || !opacity)return;
   // Keep web proportions. A 195px pair is approximately 89px per eye.

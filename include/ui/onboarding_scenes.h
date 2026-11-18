@@ -1,4 +1,5 @@
 #pragma once
+#include "ui/onboarding_power_view.h"
 #include "apps/onboarding_demo.h"
 #include "ui/onboarding_flow_view.h"
 #include "ui/onboarding_connect_view.h"
@@ -63,6 +64,7 @@ template<class C> void listeningBorder(C& c,unsigned ms){
  }
 }
 template<class C> void render(C& c,unsigned page,unsigned ms,unsigned selection,const char* detail){
+ if(page>=160&&page<=162){ui::onboarding_power::render(c,page,ms);return;}
 #ifdef SCREEN_STUDIO_HOST
  if(page==129 && !strcmp(detail,"scanner-startup") && ms<3000){scannerLoading(c,ms);return;}
 #endif

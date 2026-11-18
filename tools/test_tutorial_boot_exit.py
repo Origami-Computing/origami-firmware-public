@@ -22,13 +22,17 @@ uint32_t now=0;
 unsigned pushed=0,popped=0,saved=0,stopped=0,suppressed=0,marks=0;
 int app;
 #include "apps/onboarding_flow.h"
-apps::onboarding::Flow s_flow;
+using apps::onboarding::Flow;
+Flow s_flow;
+namespace ui {namespace kami_motion {bool playing=false;bool active(unsigned){return playing;}}}
+namespace services {namespace automation {bool capture=false;bool wantsInputCapture(){return capture;}}}
 uint32_t millis(){return now;}void save(){++saved;}void stopSpeech(){++stopped;}
 struct {void println(const char*){}}Serial;
 namespace hal {namespace input {bool a=false,b=false;bool buttonADown(){return a;}bool buttonBDown(){return b;}void suppressUntilButtonsReleased(){++suppressed;}}}
 namespace services {void notifyUserActivity(){} namespace onboarding_progress {
-struct Progress {bool offered=false,completed=false;};Progress progress;bool writeOk=true;
+struct Progress {bool offered=false,completed=false;unsigned page=0,interest=0;bool account=false,joinWifi=false,setupPublished=false,connected=false;};Progress progress;bool writeOk=true;
 Progress load(){return progress;}
+bool save(unsigned page,bool,unsigned,bool,bool,bool,bool){if(!writeOk)return false;progress.page=page;return true;}
 bool markOffered(){++marks;if(writeOk)progress.offered=true;return writeOk;}
 }}
 namespace apps {namespace agent {bool home=true;bool isAtHomescreen(){return home;}}}
@@ -58,6 +62,14 @@ int main(){
  const auto before=pushed;serviceBootOffer();assert(pushed==before && !s_active);
  replay();assert(s_completed && s_flow.page==0 && s_flow.canExitReplay(s_completed));
 
+ s_active=false;s_bootChecked=false;nav.levels=1;
+ services::onboarding_progress::progress.completed=false;
+ services::onboarding_progress::progress.page=Flow::kPowerResume;
+ const auto wakeBefore=pushed;
+ ui::kami_motion::playing=true;serviceBootOffer();assert(pushed==wakeBefore&&!s_bootChecked);
+ ui::kami_motion::playing=false;services::automation::capture=true;serviceBootOffer();assert(pushed==wakeBefore);
+ services::automation::capture=false;services::onboarding_progress::writeOk=false;serviceBootOffer();assert(pushed==wakeBefore);
+ services::onboarding_progress::writeOk=true;serviceBootOffer();assert(pushed==wakeBefore+1&&services::onboarding_progress::progress.page==140);
 }
 '''
 with tempfile.TemporaryDirectory() as directory:

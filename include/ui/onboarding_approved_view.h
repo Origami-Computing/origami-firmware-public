@@ -139,18 +139,7 @@ template<class C> void background(C& c,unsigned page,unsigned ms,int height,int 
  }else if(page==33){
   // Rasterize normal home geometry directly at its displayed size. Preserve
   // subpixel coverage instead of dropping rows/columns from a baked bitmap.
-  struct HomeEyes{
-   C& c;bool swap;
-   explicit HomeEyes(C& target):c(target),swap(false){}
-   bool getSwapBytes(){return swap;}void setSwapBytes(bool v){swap=v;}
-   uint16_t readPixel(int,int){return kUiBg;}
-   void pushImage(int x,int y,int w,int h,const uint16_t* data){
-    for(int row=0;row<h;++row)for(int col=0;col<w;){
-     const auto raw=data[row*w+col];int end=col+1;while(end<w&&data[row*w+end]==raw)++end;
-     c.fillRect(x+col,y+row,end-col,1,swap?raw:uint16_t((raw>>8)|(raw<<8)));col=end;
-    }
-   }
-  } eyes{c};
+  ui::eye_rig::RectSurface<C> eyes{c,kUiBg};
   ui::eye_rig::drawRaster(eyes,80,32,120,80,ui::eye_rig::kPresets[0].pose,
                         1,kUiBg,52.8f,0,0,false,255,0,-1,ui::eye_rig::kHomeSpacing,1);
  }else{

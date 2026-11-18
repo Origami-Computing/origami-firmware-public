@@ -305,7 +305,7 @@ static bool deepSleepWakeTarget(int64_t* wakeEpoch) {
     return true;
 }
 
-void doBatterySleep() {
+bool doBatterySleep() {
     services::vibration::stopAll();
     bool onExt = hal::power::externalPowerPresent(hal::power::read());
     uint32_t shallowLimitMs = kShallowSleepMs;
@@ -331,7 +331,7 @@ void doBatterySleep() {
         NavHandler::instance().armInputBlock(400u);
         hal::input::suppressUntilButtonsReleased();
         notifyUserActivity();
-        return;
+        return false;
     }
     Serial.println("[services] sleep network quiescent");
     services::automation::prepareForBatterySleep();
@@ -462,6 +462,7 @@ void doBatterySleep() {
     NavHandler::instance().invalidateChrome();
     notifyUserActivity();
     Serial.println("[services] wake from battery sleep -> root app");
+    return true;
 }
 
 // ---------------------------------------------------------------------------

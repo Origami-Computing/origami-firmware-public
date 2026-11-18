@@ -38,6 +38,11 @@ int main(){
   assert(p.page==expected&&p.completed==done&&p.interest==interest&&p.account==account&&p.joinWifi==wifi);
   unsigned before=writes;assert(save(page,done,interest,account,wifi));assert(writes==before);
  }
+ for(unsigned flags=0;flags<16;++flags)for(unsigned page:{160u,161u,162u,165u}){
+  assert(save(page,false,2,flags&1,flags&2,flags&4,flags&8));auto p=load();
+  assert(p.page==(page==165?165u:160u)&&p.interest==2&&p.account==bool(flags&1)&&p.joinWifi==bool(flags&2)&&p.setupPublished==bool(flags&4)&&p.connected==bool(flags&8));
+ }
+ writeOk=false;assert(!save(165,false,1));writeOk=true;assert(save(165,false,1)&&load().page==165);
  values.clear();s_saved=0;assert(load().page==0&&!load().completed);
  values["guide_v5"]=0x4b050119;assert(load().completed);
  values["guide_v5"]=0x4b050019;assert(!load().completed&&load().page==0);
@@ -51,7 +56,7 @@ int main(){
  assert(!save(44,false)&&!save(0,false,3));
 }
 '''
-with tempfile.TemporaryDirectory(dir=ROOT/'.cache') as d:
+with tempfile.TemporaryDirectory() as d:
  p=Path(d);(p/'test.cpp').write_text(code);(p/'Preferences.h').write_text('#pragma once\n')
  compiler=shlex.split(os.environ.get('CXX','c++'))
  subprocess.run(compiler+['-std=c++14','-DORIGAMI_DEV_SERIAL_INPUT','-I'+str(p),'-I'+str(ROOT/'include'),str(p/'test.cpp'),'-o',str(p/'test.exe')],check=True)

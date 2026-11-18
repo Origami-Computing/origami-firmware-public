@@ -1,5 +1,8 @@
 name: Build firmware qualification candidate
 on:
+  push:
+    branches: [main]
+    paths: [platformio.ini]
   workflow_dispatch:
     inputs:
       tag:
@@ -12,15 +15,32 @@ concurrency:
   group: public-firmware-review
   cancel-in-progress: false
 jobs:
-  draft:
+  plan:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: plan
+        env:
+          BEFORE: ${{ github.event.before }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: python3 tools/plan_release_candidate.py
+  draft:
+    needs: plan
+    if: needs.plan.outputs.build == 'true'
     environment: release-review
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
     env:
-      REVIEW_TAG: ${{ inputs.tag }}
+      REVIEW_TAG: ${{ needs.plan.outputs.tag }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -109,13 +129,13 @@ jobs:
       - name: Retain candidate outside GitHub Releases
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: candidate-${{ inputs.tag }}
+          name: candidate-${{ needs.plan.outputs.tag }}
           path: dist/*
           retention-days: 90
           if-no-files-found: error
       - name: Retain signed legacy bridge for private migration
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: legacy-bridge-${{ inputs.tag }}
+          name: legacy-bridge-${{ needs.plan.outputs.tag }}
           path: bridge/*.json
           retention-days: 30
