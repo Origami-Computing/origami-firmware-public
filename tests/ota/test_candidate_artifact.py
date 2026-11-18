@@ -20,6 +20,7 @@ class ArtifactTests(unittest.TestCase):
     def test_trusted_run_only(self):
         run=dict(path='.github/workflows/release.yml',head_branch='main',event='workflow_dispatch',conclusion='success')
         fetch.validate_run(run)
+        fetch.validate_run(dict(run,event="push"))
         for key in run:
             with self.subTest(key=key),self.assertRaises(ValueError):fetch.validate_run(dict(run,**{key:'other'}))
 

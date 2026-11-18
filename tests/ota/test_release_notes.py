@@ -24,6 +24,12 @@ class ReleaseNotesTests(unittest.TestCase):
         rendered = notes.render(LOG, 'v1.0.12', dict(version='v1.0.12', source_commit='a'*40, firmware_sha256='b'*64))
         self.assertIn('Published: 2026-11-16 at 06:59 PM PST.', rendered)
 
+    def test_unreleased_candidate_gets_timestamp_when_packaged(self):
+        pending = LOG.replace('Published: 2026-11-16 at 06:59 PM PST.', 'Unreleased.')
+        body = notes.render(pending, 'v1.0.12', dict(version='v1.0.12', source_commit='a'*40, firmware_sha256='b'*64))
+        self.assertNotIn('Unreleased.', body)
+        self.assertRegex(body, r'Published: \d{4}-\d{2}-\d{2} at \d{2}:\d{2} [AP]M P[SD]T\.')
+
     def test_daylight_time_for_older_releases(self):
         dated = LOG.replace('2026-11-16 at 06:59 PM PST', '2026-10-27 at 09:18 PM PDT')
         body, _ = notes.release_entry(dated, 'v1.0.12')

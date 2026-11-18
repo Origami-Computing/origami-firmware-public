@@ -8,7 +8,9 @@ bool markOffered();
 // UI-task only. Owns the v7 record and completed-state migration from older tutorials and last-read/successful-write cache.
 // Failed reads return fresh progress without replacing that cache.
 Progress load();
-// Normalize transient checkpoints for storage. Failed writes remain retryable.
+// Normalize transient checkpoints for storage. Power held/return resume at 160;
+// checkpoint 165 survives deep sleep until the app observes wake completion.
+// Failed writes remain retryable.
 bool save(unsigned page, bool completed, unsigned interest=0, bool account=false, bool joinWifi=false, bool setupPublished=false, bool connected=false);
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 // Writes the fresh record without changing the cache; the next load refreshes it.

@@ -48,7 +48,8 @@ namespace apps {namespace app_store {enum class TutorialResult{None,Back,Skipped
 apps::onboarding::Controls s_controls;
 enum class ExitChoice { Closed, Resume, Exit };
 ExitChoice s_exitChoice=ExitChoice::Closed;
-bool s_preview=false;bool s_active=false,s_frozen=true,s_dirty=false;
+bool s_preview=false;bool s_active=false,s_frozen=false,s_dirty=false,s_bootChecked=true;
+extern App app;void changed();
 bool s_reviewCached=true,s_photoQueued=true;
 services::photos::Target s_photo,photoResult;
 struct {unsigned releases=0;void release(){++releases;}} s_photoTransport;
@@ -65,7 +66,10 @@ unsigned s_speechLetters=0,s_speechBlips=0,s_scanAfter=0;
 int s_scrollFrom=0,s_scrollTarget=0;uint32_t s_scrollAt=0;
 constexpr unsigned kScanReadingPauseMs=2200;
 unsigned readyAt(){return 100;}void stopSpeech(){}void releaseDialogue(){}
-unsigned millis(){return now;}
+unsigned millis(){return now;}unsigned elapsed(){return now-s_started;}
+namespace services {unsigned slept=0;bool woke=true;bool doBatterySleep(){++slept;return woke;}
+namespace onboarding_progress {bool writeOk=true;unsigned checkpoint=0;bool save(unsigned p,bool,unsigned,bool,bool,bool,bool){if(writeOk)checkpoint=p;return writeOk;}}}
+
 bool load(){++loads;s_flow.page=8;return true;}
 void save(){++saves;savedPage=s_flow.page;}
 WifiResult wifiResult=WifiResult::None;
@@ -89,7 +93,15 @@ int main(){
  assert(s_controls.held&&!s_controls.success&&services::vibration::ticks==0);
  hal::input::cDown=false;tick(1600);tick(1700);
  assert(s_controls.success&&!s_controls.held&&services::vibration::ticks==1);
- s_flow.reset();
+ s_flow.page=Flow::kPowerHome;hal::input::cDown=true;now=2000;tick(now);assert(s_flow.page==Flow::kPowerHeld);
+ now=3999;hal::input::cDown=false;tick(now);assert(s_flow.page==Flow::kPowerHome&&services::slept==0);
+ hal::input::cDown=true;now=4000;tick(now);hal::input::cDown=false;now=6000;tick(now);assert(s_flow.page==Flow::kPowerReturn);
+ now=6699;tick(now);assert(services::slept==0);
+ services::onboarding_progress::writeOk=false;now=6700;tick(now);assert(services::slept==0&&s_flow.page==Flow::kPowerHome);
+ services::onboarding_progress::writeOk=true;
+ s_flow.page=Flow::kPowerReturn;s_started=now-700;tick(now);assert(services::slept==1&&!s_bootChecked&&services::onboarding_progress::checkpoint==165);
+ services::woke=false;s_flow.page=Flow::kPowerReturn;tick(now);assert(services::slept==2&&services::onboarding_progress::checkpoint==160);
+ s_flow.reset();saves=0;
  assert(app.onEnter&&app.onResume&&app.initialScreen->onEnter);
  activate();assert(s_active&&loads==1&&saves==1&&s_flow.page==0&&savedPage==0);
  assert(!s_frozen&&s_dirty&&s_lastDraw==0&&s_started==now);
@@ -132,7 +144,7 @@ int main(){
  s_flow.page=7;const auto before=saves;changed();assert(saves==before+1&&savedPage==7);
 }
 '''
-with tempfile.TemporaryDirectory(dir=ROOT/'.cache') as directory:
+with tempfile.TemporaryDirectory() as directory:
     path=Path(directory)
     (path/'test.cpp').write_text(code)
     subprocess.run(shlex.split(os.environ.get('CXX','c++'))+['-std=c++14','-DORIGAMI_DEV_SERIAL_INPUT','-include','initializer_list',

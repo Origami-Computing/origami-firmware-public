@@ -1,11 +1,11 @@
 {
-  "approved": true,
-  "reviewed_tree_sha256": "e09eea5d902c0aeed24ad7c9f87022b9a20239e8cb99312f5a235088fc0d65a3",
-  "approved_by": "Device operator requested publication. Codex checked the public port, retained MIT and CC BY-SA component notices, distribution archive and signed rev-4 hardware candidate.",
-  "source_review_complete": true,
-  "license_review_complete": true,
+  "approved": false,
+  "reviewed_tree_sha256": "",
+  "approved_by": "",
+  "source_review_complete": false,
+  "license_review_complete": false,
   "security_contact_ready": true,
   "artwork_font_ownership_confirmed": true,
   "ownership_confirmation_date": "2026-10-21",
-  "qualification": "Signed v1.0.12-public-review.1 from 877f712b9e61c1a3208038024c609c2577347219, firmware SHA-256 dcd665f09dfe1f8d4b993799632d9830b6afafa4a209ffc43307596758ea5e93. On COM56 the installed bytes and running ELF matched, and partition metadata was preserved. Tests exercised manual and automatic full-resolution stills, microphone-on 480p and silent 720p clips, Photos display and playback to EOF, recorder capture, and read-only Public OTA selection. Two playback tests measured [25091, 24464] microseconds per panel refresh, with zero reported missed sync pulses over 80 profiled presentations. Panel timing was instrumented; physical visual and listening acceptance are separate."
+  "qualification": "v1.0.13 candidate pending exact-image hardware qualification; historical v1.0.12 qualification does not apply."
 }

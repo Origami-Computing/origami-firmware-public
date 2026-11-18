@@ -45,6 +45,11 @@ jobs:
           python3 tools/test_camera_video_teardown.py
           python3 tools/test_video_recording.py
           python3 tools/test_playback_start_admission.py
+          python3 tools/test_tutorial_lifecycle.py
+          python3 tools/test_tutorial_boot_exit.py
+          python3 tools/test_tutorial_progress.py
+          python3 tools/test_onboarding_controls.py --state-only
+          python3 tools/test_sleep_network_boundary.py
           python3 tools/test_lua_security.py
           python3 -m unittest discover -s tests/ota -v
       - name: Build production firmware

@@ -25,7 +25,7 @@ struct Controls {
  unsigned turn(int delta,uint32_t now,bool undo=false){
   if(page!=6||!delta)return 0;
   if(undo){
-   if(canUndo){angle=undoAngle;canUndo=false;if(angle<180)success=false;}
+   if(canUndo){angle=undoAngle;canUndo=false;if(angle>-90&&angle<90)success=false;}
    return 0;
   }
   undoAngle=angle;canUndo=true;
@@ -33,11 +33,11 @@ struct Controls {
   const int direction=delta>0?1:-1;
   for(int i=0;i<(delta>0?delta:-delta);++i){
    int next=angle+direction*(360/kTicksPerRevolution);
-   if(next<0)next=0;if(next>180)next=180;
+   if(next<-90)next=-90;if(next>90)next=90;
    if(next!=angle){angle=next;ticks+=direction;++moved;}
   }
   // A blocked turn has no stored overshoot and no extra haptic or timer reset.
-  if(moved){if(angle==180)finish(now);else success=false;}
+  if(moved){if(angle==-90||angle==90)finish(now);else success=false;}
   return moved;
  }
 };

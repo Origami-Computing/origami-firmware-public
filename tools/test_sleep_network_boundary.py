@@ -4,7 +4,7 @@ import subprocess
 import tempfile
 ROOT=Path(__file__).resolve().parents[1]
 s=(ROOT/'src/services.cpp').read_text()
-a=s.index('void doBatterySleep() {');b=s.index('{',a)+1;depth=1
+a=s.index('bool doBatterySleep() {');b=s.index('{',a)+1;depth=1
 while depth:
     depth+=(s[b]=='{')-(s[b]=='}');b+=1
 function=s[a:b]

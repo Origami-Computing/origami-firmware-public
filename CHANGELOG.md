@@ -7,6 +7,17 @@ hardware testing. [Release downloads](https://github.com/Origami-Computing/origa
 The published history starts at v1.0.1. Versions v1.0.6 and v1.0.7 were qualification
 builds, not published updates; their changes are included under v1.0.8.
 
+## v1.0.13
+
+Unreleased.
+
+Changes since v1.0.12.
+
+- Fix automatic Camera photo uploads so saved photos are queued for delivery without a manual upload action.
+- Let the onboarding wheel lesson complete by turning C in either direction, with matching control illustrations and feedback.
+- Add a hold-C sleep/wake lesson that saves its checkpoint before sleep and resumes after the normal wake greeting.
+- Keep existing tutorial replay exit confirmation while adding the new control and sleep lessons.
+
 ## v1.0.12
 
 Published: 2026-11-16 at 06:59 PM PST.

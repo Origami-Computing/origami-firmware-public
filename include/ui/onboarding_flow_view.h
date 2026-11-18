@@ -80,6 +80,12 @@ template<class C> void welcome(C& c,unsigned ms){
 template<class C> void wheel(C& c,float degrees,bool held,uint16_t bg){
  degrees=std::max(0.f,std::min(180.f,degrees));
 #ifdef ESP32
+ // The left-centered lesson lands between the legacy 12-degree samples.
+ // Keep every reachable detent and both Press C poses on the lossless fast path.
+ if(degrees==90&&held&&bg==0xffff){ui::onboarding_rasters::draw(c,37);return;}
+ if(degrees==90&&!held&&bg==0x364a){ui::onboarding_rasters::draw(c,38);return;}
+ const unsigned shifted=unsigned(degrees)/12;
+ if(degrees==float(shifted*12+6)&&!held&&bg==0xffff){ui::onboarding_rasters::draw(c,22+shifted);return;}
  const unsigned step=unsigned(degrees)/12;
  if(degrees==float(step*12)&&((bg==0xffff&&(!held||degrees==0))||(bg==0x364a&&!held&&(degrees==0||degrees==180)))){
   const unsigned frame=bg==0x364a?(degrees==180?18:17):held?16:step;
@@ -146,7 +152,7 @@ template<class C> void control(C& c,unsigned page,unsigned ms,float degrees=0,bo
  const uint16_t bg=success?0x364a:0xffff;
  c.fillRect(0,0,280,240,bg);
  ui::design::center(c,page==3?ui::onboarding_copy::press_a:page==4?ui::onboarding_copy::press_b:page==6?ui::onboarding_copy::spin_c:ui::onboarding_copy::press_c,24,24,0,bg);
- if(page==5||page==6){nod(c,110,99,ms,60,bg);wheel(c,degrees,held,bg);
+ if(page==5||page==6){nod(c,110,99,ms,60,bg);wheel(c,page==6?degrees+90:90,held,bg);
  ui::onboarding_proposals::wheelHand(c,page==6,ms,held,success,bg);
  return;}
  if(page==3){shoulderA(c,held,bg,ms);return;}

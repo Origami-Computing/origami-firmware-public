@@ -48,7 +48,8 @@ bool takeUpdatePrompt();
 /** Execute the full battery sleep cycle (hardware sleep + wake restore).
  *  Must be called from ui_task — it calls NavHandler and display APIs directly.
  */
-void doBatterySleep();
+// True after an actual shallow wake; false when sleep admission was deferred. Deep sleep does not return.
+bool doBatterySleep();
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 /** Queue the normal UI handoff without fetching or installing firmware. */
 void testUpdatePrompt();

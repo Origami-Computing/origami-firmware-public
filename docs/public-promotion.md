@@ -86,7 +86,17 @@ After review, merge the PR into the public repository. This changes its source s
 
 ## 4. Build a signed qualification candidate
 
-Use **Actions → Build firmware qualification candidate** on `main` with a fresh candidate identifier matching `platformio.ini`, for example `v1.0.13-public-review.1`. Increment the review suffix for each build. Candidate output is retained as an Actions artifact, not a GitHub release.
+Merging a version increase in `platformio.ini` into protected public `main`
+automatically builds a signed candidate. Its identifier includes the Actions run
+and attempt, so retries retain distinct artifacts. Changes that keep the same
+version do not trigger another qualification build. For a deliberate rebuild, use
+**Actions → Build firmware qualification candidate** with a fresh matching
+identifier such as `v1.0.13-public-review.1`.
+
+Every approved production upgrade must complete this public build in addition to
+its private build. A successful build is followed by the exact-image qualification
+and publication steps below. Candidate output stays in Actions, not Releases;
+only published updates appear in the release list.
 
 The workflow builds `esp32-s3-menu-n16r8-release-review`, records the tracked source digest, packages source/notices and prepares a signed Public manifest. It uploads a candidate artifact and does not change an OTA channel. Signing is performed using the Actions secret; never embed the private signing key in source or firmware.
 
@@ -214,7 +224,9 @@ Before qualification, add the version's concise entry to [CHANGELOG.md](../CHANG
 and follow the [contribution requirements](../CONTRIBUTING.md#release-notes-are-part-of-a-production-promotion).
 Include the publication date and time as
 `Published: YYYY-MM-DD at HH:MM AM/PM PST/PDT.` (America/Los_Angeles).
-Confirm the actual publication time before publishing. Historical entries use
+Use `Unreleased.` while preparing a candidate; the publisher stamps Pacific time
+when packaging the final release notes. Confirm against GitHub publication time
+and backfill the historical log after publication. Historical entries use
 the original GitHub publication timestamp converted to Pacific time, with PST
 or PDT according to the date.
 The baseline must be the latest published public version, not the previous private

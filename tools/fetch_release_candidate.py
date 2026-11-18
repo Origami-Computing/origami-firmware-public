@@ -26,7 +26,7 @@ def select_artifact(pages, tag):
 
 def validate_run(run):
     if (run['path'] != '.github/workflows/release.yml' or run['head_branch'] != 'main'
-            or run['event'] != 'workflow_dispatch' or run['conclusion'] != 'success'):
+            or run['event'] not in ('workflow_dispatch', 'push') or run['conclusion'] != 'success'):
         raise ValueError('Candidate must come from a successful main qualification build')
 
 

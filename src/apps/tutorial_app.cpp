@@ -36,6 +36,8 @@
 #include "ui/scene.h"
 #include "ui/onboarding_motion.h"
 #include "ui/home_eyes.h"
+#include "ui/kami_motion.h"
+#include "services/automation.h"
 #include <Arduino.h>
 
 namespace apps { namespace tutorial {
@@ -172,6 +174,7 @@ void changed(){
 #endif
  releaseDialogue();prepareMotion();s_text.reset();s_scrollFrom=s_scrollTarget=0;s_scrollAt=millis();s_scanAfter=readyAt()+kScanReadingPauseMs;s_started=millis();s_lastDraw=0;s_dirty=true;save();}
 void prepareWorkflow(){
+ app.onPowerHold=[](){return s_flow.page>=Flow::kPowerHome&&s_flow.page<=Flow::kPowerReturn;};
  ui::setNativeFrameOverlay(compositeNavigationHint);
  if(!s_active){s_active=true;load();s_flow.reset();}
  else if(s_flow.page==12){if(s_flow.interest||s_flow.setupPublished)s_flow.account=core::secrets::backendConfig().apiKey[0]!=0;s_flow.wifiReturned(apps::wifi_setup::takeTutorialResult());}
@@ -192,6 +195,27 @@ void startScanner(){
 void finish();
 void tick(uint32_t now){
  if(s_exitChoice!=ExitChoice::Closed)return;
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+ if(s_frozen){if(now-s_lastDraw>=40)s_dirty=true;return;}
+#endif
+ // The tutorial consumes the ordinary power hold and waits for the requested
+ // two-second release; the existing service still owns sleep and all wake sources.
+ if(s_flow.page==Flow::kPowerHome&&hal::input::buttonCDown()){
+  s_flow.setPage(Flow::kPowerHeld);changed();return;
+ }
+ if(s_flow.page==Flow::kPowerHeld&&!hal::input::buttonCDown()){
+  s_flow.setPage(elapsed()>=2000?Flow::kPowerReturn:Flow::kPowerHome);changed();return;
+ }
+ if(s_flow.page==Flow::kPowerReturn&&elapsed()>=700){
+  if(!services::onboarding_progress::save(Flow::kPowerResume,false,s_flow.interest,s_flow.account,s_flow.joinWifi,s_flow.setupPublished,s_flow.connected)){
+   Serial.println("[tutorial-power] checkpoint failed; sleep blocked");
+   s_flow.setPage(Flow::kPowerHome);changed();return;
+  }
+  Serial.println("[tutorial-power] checkpoint committed; entering existing sleep service");
+  const bool woke=services::doBatterySleep(); // May reboot through deep sleep.
+  if(!woke)services::onboarding_progress::save(Flow::kPowerHome,false,s_flow.interest,s_flow.account,s_flow.joinWifi,s_flow.setupPublished,s_flow.connected);
+  s_bootChecked=false;return;
+ }
  // C click edges are delivered on release by the power-button gesture owner.
  // Read the existing physical level for visual feedback without changing that policy.
  if(s_flow.page==5&&!s_controls.success){
@@ -504,8 +528,15 @@ void serviceBootOffer(){
   return;
  }
  if(s_bootChecked||nav.depth()!=1||nav.systemScreenActive())return;
- s_bootChecked=true;
  const auto progress=services::onboarding_progress::load();
+ if(progress.page==Flow::kPowerResume){
+  // Existing boot/shallow-wake owners present their greeting. Alarms and other
+  // root work retain priority; never replace timer-wake policy with a tutorial cue.
+  if(services::automation::wantsInputCapture()||!apps::agent::isAtHomescreen()||ui::kami_motion::active(millis()))return;
+  if(!services::onboarding_progress::save(140,false,progress.interest,progress.account,progress.joinWifi,progress.setupPublished,progress.connected))return;
+  Serial.println("[tutorial-power] accepted wake complete; resuming navigation completion");
+ }
+ s_bootChecked=true;
  load();
  if(!progress.completed){
   if(!progress.offered && !services::onboarding_progress::markOffered()){Serial.println("[tutorial] first-boot marker save failed");return;}
@@ -520,7 +551,7 @@ bool restartForTesting(){
 }
 void printStatus(){Serial.printf("[tutorial] compositedHints=%u\n",s_compositedHints);Serial.printf("[tutorial-route] interest=%u account=%u wifi=%u selection=%u\n",s_flow.interest,s_flow.account,s_flow.joinWifi,s_flow.selection);const auto audio=sfx::typewriterStats();Serial.printf("[tutorial] page=%u elapsed=%u ready=%u active=%u practiced=%u completed=%u reveal=%u scroll=%u agent=%u recording=%u thinking=%u reply=%u error=%u drawUs=%lu fps=%.1f saved=%08lx speechOpen=%u speechBlips=%u audioBlips=%lu audioAvgGap=%lu audioMaxGap=%lu motion=%u\n",s_flow.page,elapsed(),readyAt(),isActive(),s_flow.practiced,s_completed,s_text.offset,s_text.scroll,s_talkPending,apps::agent::isRecording(),apps::agent::isSending(),apps::agent::isOnReplyScreen(),apps::agent::isShowingError(),(unsigned long)s_drawUs,hal::display::currentFps(),(unsigned long)services::onboarding_progress::savedRecordForDevelopment(),s_speechOpen,s_speechBlips,(unsigned long)audio.played,(unsigned long)(audio.played>1?audio.totalGapMs/(audio.played-1):0),(unsigned long)audio.maxGapMs,s_motionReady);}
 bool debugSeek(unsigned page,unsigned ms){
- if(!isActive()||page>143||(page>=12&&page<=15)||page==19||page==20||page==23||page==27||page==30||page==31)return false;
+ if(!isActive()||(page>143&&(page<160||page>162))||(page>=12&&page<=15)||page==19||page==20||page==23||page==27||page==30||page==31)return false;
  s_preview=false;stopSpeech();s_speechLetters=s_speechBlips=0;releaseDialogue();s_text.reset();s_scrollFrom=s_scrollTarget=0;s_scrollAt=millis();s_flow.setPage(page==26?25:page);s_controls.reset(s_flow.page);s_controlSuccessDrawn=false;refreshCopy();s_scanAfter=readyAt()+kScanReadingPauseMs;s_text.scroll=0;s_frozen=true;s_frozenMs=ms;prepareMotion();s_dirty=true;return true;
 }
 bool debugPreview(unsigned page,unsigned ms,unsigned selection,const char* detail){

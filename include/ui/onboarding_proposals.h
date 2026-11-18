@@ -15,10 +15,13 @@ template<class C> void dot(C& c,float cx,float cy,float radius,uint16_t color,ui
 }
 template<class C> void wheelHand(C& c,bool spin,unsigned ms,bool held,bool success,uint16_t bg){
  if(spin){
-  // An external guide hand follows the visible half turn; the wheel remains input-driven.
-  const float t=std::min(1.f,float(ms%2600)/1900),a=t*3.14159265f;
-  if(!success){
-   dot(c,274-72*std::sin(a),132-72*std::cos(a),5,0xf945,bg);}
+  if(success)return;
+  const unsigned phase=ms%1800;
+  const float direction=(ms%3600)<1800?-1.f:1.f;
+  const float travel=std::max(0.f,std::min(1.f,(float(phase)-250.f)/1100.f));
+  const float angle=direction*travel*travel*(3.f-2.f*travel)*1.57079632679f;
+  const float alpha=phase<250?phase/250.f:phase<1350?1.f:phase<1650?(1650-phase)/300.f:0.f;
+  dot(c,274-72*std::cos(angle),132+72*std::sin(angle),5,ui::proportional::blend(0xf945,bg,unsigned(alpha*255)),bg);
  }else{
   const float travel=(1-std::cos(ms*6.2831853f/1400))*.5f;
   dot(c,held?172.f:180.f+travel*14,132,5,0xf945,bg);

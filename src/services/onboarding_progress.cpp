@@ -18,7 +18,7 @@ Progress load() {
     const uint32_t old=prefs.getUInt("guide_v5",0),v4=prefs.getUInt("guide_v4",0),v3=prefs.getUInt("guide_v3",0);
     progress.offered=prefs.getBool("offered",false)||word||v6||old||v4||v3;
     prefs.end();s_saved=word;
-    if((word&0xFFFF8000u)==kTag && (word&255u)<=143 && (word&255u)!=44){
+    if((word&0xFFFF8000u)==kTag && ((word&255u)<=143||(word&255u)==160||(word&255u)==165) && (word&255u)!=44){
       progress.page=word&255;progress.completed=word&0x100;
       progress.interest=(word>>9)&3; if(progress.interest>2)progress.interest=0;
       progress.account=word&0x800;progress.joinWifi=word&0x1000;progress.setupPublished=word&0x2000;progress.connected=word&0x4000;
@@ -30,7 +30,8 @@ Progress load() {
 }
 bool markOffered() { return core::store::putBool(kNamespace, "offered", true); }
 bool save(unsigned page,bool completed,unsigned interest,bool account,bool joinWifi,bool setupPublished,bool connected) {
-    if(page>143||page==44||interest>2)return false;
+    if((page>143&&page!=160&&page!=161&&page!=162&&page!=165)||page==44||interest>2)return false;
+    if(page==161||page==162)page=160;
     if(page==12)page=setupPublished||account&&interest?40:41;
     if(page==19||page==20)page=18;
     if(page==23)page=22;
