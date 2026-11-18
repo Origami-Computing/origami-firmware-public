@@ -4,7 +4,7 @@ from pathlib import Path
 import argparse,json,re
 root=Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser();p.add_argument('--map',type=Path,required=True);a=p.parse_args()
-s=a.map.read_text();inventory=json.loads((root/'third_party/linked-library-licenses.json').read_text())
+s=a.map.read_text().replace('\\', '/');inventory=json.loads((root/'third_party/linked-library-licenses.json').read_text())
 known={i['archive'] for i in inventory['libraries']}
 actual=set(re.findall(r'/(lib[^/\s()]+\.a)\(',s))
 assert actual, 'No linked archives found'
