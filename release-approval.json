@@ -1,11 +1,11 @@
 {
-  "approved": false,
-  "reviewed_tree_sha256": "",
-  "approved_by": "",
-  "source_review_complete": false,
-  "license_review_complete": false,
+  "approved": true,
+  "reviewed_tree_sha256": "a360da959e57115a449b4dbf2415bd4cf31ba419ec4cd450197ee5fa10d57ba5",
+  "approved_by": "ColeIbanez (publication authorized in maintainer chat; source and artifact verification performed with Codex)",
+  "source_review_complete": true,
+  "license_review_complete": true,
   "security_contact_ready": true,
   "artwork_font_ownership_confirmed": true,
   "ownership_confirmation_date": "2026-10-21",
-  "qualification": "Pending qualification of the exact v1.0.15 candidate; previous release evidence does not qualify these bytes."
+  "qualification": "Exact signed candidate v1.0.15-public-review.2; firmware SHA-256 ede54d0aa9f4fe53a3a3eb6d50539ad2e71c4a7254120157fadd1f8d2045444b. USB image/metadata/boot verification, fresh automatic photo/video delivery, photo decode/EXIF/gallery, account Timeline/Library rendering and web video completion passed. Physical camera/audio/controls and Kami questions were reported working by the maintainer; detailed agent response transcript was not supplied. Motion, power and storage hardware checks were waived. Native simulator is unavailable; remaining extended device checks were deferred at the maintainer instruction to proceed with approval/publication. Actual OTA installation evidence is recorded in the approval PR before merge; source approval alone does not certify hardware."
 }
