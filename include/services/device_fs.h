@@ -50,6 +50,7 @@ enum class SyncRequest { Queued, Interactive };
 void requestSync(SyncRequest request = SyncRequest::Queued);
 
 struct SyncStatus {
+  enum class Direction : uint8_t { None, Upload, Download };
   bool active;
   bool done;
   bool ok;
@@ -58,6 +59,10 @@ struct SyncStatus {
   uint32_t updated_ms;
   char phase[32];
   char detail[64];
+  // Server work still awaiting a result, including the current operation.
+  // A local manifest request counts as one until the server reply replaces it.
+  uint32_t remaining;
+  Direction direction;
 };
 
 void getSyncStatus(SyncStatus& out);

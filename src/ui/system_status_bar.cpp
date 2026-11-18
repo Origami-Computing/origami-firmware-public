@@ -20,7 +20,10 @@
 #include "ui/safe_area_draw.h"
 #include "ui/battery_indicator.h"
 #include "ui/instrument_text.h"
+#include "ui/proportional_text.h"
 #include "services/battery_alerts.h"
+#include "services/device_fs.h"
+#include "services/uploads.h"
 
 #include <TB_TFT_eSPI.h>
 #include <WiFi.h>
@@ -111,6 +114,64 @@ static void drawBleGlyph(TFT_eSPI& tft, int x, int y, bool connected, uint16_t c
   tft.drawString("B", x, y + 5);
 }
 
+// A cloud with one directional arrow and a blue count badge. The cloud stays
+// still; sequential dots travel toward the transfer arrowhead.
+static void drawSyncGlyph(TFT_eSPI& tft, int cx, int cy, uint8_t frame,
+                          uint8_t direction, uint8_t count, uint16_t ink) {
+  if (!count) return;
+  auto boldLine = [&](int x0,int y0,int x1,int y1,uint16_t color) {
+    for(int dy=0;dy<2;++dy) for(int dx=0;dx<2;++dx)
+      tft.drawLine(x0+dx,y0+dy,x1+dx,y1+dy,color);
+  };
+  const bool blocked = direction == 3;
+  const uint16_t badgeColor = blocked ? 0xF800 : 0x1B5F;
+  // Wi-Fi-width cloud with an open base for the transfer arrow.
+  boldLine(cx-3,cy+3,cx-8,cy+3,ink);
+  boldLine(cx-8,cy+3,cx-10,cy+1,ink);
+  boldLine(cx-10,cy+1,cx-10,cy-3,ink);
+  boldLine(cx-10,cy-3,cx-8,cy-5,ink);
+  boldLine(cx-8,cy-5,cx-5,cy-6,ink);
+  boldLine(cx-5,cy-6,cx-3,cy-9,ink);
+  boldLine(cx-3,cy-9,cx+0,cy-10,ink);
+  boldLine(cx+0,cy-10,cx+3,cy-9,ink);
+  boldLine(cx+3,cy-9,cx+5,cy-6,ink);
+  boldLine(cx+5,cy-6,cx+7,cy-5,ink);
+  boldLine(cx+7,cy-5,cx+10,cy-2,ink);
+  boldLine(cx+10,cy-2,cx+10,cy+0,ink);
+  if (blocked) {
+    boldLine(cx-3,cy+3,cx+10,cy+3,ink);
+    boldLine(cx+10,cy+0,cx+10,cy+3,ink);
+  }
+  // Dots, then shaft, then arrowhead; hold the completed arrow.
+  const int phase = frame % 16;
+  const bool fullArrow = phase >= 6;
+  const int dots = phase / 2 + 1;
+  const int ax = cx;
+  if (direction == 1 || direction == 2) {
+    if (fullArrow) tft.fillRect(ax, cy-5, 2, direction == 2 ? 15 : 12, ink);
+    else for (int i = 0; i < dots; ++i) {
+      const int y = direction == 2 ? cy - 5 + i * 4 : cy + 5 - i * 4;
+      tft.fillRect(ax, y, 2, 2, ink);
+    }
+    const int tip = direction == 2 ? cy + 9 : cy - 5;
+    const int wing = direction == 2 ? tip - 3 : tip + 3;
+    if (phase >= 8) {
+      boldLine(ax-3,wing,ax,tip,ink);
+      boldLine(ax,tip,ax+3,wing,ink);
+    }
+  }
+  const int radius = count > 99 ? 9 : count > 9 ? 8 : 7;
+  tft.fillCircle(cx+13,cy+5,radius,badgeColor);
+  char label[4];
+  if (count > 99) strcpy(label, "99+");
+  else snprintf(label, sizeof(label), "%u", static_cast<unsigned>(count));
+  tft.setTextFont(1); tft.setTextSize(1);
+  tft.setTextColor(0xFFFF);
+  tft.setTextDatum(MC_DATUM);
+  ui::proportional::centered(tft,label,cy+5-ui::proportional::height(label,12)/2,
+                             12,0xFFFF,badgeColor,cx+13);
+}
+
 
 void SystemStatusBar::service(uint32_t millis_now) {
   core::time::service(millis_now);
@@ -143,7 +204,8 @@ static void paintClockCentered(TFT_eSPI& tft, int w, int barH, const char* clock
 // readable over any background). Shared by paint() and paintContentOverlay().
 static void drawBarGlyphs(TFT_eSPI& tft, int w, int barH, uint8_t segs, uint8_t percent, bool estimated, bool ext, bool charging,
                           const char* clockBuf, int8_t wifiTierPaint, bool wifiConn,
-                          bool bleConn, bool redAlertBar, uint16_t barBg,
+                          bool bleConn, bool redAlertBar, uint8_t syncCount,
+                          uint8_t syncDirection, uint8_t syncFrame, uint16_t barBg,
                           bool transparentClock = false, uint8_t parts = AllParts) {
   const uint16_t ink=statusBarInk(barBg);
   const auto safe = safe_area::contentBoundary();
@@ -153,6 +215,7 @@ static void drawBarGlyphs(TFT_eSPI& tft, int w, int barH, uint8_t segs, uint8_t 
     drawWifiIcon(tft,wifi.x,wifi.y,wifiTierPaint,wifiConn || wifiTierPaint > 0,ink,barBg,transparentClock);
     // Bluetooth is supplementary and appears only when connected.
     if(bleConn) drawBleGlyph(tft,wifi.x+33,(safe.y+barH-20)/2,true,ink,ink,barBg,transparentClock);
+    drawSyncGlyph(tft, 64, (safe.y+barH)/2, syncFrame, syncDirection, syncCount, ink);
   }
   if (parts & BatteryPart) {
     const int bw=assets::battery_icon::kWidth,bh=assets::battery_icon::kHeight;
@@ -212,6 +275,31 @@ static void drawBarGlyphs(TFT_eSPI& tft, int w, int barH, uint8_t segs, uint8_t 
   tft.setTextSize(1);
 }
 
+struct SyncIndicatorState { uint8_t count = 0, direction = 0, frame = 0; };
+
+static SyncIndicatorState syncIndicatorState(bool wifiConnected, uint32_t now) {
+  services::device_fs::SyncStatus fileSync;
+  services::device_fs::getSyncStatus(fileSync);
+  const auto* uploadQueue = services::uploads::readyQueue();
+  const auto uploads = uploadQueue ? uploadQueue->counts() : UploadQueue::Counts{};
+  const uint32_t total = fileSync.remaining + uploads.pending + uploads.active + uploads.failed;
+  SyncIndicatorState state;
+  state.count = total > 100 ? 100 : static_cast<uint8_t>(total);
+  if (!state.count) return state;
+  if (!wifiConnected || (!fileSync.ok && fileSync.remaining) || uploads.failed || uploads.retrying) {
+    state.direction = 3; // Closed cloud, red badge, no arrow.
+    return state;
+  }
+  state.frame = 15; // Queued work holds the complete arrow.
+  const auto fileDirection = fileSync.ok && fileSync.remaining ? fileSync.direction : services::device_fs::SyncStatus::Direction::None;
+  state.direction = fileDirection == services::device_fs::SyncStatus::Direction::Upload ? 1
+      : fileDirection == services::device_fs::SyncStatus::Direction::Download ? 2
+      : uploads.active || uploads.pending ? 1 : 0;
+  if ((fileSync.active && fileDirection != services::device_fs::SyncStatus::Direction::None) || uploads.active)
+    state.frame = static_cast<uint8_t>((now / 100u) % 32u);
+  return state;
+}
+
 bool SystemStatusBar::paint(TFT_eSPI& tft) {
 
   static bool sLastWifiConn = false;
@@ -228,6 +316,7 @@ bool SystemStatusBar::paint(TFT_eSPI& tft) {
   core::time::formatClockHHMM(clockBuf, sizeof(clockBuf));
   const bool wifiConn = hal::wifi::connected();
   const bool bleConn  = hal::ble::clientConnected();
+  const auto sync = syncIndicatorState(wifiConn, millis());
   const bool redAlertBar = services::automation::activeAlertUsesRedStatusBar();
 
   const int8_t measuredTier = wifiTierRawFromEnv();
@@ -259,7 +348,9 @@ bool SystemStatusBar::paint(TFT_eSPI& tft) {
                     background_color_ != last_background_color_;
   const bool clockChanged = strcmp(clockBuf, last_clock_) != 0;
   const bool wifiChanged = wifiConn != sLastWifiConn ||
-                          wifiTierPaint != last_wifi_tier_ || bleConn != last_ble_conn_;
+                          wifiTierPaint != last_wifi_tier_ || bleConn != last_ble_conn_ ||
+                          sync.count != last_sync_count_ || sync.direction != last_sync_direction_ ||
+                          sync.frame != last_sync_frame_;
   const bool batteryChanged = hal::power::charging(p) != shown_charging_ ||
       last_bolt_alpha_ != boltAlpha || batteryDim != last_battery_dim_ ||
       segs != last_bat_segs_ || p.battery_percent != last_bat_percent_ ||
@@ -295,7 +386,8 @@ bool SystemStatusBar::paint(TFT_eSPI& tft) {
   }
   drawBarGlyphs(tft, w, barH, segs, p.battery_percent, p.battery_estimated,
                 ext, hal::power::charging(p), clockBuf, wifiTierPaint,
-                wifiConn, bleConn, redAlertBar, barBg, false, parts);
+                wifiConn, bleConn, redAlertBar, sync.count, sync.direction, sync.frame,
+                barBg, false, parts);
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
   ++paint_stats_.paints;
   if (full) ++paint_stats_.full;
@@ -313,6 +405,9 @@ bool SystemStatusBar::paint(TFT_eSPI& tft) {
   last_ext_power_      = ext;
   sLastWifiConn        = wifiConn;
   last_ble_conn_       = bleConn;
+  last_sync_count_ = sync.count;
+  last_sync_direction_ = sync.direction;
+  last_sync_frame_ = sync.frame;
   last_background_color_ = background_color_;
   force_repaint_       = false;
   last_battery_dim_ = batteryDim;
@@ -329,6 +424,9 @@ bool SystemStatusBar::paint(TFT_eSPI& tft) {
   shown_wifi_conn_ = wifiConn;
   shown_ble_conn_  = bleConn;
   shown_red_alert_ = redAlertBar;
+  shown_sync_count_ = sync.count;
+  shown_sync_direction_ = sync.direction;
+  shown_sync_frame_ = sync.frame;
   strncpy(shown_clock_, clockBuf, sizeof(shown_clock_));
   shown_clock_[sizeof(shown_clock_) - 1] = '\0';
   return true;
@@ -360,7 +458,7 @@ void SystemStatusBar::paintContentOverlay(TFT_eSPI& tft) {
   const int barH = kSystemStatusBarH;
   const uint16_t barBg = background_color_;
   drawBarGlyphs(tft, w, barH, shown_segs_, shown_percent_, shown_estimated_, shown_ext_, shown_charging_, shown_clock_, shown_wifi_tier_,
-                shown_wifi_conn_, shown_ble_conn_, shown_red_alert_, barBg,
+                shown_wifi_conn_, shown_ble_conn_, shown_red_alert_, shown_sync_count_, shown_sync_direction_, shown_sync_frame_, barBg,
                 /*transparentClock=*/true);
 }
 
@@ -373,11 +471,12 @@ void SystemStatusBar::paintGlyphOverlay(TFT_eSPI& tft, uint16_t bg) {
   const bool wifiConn = hal::wifi::connected();
   const bool bleConn = hal::ble::clientConnected();
   const bool redAlertBar = services::automation::activeAlertUsesRedStatusBar();
+  const auto sync = syncIndicatorState(wifiConn, millis());
   const int8_t wifiTierPaint = wifiTierForPaint(wifiConn, millis(), wifiTierRawFromEnv());
   const uint16_t barBg = bg;
 
   drawBarGlyphs(tft, tft.width(), kSystemStatusBarH, segs, p.battery_percent, p.battery_estimated, ext, hal::power::charging(p), clockBuf, wifiTierPaint,
-                wifiConn, bleConn, redAlertBar, barBg, /*transparentClock=*/true);
+                wifiConn, bleConn, redAlertBar, sync.count, sync.direction, sync.frame, barBg, /*transparentClock=*/true);
   hal::display::markDirty(0, kSystemStatusBarH);
 
   shown_segs_ = segs;
@@ -389,6 +488,9 @@ void SystemStatusBar::paintGlyphOverlay(TFT_eSPI& tft, uint16_t bg) {
   shown_wifi_conn_ = wifiConn;
   shown_ble_conn_ = bleConn;
   shown_red_alert_ = redAlertBar;
+  shown_sync_count_ = sync.count;
+  shown_sync_direction_ = sync.direction;
+  shown_sync_frame_ = sync.frame;
   strncpy(shown_clock_, clockBuf, sizeof(shown_clock_));
   shown_clock_[sizeof(shown_clock_) - 1] = '\0';
 }

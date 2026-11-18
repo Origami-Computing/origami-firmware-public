@@ -6,7 +6,7 @@ class TFT_eSPI;
 
 namespace ui {
 
-/** Always-on status strip: clock + WiFi strength + battery. Call service() from loop, paint() after other UI. */
+/** Always-on status strip: connectivity, sync, clock and battery. */
 class SystemStatusBar {
  public:
   void service(uint32_t millis_now);
@@ -50,6 +50,9 @@ class SystemStatusBar {
   bool last_bat_estimated_ = false;
   bool last_ext_power_ = false;
   bool last_ble_conn_ = false;
+  uint8_t last_sync_count_ = 0;
+  uint8_t last_sync_frame_ = 0;
+  uint8_t last_sync_direction_ = 0;
   uint16_t background_color_ = 0xFFFF;
   uint16_t last_background_color_ = 0xFFFF;
 
@@ -64,6 +67,9 @@ class SystemStatusBar {
   bool     shown_wifi_conn_ = false;
   bool     shown_ble_conn_  = false;
   bool     shown_red_alert_ = false;
+  uint8_t  shown_sync_count_ = 0;
+  uint8_t  shown_sync_frame_ = 0;
+  uint8_t  shown_sync_direction_ = 0;
   char     shown_clock_[8]{};
 };
 
