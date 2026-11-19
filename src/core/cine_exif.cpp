@@ -1,6 +1,7 @@
 #include "core/cine_exif.h"
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 namespace core { namespace cine {
 namespace {
@@ -44,8 +45,14 @@ size_t buildExif(uint8_t* output, size_t capacity, const ExifInfo& info) {
     const int dn = snprintf(description, sizeof(description), "Cine Camera / %s", info.colorName);
     if (sn < 0 || size_t(sn) >= sizeof(software) || dn < 0 || size_t(dn) >= sizeof(description))
         return 0;
-    constexpr uint16_t mainCount = 5;
-    const uint16_t exifCount = info.exposureUs ? 9 : 8;
+    char date[20] = {};
+    struct tm utc{};
+    const time_t captured = static_cast<time_t>(info.capturedAtUnix);
+    const bool dated = info.capturedAtUnix && gmtime_r(&captured, &utc) &&
+                       strftime(date, sizeof(date), "%Y:%m:%d %H:%M:%S", &utc) == 19;
+    constexpr char utcOffset[] = "+00:00";
+    const uint16_t mainCount = dated ? 6 : 5;
+    const uint16_t exifCount = (info.exposureUs ? 9 : 8) + (dated ? 3 : 0);
     const uint32_t exifOffset = 8 + 2 + mainCount * 12 + 4;
     uint32_t offset = exifOffset + 2 + exifCount * 12 + 4;
     const uint32_t descriptionOffset = offset; offset += (uint32_t(dn + 1) + 1) & ~1u;
@@ -55,6 +62,10 @@ size_t buildExif(uint8_t* output, size_t capacity, const ExifInfo& info) {
     // TIFF out-of-line values begin on even offsets.
     const uint32_t exposureOffset = offset;
     if (info.exposureUs) offset += 8;
+    const uint32_t dateOffset = offset;
+    if (dated) offset += sizeof(date);
+    const uint32_t zoneOffset = offset;
+    if (dated) offset += (sizeof(utcOffset) + 1) & ~size_t(1);
     const size_t total = tiffStart + offset;
     if (total > capacity || total > exifCapacity) return 0;
     Writer w(output, capacity);
@@ -66,12 +77,18 @@ size_t buildExif(uint8_t* output, size_t capacity, const ExifInfo& info) {
     w.entry(0x010f, 2, sizeof(make), makeOffset);
     w.entry(0x0110, 2, sizeof(model), modelOffset);
     w.entry(0x0131, 2, uint32_t(sn + 1), softwareOffset);
+    if (dated) w.entry(0x0132, 2, sizeof(date), dateOffset);
     w.entry(0x8769, 4, 1, exifOffset);
     w.u32(0); // No thumbnail IFD.
     w.u16(exifCount);
     if (info.exposureUs) w.entry(0x829a, 5, 1, exposureOffset);
     w.entry(0x8822, 3, 1, info.automatic ? 2 : 1); // Normal program / Manual.
     w.entry(0x9000, 7, 4, 0x32333230); // ExifVersion "0232".
+    if (dated) {
+        w.entry(0x9003, 2, sizeof(date), dateOffset);
+        w.entry(0x9004, 2, sizeof(date), dateOffset);
+        w.entry(0x9011, 2, sizeof(utcOffset), zoneOffset);
+    }
     w.entry(0x9101, 7, 4, 0x00030201); // Y, Cb, Cr, unused.
     w.entry(0xa001, 3, 1, 1); // sRGB.
     w.entry(0xa002, 4, 1, info.width);
@@ -82,6 +99,7 @@ size_t buildExif(uint8_t* output, size_t capacity, const ExifInfo& info) {
     w.ascii(description, size_t(dn + 1)); w.ascii(make, sizeof(make));
     w.ascii(model, sizeof(model)); w.ascii(software, size_t(sn + 1));
     if (info.exposureUs) { w.u32(info.exposureUs); w.u32(1000000); }
+    if (dated) { w.bytes(date, sizeof(date)); w.ascii(utcOffset, sizeof(utcOffset)); }
     return w.ok && w.size == total ? total : 0;
 }
 size_t exifInsertionOffset(const uint8_t* jpeg, size_t length) {

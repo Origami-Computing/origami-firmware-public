@@ -7,6 +7,15 @@ hardware testing. [Release downloads](https://github.com/Origami-Computing/origa
 The published history starts at v1.0.1. Versions v1.0.6 and v1.0.7 were qualification
 builds, not published updates; their changes are included under v1.0.8.
 
+## v1.0.16
+
+Unreleased.
+
+Changes since v1.0.15.
+
+- Add the trusted capture date and UTC offset to Camera photos' EXIF data, so downloaded originals retain when the photo was taken.
+- Leave EXIF capture dates absent when the device clock is unknown, avoiding an incorrect timestamp.
+
 ## v1.0.15
 
 Unreleased.

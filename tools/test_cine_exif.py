@@ -69,7 +69,9 @@ uint16_t u16(const uint8_t* p){return p[0]|uint16_t(p[1])<<8;}
 uint32_t u32(const uint8_t* p){return u16(p)|uint32_t(u16(p+2))<<16;}
 void checkOffsets(const uint8_t* block,size_t size){
  const uint8_t* t=block+10;
- for(uint32_t at:{u32(t+4),u32(t+8+2+4*12+8)}){
+ const uint32_t primary=u32(t+4);
+ const uint32_t exif=u32(t+primary+2+(u16(t+primary)-1)*12+8);
+ for(uint32_t at:{primary,exif}){
   assert(at%2==0&&at+2<size-10);unsigned n=u16(t+at);uint16_t previous=0;
   for(unsigned i=0;i<n;++i){const auto* entry=t+at+2+i*12;auto tag=u16(entry);assert(tag>previous);previous=tag;
    auto type=u16(entry+2);auto count=u32(entry+4);size_t bytes=count*(type==3?2:type==4?4:type==5?8:1);
@@ -79,7 +81,7 @@ void checkOffsets(const uint8_t* block,size_t size){
 }
 int main(int argc,char** argv){assert(argc==3);std::ifstream input(argv[1],std::ios::binary);std::vector<uint8_t> jpeg((std::istreambuf_iterator<char>(input)),{});const auto original=jpeg;
  services::photos::Target target;target.sequence=1;strcpy(target.path,"/photo.jpg");
- core::cine::ExifInfo info{"v1.0.5","Sunny",40001,64,48,true};
+ core::cine::ExifInfo info{"v1.0.5","Sunny",40001,64,48,true,0};
  struct Guard {uint8_t before[16],data[core::cine::exifCapacity],after[16];}guard;
  memset(&guard,0xa5,sizeof(guard));auto size=core::cine::buildExif(guard.data,sizeof(guard.data),info);assert(size>0&&size<512);checkOffsets(guard.data,size);
  for(size_t capacity=0;capacity<size;++capacity){uint8_t small[512];memset(small,0xa5,sizeof(small));assert(!core::cine::buildExif(small,capacity,info));for(auto v:small)assert(v==0xa5);}
@@ -91,7 +93,7 @@ int main(int argc,char** argv){assert(argc==3);std::ifstream input(argv[1],std::
  malformed=jpeg;malformed[4]=malformed[5]=0;assert(!core::cine::exifInsertionOffset(malformed.data(),malformed.size()));
  const size_t insertion=core::cine::exifInsertionOffset(jpeg.data(),jpeg.size());assert(insertion>2);
  for(unsigned mode=0;mode<6;++mode){
-  info.colorName=core::cine::colorProfile(core::cine::ColorMode(mode)).name;info.automatic=mode%2==0;info.exposureUs=mode==3?0:mode==4?UINT32_MAX:40001;
+  info.colorName=core::cine::colorProfile(core::cine::ColorMode(mode)).name;info.automatic=mode%2==0;info.exposureUs=mode==3?0:mode==4?UINT32_MAX:40001;info.capturedAtUnix=mode%2?1735689600:0;
   size=core::cine::buildExif(guard.data,512,info);assert(size);checkOffsets(guard.data,size);
   opens=closes=writes=0;assert(services::photos::write(target,jpeg.data(),jpeg.size(),guard.data,size));assert(opens==1&&closes==1&&writes==3&&locks==0&&jpeg==original);
   const auto& saved=files[target.path];assert(saved.size()==jpeg.size()+size);
@@ -134,12 +136,20 @@ int main(int argc,char** argv){assert(argc==3);std::ifstream input(argv[1],std::
         assert fields[0xA002] == 64 and fields[0xA003] == 48
         assert fields[0xA402] == mode % 2 and fields[0xA403] == 1
         assert fields[0x9000] == b"0232" and fields[0xA001] == 1
+        if mode % 2:
+            assert exif[0x0132] == "2025:01:01 00:00:00"
+            assert fields[0x9003] == exif[0x0132]
+            assert fields[0x9004] == exif[0x0132]
+            assert fields[0x9011] == "+00:00"
+        else:
+            assert 0x0132 not in exif
+            assert not {0x9003, 0x9004, 0x9011}.intersection(fields)
         if mode == 3:
             assert 0x829A not in fields
         else:
             exposure = fields[0x829A]
             assert exposure.numerator == (0xFFFFFFFF if mode == 4 else 40001)
             assert exposure.denominator == 1_000_000
-        absent = {0x829D, 0x8827, 0x920A, 0xA405, 0xA431, 0xA432, 0xA433, 0xA434, 0xA435, 0x9003}
+        absent = {0x829D, 0x8827, 0x920A, 0xA405, 0xA431, 0xA432, 0xA433, 0xA434, 0xA435}
         assert not absent.intersection(fields) and 0x8825 not in exif
-print("PASS production Cine EXIF + storage + SD multipart writes: independent tag/pixel parsing, bounds/alignment, unavailable exposure, all Color names, short writes, cleanup and original-byte preservation; ASan/UBSan")
+print("PASS production Cine EXIF + storage + SD multipart writes: independent tag/pixel parsing, trusted and unknown capture time, bounds/alignment, all Color names, short writes, cleanup and original-byte preservation; ASan/UBSan")

@@ -237,7 +237,8 @@ bool Session::saveStill(void (*onFrameReady)(), bool enqueueUpload) {
   if (onFrameReady) onFrameReady();
   uint8_t exif[core::cine::exifCapacity];
   const core::cine::ExifInfo exifInfo{core::device::firmwareVersion(), colorName(colorMode_),
-      exposure.valid ? exposure.actualUs : 0, uint16_t(frame.width), uint16_t(frame.height), autoExposure()};
+      exposure.valid ? exposure.actualUs : 0, uint16_t(frame.width), uint16_t(frame.height),
+      autoExposure(), target.capturedAtUnix};
   const size_t exifBytes = core::cine::buildExif(exif, sizeof(exif), exifInfo);
   const bool ok =
       frame.format == PIXFORMAT_JPEG &&
