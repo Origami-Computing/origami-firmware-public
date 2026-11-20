@@ -1,48 +1,41 @@
 ---
 name: origami-app-builder
-description: Build and iterate on Origami device apps from natural-language ideas, using sandboxed Lua widgets first and native C++ firmware or narrow host bindings when the Lua API cannot support the requested behavior.
+description: Build and iterate on native C++ custom apps for Origami/Kami, using the firmware app lifecycle, menu integration and verified application-only USB deployment.
 ---
 
-# Build something delightful on Origami
+# Build a native Origami app
 
-Turn the user's idea into a small, usable device app. Prefer a working Lua widget that they can copy to their SD card, try, and refine. Keep the user's idea central: choose sensible visual and interaction defaults, build the first useful version, and ask only for missing information that changes what can be built.
+Repository: [Origami firmware](https://github.com/Origami-Computing/origami-firmware-public). Locate the actual checkout containing `platformio.ini`, `include/app.h` and `src/apps/menu_app.cpp`. Use native C++ for new apps. Do not generate Lua widgets or expose new Lua bindings as an app-creation shortcut. Preserve existing device apps, Lua runtime and stored files.
 
-This skill belongs to the Origami firmware repository. Locate the checkout containing `platformio.ini`, `src/widgets/`, and `include/app.h`. Paths in the references are relative to that root. Inspect the checked-out implementation when APIs differ from these notes; do not invent device capabilities.
+## Set up or resume the custom project
 
-## Pick the smallest implementation that works
+Read `.origami/project.json` from the user's persistent project folder when present. Reuse its firmware checkout, interpreter and workspace after verifying paths. If source is missing, clone the repository above into `firmware/` under the chosen project folder; never overwrite an existing checkout. Read `README.md`, `docs/building.md` and applicable repository instructions for pinned setup and the baseline build. Local development does not require a Kami account.
 
-| Need | Approach |
-| --- | --- |
-| Small games, counters, interactive screens, clocks, data views | Lua widget |
-| Background countdown using the existing device timer | Lua plus `kami.timer`, respecting the shared timer |
-| Weather or other external data | Lua rendering with an externally prepared `data.json`; live fetching needs an existing supported host integration or native work |
-| Missing device operation with an otherwise simple UI | Consider one bounded C++ binding backed by an existing service; keep the UI in Lua |
-| Camera/audio pipelines, hardware ownership, persistent storage, substantial computation or unsupported input | Native C++ app/services |
+Use this layout for a new project, or preserve an established equivalent:
 
-Complexity alone is not a reason to switch languages. Explain the concrete missing API or resource constraint before choosing C++. A Lua widget cannot arbitrarily access the internet, SD files, GPIO, microphone or camera. Do not present the optional hosted Kami sync path as a public service everyone can use.
+```text
+project/
+  firmware/              # actual firmware checkout and compiled app source
+  apps/<slug>/           # custom project brief, assets and test notes
+  .venv/                 # isolated build tools
+  .origami/project.json  # local paths and verification evidence
+  .origami/private/      # private device recovery files, excluded from Git
+```
 
-## Lua workflow
+The custom workspace is not a firmware plugin loader. Put compiled source in `firmware/src/apps/<slug>_app.cpp` and `firmware/include/apps/<slug>_app.h`, and register it in `firmware/src/apps/menu_app.cpp`. Record these actual paths and the selected branch. Inspect dirty files first and preserve unrelated work; a new branch does not isolate uncommitted changes.
 
-Read [the Lua contract](references/lua.md). Start from [the counter starter](assets/counter/main.lua), adapting it into the requested app rather than leaving a generic demo behind.
+## Implement and verify
 
-1. Choose a short lowercase slug and an interaction that works with rotary scroll and select. Leave back/escape to the host.
-2. Produce `widgets/<slug>/main.lua` and, only if needed, `data.json` containing a JSON object. Keep generated output outside firmware source unless the user asks to contribute an example.
-3. Keep state in locals, update it in lifecycle/input callbacks, and build a complete screen in `widget.draw(now)`. Use `kami.W` and `kami.H`, legible contrast and a concise control hint. Use stable node IDs and bounded collections.
-4. Handle absent data, unsynced time, empty lists and service failures gracefully. Keep side effects out of drawing. Do not silently commandeer an existing device timer.
-5. Check Lua syntax and exercise input/state behavior with available tooling. A desktop mock verifies logic only; it does not prove device rendering, resource budgets or hardware behavior. Inspect the final script against actual bindings and limits.
-6. Deliver the app files, controls, SD destination, what was tested and one or two useful next refinements. Clearly distinguish authored, host-tested and device-tested results.
+Read [native development](references/cpp.md) and inspect a comparable working app, its service interfaces and focused checks. Keep the user's requested behavior central; choose reasonable defaults and ask only for missing decisions. Use existing App/Screen lifecycle, UI primitives and service ownership. Preserve system controls, menu, account setup and update paths.
 
-No firmware rebuild is needed for an SD widget. Explain how to copy the folder to the SD card and open **Lua Widget**. Before overwriting an existing widget, preserve its files. A flashing request is separate from creating an app; identify the device and preserve its state before any authorized install/recovery work. Do not open serial casually: it can reset the board.
+Build the actual configured target using the pinned environment. Verify menu discovery, launch, primary action, wheel/select, Back, re-entry and affected resource handoffs. Keep build success separate from device verification.
 
-## When Lua is not enough
+## Install or recover
 
-Read [the native development guide](references/cpp.md). Prefer extending a narrow capability backed by a service over giving Lua unrestricted handles. For a native app, use the repository's App/Screen lifecycle and navigation patterns, and compile the actual target. Keep app behavior, reusable UI and service/hardware work in their respective layers.
+Read [installation constraints](../../docs/installation.md) and [application-only USB procedure](references/usb-deployment.md) before device writes. Identify hardware/USB identity and verify current partition/OTA metadata; save a verified known-good application backup before installing. Use the user's existing authorization, preserve NVS/SD/shipping data and write only the selected application slot. Never guess an offset or erase-all.
 
-Do not change firmware deployment, OTA signing, repository visibility or release publication as a side effect of building an app. Use the user's existing authorization for requested operations; do not add unrelated approval steps.
+For recovery, use the intended verified backup and do not overwrite it with a broken application. A healthy supported device can supply its own application backup; a factory installer is not a prerequisite. Missing bootloader/layout/provisioning is a separate maintainer recovery case. Do not claim a public source archive restores those components or grants hosted access.
 
-## Example requests this skill should handle
+## Iterate
 
-- “Make a cozy breathing animation I can speed up with the wheel.” → Lua, bounded animation state, clear start/pause control.
-- “Turn this JSON into a tiny transit board.” → Lua with validated optional data and a useful empty state.
-- “Make a focus timer that still rings after I leave.” → Inspect and use the shared timer service; explain existing timer interactions.
-- “Record audio and show its waveform.” → Inspect native audio ownership and service APIs; use C++ where those capabilities are missing from Lua.
+Save the app brief, source paths, menu path, artifact hashes and test results in the project record or `.origami/apps/<slug>/state.json`, preserving unrelated state. Report authored, built, flashed, booted and physically verified outcomes separately. Continue feedback in the same workspace. Device installation does not authorize release publishing, credential changes or unrelated erasure.

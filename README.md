@@ -10,11 +10,11 @@ Official releases are published after source review, automated checks, and quali
 
 ## Build your own app
 
-Describe an idea to your coding assistant and give it the [Origami app builder skill](skills/origami-app-builder/SKILL.md). Start with Lua: small games, clocks, interactive tools and data screens can run from the SD card without rebuilding firmware. The skill includes a [ready-to-copy counter](skills/origami-app-builder/assets/counter/main.lua), the supported Lua API and C++ guidance for deeper hardware features.
+Describe an idea to your coding assistant and give it the [Origami app builder skill](skills/origami-app-builder/SKILL.md). It builds native C++ apps in this repository, registers them in the device menu, and keeps a persistent custom-project workspace for briefs, assets and test notes. It includes [native development](skills/origami-app-builder/references/cpp.md) and [USB installation/recovery](skills/origami-app-builder/references/usb-deployment.md) instructions. Existing Lua apps remain supported; new-app guidance uses native C++.
 
-With a skill-compatible assistant, copy the entire `skills/origami-app-builder` folder into its skills directory and invoke `$origami-app-builder`. In Codex, that directory is `~/.codex/skills/`. Other assistants can read `SKILL.md` and its linked references directly from this checkout.
+Read the skill directly from the checkout, or copy the entire `skills/origami-app-builder` folder into your assistant's skills directory. Keep its references together and point the assistant to the actual firmware checkout.
 
-Try: “Use the Origami app builder skill to make a breathing app with a gentle animation and rotary speed control.” Lua supports the device's exposed capabilities; arbitrary network, storage and hardware access need native integration.
+Try: “Use the Origami app builder skill to make a breathing app with a gentle animation and rotary speed control.”
 
 ## Hardware
 

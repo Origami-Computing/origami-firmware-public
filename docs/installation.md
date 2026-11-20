@@ -10,6 +10,10 @@ Copy `sd_flash/eyes/` and `sd_flash/boot/` into the root of an existing FAT32 ca
 
 Use the existing on-device production update flow when an update is offered. An OTA access key remains separately provisioned; downloading the public application does not grant backend or OTA access. Do not publish keys to make setup easier.
 
+## Recover an existing provisioned device
+
+Follow the [application-only USB procedure](../skills/origami-app-builder/references/usb-deployment.md). It covers identity/layout verification, creating a private known-good application backup, installing a custom build and restoring the intended backup. If a build is already broken, preserve the known-good backup instead of replacing it with the broken image. Verify written bytes and normal boot separately. This path preserves settings and does not require creating another Kami account.
+
 ## USB recovery and new hardware
 
 Do not write application-only firmware at address zero or assume `0x10000` is the active slot. Confirm the device hardware, partition table and selected OTA slot first. A recovery procedure must preserve NVS, SD data and the shipping partition. Merged images and erase-all can destroy settings and credentials.
