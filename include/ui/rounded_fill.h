@@ -33,15 +33,23 @@ template<class C> void draw(C& c,const Shape& s,uint16_t ink,uint16_t paper,Clip
     const int right=std::min(clip.x+clip.w,int(std::ceil(s.x+s.w)));
     const int top=std::max(clip.y,int(std::floor(s.y)));
     const int bottom=std::min(clip.y+clip.h,int(std::ceil(s.y+s.h)));
+    // The shape is convex, so each row's full-coverage pixels are one span:
+    // evaluate coverage only from each end inward to that span.
     for(int y=top;y<bottom;++y) {
-        int run=-1;
-        for(int x=left;x<right;++x) {
+        int x=left;
+        for(;x<right;++x) {
             const unsigned a=coverage(s,x,y);
-            if(a==255) {if(run<0)run=x;continue;}
-            if(run>=0){c.fillRect(run,y,x-run,1,ink);run=-1;}
+            if(a==255) break;
             if(a)c.fillRect(x,y,1,1,blend(ink,paper,a));
         }
-        if(run>=0)c.fillRect(run,y,right-run,1,ink);
+        if(x==right) continue;
+        int last=right-1;
+        for(;last>x;--last) {
+            const unsigned a=coverage(s,last,y);
+            if(a==255) break;
+            if(a)c.fillRect(last,y,1,1,blend(ink,paper,a));
+        }
+        c.fillRect(x,y,last-x+1,1,ink);
     }
 }
 } } // namespace ui::rounded_fill

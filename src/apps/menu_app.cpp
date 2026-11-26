@@ -258,7 +258,9 @@ void onInput(hal::input::InputEvent ev) {
     currentList().scroll(ev.delta);
     if (currentList().selected != selected) {
       selected = currentList().selected;
-      redraw();
+      // The four-row view repaints only the rows the focus change touches.
+      if (apps::tutorial::navigationLessonActive()) redraw();
+      else { s_motionStart = millis(); s_motionFrame = 0; s_iconDirty = false; }
     }
     return;
   }
@@ -320,7 +322,7 @@ void drawOnboardingPreview(TFT_eSprite& canvas){
 void onDraw(TFT_eSprite& canvas) {
   if(!apps::tutorial::navigationLessonActive()) {
     currentList().totalItems=visibleCount();currentList().selected=s_selection[static_cast<int>(s_page)];
-    if(s_views[static_cast<int>(s_page)].draw(canvas,currentList(),[](int i){return menuItemFn(i,nullptr);},millis(),s_needRedraw||s_iconDirty))hal::display::markAllDirty();
+    if(const auto band=s_views[static_cast<int>(s_page)].draw(canvas,currentList(),[](int i){return menuItemFn(i,nullptr);},millis(),s_needRedraw,s_iconDirty))hal::display::markDirtyRect(0,band.y0,280,band.y1-band.y0);
     s_needRedraw=s_iconDirty=false;return;
   }
   if (!s_needRedraw) {
