@@ -294,7 +294,11 @@ void transportEvent(const char* json) {
             const uint32_t revision=doc["revision"] | 0u;
             if(revision>s_state.transcriptRevision) {
                 if(!s_state.transcriptRevision) services::agent_latency::milestone("transcript");
-                snprintf(s_state.transcript,sizeof(s_state.transcript),"%s",doc["text"] | "");
+                if(s_state.transcript==AgentState::kNoTranscript)
+                    if(void* storage=core::memory::allocPsram("agent.transcript",AgentState::kTranscriptBytes))
+                        s_state.transcript=static_cast<char*>(storage);
+                if(s_state.transcript!=AgentState::kNoTranscript)
+                    snprintf(s_state.transcript,AgentState::kTranscriptBytes,"%s",doc["text"] | "");
                 s_state.lastTranscriptMs=millis(); s_state.agentActivityMs=s_state.lastTranscriptMs;
                 s_state.transcriptRevision=revision;
                 s_state.transcriptFinal=doc["final"] | false;

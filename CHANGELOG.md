@@ -21,6 +21,7 @@ Changes since v1.0.16.
 - Light the screen first when waking from sleep instead of after boot finishes.
 - Explain video upload failures and stop retrying files over the upload size limit.
 - Keep installed apps in internal flash on Kamis flashed with this partition table; Kamis updated over the air from an older table keep using the SD card.
+- Keep photo uploads running after using the Camera by moving new audio, transcript and menu buffers out of internal memory.
 
 ## v1.0.16
 

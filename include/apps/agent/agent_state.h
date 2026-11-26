@@ -56,7 +56,12 @@ struct AgentState {
     // ── Buffers ──────────────────────────────────────────────────────────────
     core::ConversationBuffer conv;
     // UI-task-owned bounded display snapshot, independent of reply storage.
-    char transcript[1536] = {};
+    // Retained in PSRAM after the first transcript; until then (or if that
+    // allocation fails) it is the shared empty sentinel, so readers never
+    // see null. Writers check for the sentinel before copying text.
+    static constexpr size_t kTranscriptBytes = 1536;
+    static inline char kNoTranscript[1] = {};
+    char* transcript = kNoTranscript;
     bool documentPreview = false, documentBeforePreviewVisible = false;
     char* documentSavedText = nullptr;
     char documentSavedTitle[64] = {};

@@ -20,13 +20,18 @@ constexpr int kChunkFrames = 512;
 // is peak-normalised to the level of the existing UI blips before that scaling.
 constexpr float kTargetPeak = 0.9f;
 float* s_scratch = nullptr;          // retained PSRAM render buffer
+int16_t* s_pcm = nullptr;            // retained PSRAM stereo chunk; I2S copies it to DMA
 }
 
 bool play(Sound sound) {
     if (hal::audio::micReady()) return false;   // caller may retry once the mic closes
     if (!s_scratch) {
-        s_scratch = static_cast<float*>(core::memory::allocPsram("sfx.product", kCapacity * sizeof(float)));
-        if (!s_scratch) return false;
+        // One allocation: float render scratch followed by the int16 TX chunk.
+        void* storage = core::memory::allocPsram("sfx.product",
+            kCapacity * sizeof(float) + kChunkFrames * 2 * sizeof(int16_t));
+        if (!storage) return false;
+        s_scratch = static_cast<float*>(storage);
+        s_pcm = reinterpret_cast<int16_t*>(s_scratch + kCapacity);
     }
     if (!beginPlaybackSession()) return false;
 
@@ -41,7 +46,7 @@ bool play(Sound sound) {
     float peak = 0;
     for (size_t i = 0; i < count; ++i) { const float a = fabsf(s_scratch[i]); if (a > peak) peak = a; }
     const float gain = (peak > 0 ? kTargetPeak / peak : 0) * (float)scaledVolumeBasisPoints() / 10000.f;
-    alignas(4) static int16_t buf[kChunkFrames * 2];
+    int16_t* const buf = s_pcm;
     for (size_t at = 0; at < count; at += kChunkFrames) {
         const size_t n = count - at < (size_t)kChunkFrames ? count - at : (size_t)kChunkFrames;
         for (size_t i = 0; i < n; ++i) {

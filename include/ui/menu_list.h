@@ -59,13 +59,17 @@ template<class C,class Items> void paint(C& c,Pose p,int count,int selected,Item
 }
 struct State {
  Motion motion;int selected=-1,first=-1;bool moving=false;unsigned lastFrame=0;
- unsigned focusAt=0,lastSeen=0;int lastTextOffset=-1;char focusedText[160]={};
+ unsigned focusAt=0,lastSeen=0;int lastTextOffset=-1;uint32_t focusedHash=0;
+ // FNV-1a of the focused label: restarts its marquee when the text changes
+ // without retaining a per-menu copy in internal RAM.
+ static uint32_t labelHash(const char* s){uint32_t h=2166136261u;while(*s)h=(h^(uint8_t)*s++)*16777619u;return h;}
  template<class C,class List,class Items> bool draw(C& c,List& list,Items items,unsigned now,bool dirty){
   list.visibleRows=4;list.clampScroll();
   const auto focus=items(list.selected);
   const char* label=focus.label?focus.label:"";
-  if(selected!=list.selected || strcmp(focusedText,label) || now-lastSeen>200){
-   strncpy(focusedText,label,sizeof(focusedText)-1);focusedText[sizeof(focusedText)-1]=0;focusAt=now;
+  const uint32_t hash=labelHash(label);
+  if(selected!=list.selected || hash!=focusedHash || now-lastSeen>200){
+   focusedHash=hash;focusAt=now;
   }
   lastSeen=now;
   const int nextTextOffset=textOffset(focus,now-focusAt);
