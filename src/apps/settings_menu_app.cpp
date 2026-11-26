@@ -572,14 +572,15 @@ static void applySettingsSubListLayout(ui::ListView& list) {
   list.scrollbarRight = settings_layout::kSettingsSubListScrollbarRight;
 }
 
+static bool cleanMenuScreen();
 static bool scrollSettingsList(ui::ListView& list, int& selected, int count, int steps) {
   list.totalItems = count;
   list.selected = selected;
   list.scroll(steps);
   if (list.selected == selected) return false;
   selected = list.selected;
-  s_needRedraw = true;
-  hal::display::markAllDirty();
+  // Four-row menus repaint only the rows the focus change touches.
+  if (!cleanMenuScreen()) { s_needRedraw = true; hal::display::markAllDirty(); }
   return true;
 }
 
@@ -695,12 +696,11 @@ void onInput(hal::input::InputEvent ev) {
     if(s_sub==SUB_ABOUT) {
       s_aboutList.scroll(steps); s_needRedraw=true; sfx::play(sfx::kSfxAlarmNavigate);
     } else if (s_sub == SUB_MAIN) {
-      const int prev = s_sel;
       s_mainList.totalItems = kRows + (s_updateNotice ? 1 : 0);
       s_mainList.selected = s_sel + (s_updateNotice ? 1 : 0);
       s_mainList.scroll(steps);
       s_sel = s_mainList.selected - (s_updateNotice ? 1 : 0);
-      if (prev != s_sel) { s_needRedraw = true; hal::display::markAllDirty(); }
+      // SUB_MAIN is a four-row menu: its view repaints the touched rows.
     } else if (s_sub == SUB_WIFI_MENU) {
       scrollSettingsList(s_wifiMenuList, s_wifiMenuSel, kWifiRows, steps);
     } else if (s_sub == SUB_SOUND_MENU) {
@@ -1300,7 +1300,7 @@ static ui::menu_list::State s_cleanViews[6];
 static int cleanMenuIndex(){switch(s_sub){case SUB_WIFI_MENU:return 1;case SUB_SOUND_MENU:return 2;case SUB_SLEEP_MENU:return 3;case SUB_SENSORS_MENU:return 4;case SUB_MUSIC_OUTPUT:return 5;default:return 0;}}
 void onDraw(TFT_eSprite& canvas) {
   if(auto* list=cleanMenuList()) {
-    if(s_cleanViews[cleanMenuIndex()].draw(canvas,*list,[](int i){return selectedIconItem(i);},millis(),s_needRedraw||s_iconDirty))hal::display::markAllDirty();
+    if(const auto band=s_cleanViews[cleanMenuIndex()].draw(canvas,*list,[](int i){return selectedIconItem(i);},millis(),s_needRedraw,s_iconDirty))hal::display::markDirtyRect(0,band.y0,280,band.y1-band.y0);
     s_needRedraw=s_iconDirty=false;return;
   }
   if (!s_needRedraw) {
@@ -1450,9 +1450,9 @@ static void screenTick(uint32_t now) {
   static Sub previousSub = SUB_MAIN;
   const int row = selectedIconRow();
   if (previousRow != row || previousSub != s_sub) {
+    if (previousSub != s_sub || !cleanMenuScreen()) s_needRedraw = true;
     previousRow = row; previousSub = s_sub;
     s_motionStart = now; s_motionFrame = 0;
-    s_needRedraw = true;
   }
   if (row < 0 || s_valueEditing) return;
   const uint8_t frame = ((now-s_motionStart)/settings_icons::kFrameMs)%settings_icons::kFrames;

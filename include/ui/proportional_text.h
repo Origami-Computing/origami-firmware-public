@@ -20,9 +20,15 @@ template<class C> void atBaseline(C& c,const char* s,int x,int baseline,int px,u
  for(;*s;++s){
   const auto& g=glyph(*s,px);
   const int left=x+int((advance+32)/64)+g.x;
-  for(int row=0;row<g.h;++row)for(int col=0;col<g.w;++col){
-   unsigned coverage=f.pixels[g.offset+row*g.w+col];
-   if(coverage)c.fillRect(left+col,baseline+g.y+row,1,1,blend(ink,paper,coverage));
+  // Equal neighbouring coverage goes out as one span: same pixels, fewer calls.
+  for(int row=0;row<g.h;++row){
+   const uint8_t* line=f.pixels+g.offset+row*g.w;
+   for(int col=0;col<g.w;){
+    const unsigned coverage=line[col];
+    int end=col+1;while(end<g.w&&line[end]==coverage)++end;
+    if(coverage)c.fillRect(left+col,baseline+g.y+row,end-col,1,blend(ink,paper,coverage));
+    col=end;
+   }
   }
   advance+=g.advance;
  }

@@ -90,7 +90,14 @@ static uint32_t s_streamDropped  = 0;
 static bool    s_streamOverflow  = false;
 // The pinned WebSockets API reserves 14 bytes for its in-place frame header.
 // One TLS write avoids a header-only record and delayed-ACK stalls per frame.
-static int16_t          s_wsFrame[(cfg::agent::kAudioFrameBytes + 14) / sizeof(int16_t)];
+// Worker-owned and retained in PSRAM after the first audio pump: TLS copies the
+// payload into its own record buffer, and internal RAM is the scarcer budget.
+static int16_t* s_wsFrame = nullptr;
+static int16_t* wsFrame() {
+    if (!s_wsFrame) s_wsFrame = static_cast<int16_t*>(core::memory::allocPsram(
+        "agent.ws_frame", ((cfg::agent::kAudioFrameBytes + 14) / sizeof(int16_t)) * sizeof(int16_t)));
+    return s_wsFrame;
+}
 // Protocol extensions the server advertised in `ready`; `hello` opts in.
 static bool s_helloPending = false;
 
@@ -678,6 +685,11 @@ void pumpAudio() {
     if (!listening) return;
 
     const uint32_t maxSamplesPerFrame = cfg::agent::kAudioFrameBytes / sizeof(int16_t);
+    int16_t* const wsFrameBuffer = wsFrame();
+    if (!wsFrameBuffer) {
+        finishSession(SendOutcome::NetworkError, "Audio buffer unavailable", epoch);
+        return;
+    }
     // Bound each drain pass even when capture produces faster than the socket.
     // Return to socket.loop() for ready/error/ping frames, and to the worker's
     // cancellation/deadline checks. A single socket write may still block.
@@ -694,9 +706,9 @@ void pumpAudio() {
         const auto memory = core::memory::snapshot();
         if (memory.dramFree < 12u * 1024u ||
             heap_caps_get_largest_free_block(MALLOC_CAP_DMA) < 4u * 1024u) return;
-        const uint32_t count = peekAudioFrame(epoch, s_wsFrame + 7, maxSamplesPerFrame);
+        const uint32_t count = peekAudioFrame(epoch, wsFrameBuffer + 7, maxSamplesPerFrame);
         if (count == 0) break;
-        uint8_t* bytes = reinterpret_cast<uint8_t*>(s_wsFrame);
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(wsFrameBuffer);
         if (!s_socket.sendBIN(bytes, count * sizeof(int16_t), true)) {
             disconnectAfterWriteFailure("audio");
             return;

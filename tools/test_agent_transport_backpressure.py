@@ -73,7 +73,7 @@ uint32_t clockMs=1000;
 uint32_t millis(){return clockMs;}
 constexpr uint32_t frameSamples=cfg::agent::kAudioFrameBytes/2;
 constexpr uint32_t cap=64*512;
-int16_t ring[cap],s_wsFrame[(cfg::agent::kAudioFrameBytes+14)/2];
+int16_t ring[cap],s_wsFrameStorage[(cfg::agent::kAudioFrameBytes+14)/2];int16_t* wsFrame(){return s_wsFrameStorage;}
 int16_t* pcm(){return ring;}
 uint32_t capacity(){return cap;}
 namespace services {namespace agent_coordination {

@@ -20,9 +20,14 @@ namespace {
 // here. Dots animate through normal onTick and A/B cancel uses normal input.
 
 static uint32_t sThinkingEnteredMs = 0;
+// A/B still down from the turn that led here (the server's endpoint can end a
+// push-to-talk turn while A+B are held). Letting go of them is not a cancel;
+// only a button pressed after Thinking began can cancel.
+static bool sHeldFromTurn = false;
 
 void onEnter(AgentState& s) {
     sThinkingEnteredMs = millis();
+    sHeldFromTurn = hal::input::buttonADown() || hal::input::buttonBDown();
     s.thinkDotPhase = 255;  // force first repaint
     snprintf(s.thinkStatus, sizeof(s.thinkStatus), "%s", "Connecting agent");
     motion::cancel();
@@ -48,6 +53,10 @@ void onInput(AgentState& s, hal::input::InputEvent ev) {
     // Lone A press: abort to eyes home. B press: abort to menu.
     using ET = hal::input::EventType;
     if (ev.type == ET::ButtonC_Tap) return;   // C keeps its OS meaning only
+    if (sHeldFromTurn) {
+        if (ev.type != ET::ButtonA_Press && ev.type != ET::ButtonB_Press) return;
+        sHeldFromTurn = false;   // a fresh press: normal cancel handling resumes
+    }
     if (s.handsFree) s.handsFreeReady = false;
     if (ev.type == ET::ButtonA_Tap || ev.type == ET::ButtonA_Release) {
         flow::cancelSend(CancelTarget::Eyes);
