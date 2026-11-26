@@ -11,3 +11,6 @@ coredump, data, coredump,0xC10000, 0x10000,
 # Optional shipping lock, outside default NVS recovery. Existing offsets unchanged.
 # Older partition tables boot normally but cannot arm shipping mode.
 shipping, data, nvs,     0xC20000, 0x3000,
+# Installed apps (store, Studio, QR): LittleFS in internal flash, so apps never
+# depend on an SD card. hal::app_storage requires this exact offset and size.
+customapps,data, spiffs, 0xC30000, 0x3D0000,

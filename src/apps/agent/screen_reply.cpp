@@ -1,3 +1,6 @@
+#include "services/agent_speech.h"
+#include "sfx/product_sounds.h"
+#include "services/agent_transport.h"
 #include "apps/agent/agent_motion.h"
 #include "config/screen_chrome_layout.h"
 #include "apps/agent/agent_screens.h"
@@ -11,24 +14,15 @@
 #include "apps/agent/agent_render.h"
 #include "core/str_utils.h"
 #include "hal/hal_input.h"
-#include "ui/text_wrap.h"
+#include "ui/agent_conversation.h"
 
 namespace apps {
 namespace agent {
 
 namespace {
 
-// Reply screen: dialogue box typewriter with mini-eye avatar above.
-// Per-character animation is driven by render::serviceTypewriter; the screen
-// only handles input (segment paging, line scroll, return-to-eyes).
-//
-// "Seen once" rule: a segment animates with typewriter + SFX exactly the first
-// time the user reaches it in a given reply session. Revisiting via A (back)
-// or via B (forward into an already-seen index) snaps to the fully revealed
-// view. s_maxSeenSegIdx is the high-water mark — reset to 0 every time the
-// screen is (re-)entered, since each entry is a fresh reply.
-static int s_maxSeenSegIdx = 0;
-
+// Streamed text is readable immediately. The wheel scrolls measured lines;
+// A/B preserve existing segment navigation and the chord starts a follow-up.
 void scheduleNextMiniBlink(AgentState& s, uint32_t nowMs) {
     s.miniBlinkMs = nowMs + cfg::agent::kMiniBlinkMinOpenMs +
                     (esp_random() % (cfg::agent::kMiniBlinkMaxOpenMs -
@@ -38,21 +32,25 @@ void scheduleNextMiniBlink(AgentState& s, uint32_t nowMs) {
 void onEnter(AgentState& s) {
     render::computeDialogueLayout(s);
     if(s.restoringReply){
-        s.restoringReply=false;s_maxSeenSegIdx=s.conv.segmentCount()-1;
+        s.restoringReply=false;s.followReply=false;s.viewInit=false;s.replyDoneCue=true;
         s.miniEyesOpen=true;scheduleNextMiniBlink(s,millis());
         motion::cancel();render::paintReplyShell(s);
         render::snapTypewriterToView(s);render::paintReplyText(s);return;
     }
     s.msgIndex      = 0;
     s.scrollLines   = 0;
-    s_maxSeenSegIdx = 0;  // segment 0 is about to be revealed for the first time
+    // Keep the opening words readable as live chunks arrive. Explicitly
+    // scrolling to the bottom opts into following subsequent text.
+    s.followReply = false;
+    s.replyDoneCue = false;
+    s.replyPainted = s.replyRevision;
     render::resetTypewriter(s);
 
     s.miniEyesOpen = true;
     scheduleNextMiniBlink(s, millis());
 
-    motion::startReply();
-    motion::tick(s,millis());
+    motion::cancel();
+    render::paintReplyShell(s);
 }
 
 void onExit(AgentState& /*s*/) {
@@ -60,6 +58,9 @@ void onExit(AgentState& /*s*/) {
 
 void onTick(AgentState& s, uint32_t nowMs) {
     flow::pollCompletion();
+    services::agent_speech::tick(nowMs);
+    if(flow::serviceTurnGesture(nowMs))return;
+    if(flow::continueHandsFree())return;
     if(flow::showInboxReply())return;
 
     if(s.stage!=Stage::Reply || motion::tick(s,nowMs))return;
@@ -69,28 +70,21 @@ void onTick(AgentState& s, uint32_t nowMs) {
     const auto expression=emotion::snapshot(s.msgIndex);
     if(expression.revision!=s.miniEmotionRevision||s.msgIndex!=s.miniEmotionSegment)
         render::paintMiniEyes(s);
-
-    // Sample the short squeezed frame throughout the blink, not just at its ends.
-    if ((nowMs - s.lastAnim) >= 32u) {
-        s.animFrame++;
-        s.lastAnim = nowMs;
-        if (nowMs >= s.miniBlinkMs) {
-            if (s.miniEyesOpen) {
-                s.miniEyesOpen = false;
-                s.miniBlinkStarted = nowMs;
-                s.miniBlinkMs  = nowMs + 250u;
-            } else {
-                s.miniEyesOpen = true;
-                scheduleNextMiniBlink(s, nowMs);
-            }
-        }
-        render::paintMiniEyes(s);
+    // Push-to-talk turn finished and fully shown: "your turn" water drop.
+    if(!s.replyDoneCue && !s.continuous && !flow::isSessionActive() && render::typewriterRevealed(s)) {
+        s.replyDoneCue=true;
+        if(!services::agent_speech::busy()) flow::cue((uint8_t)sfx::product::Sound::WaterDrop);
     }
 }
 
 // ── Scroll helpers ──────────────────────────────────────────────────────────
 
 bool scrollByLines(AgentState& s, int delta) {
+    if(s.documentVisible && s.documentText) {
+        const int maximum=std::max(0,ui::agent_conversation::count(s.documentText)-4);
+        s.documentScroll=std::max(0,std::min(maximum,s.documentScroll+delta));
+        render::paintReplyText(s);return true;
+    }
     if (delta == 0)                       return false;
     if (s.agentTextW <= 0)                 return false;
     if (s.conv.segmentCount() <= 0)        return false;
@@ -105,18 +99,18 @@ bool scrollByLines(AgentState& s, int delta) {
         if (seg && seg[0]) {
             core::str::utf8LossyToAscii(seg, s.conv.wrapScratch(),
                                         s.conv.wrapScratchSize());
-            const int n = ui::text::countWrapped(s.conv.wrapScratch(),
-                                                 s.agentTextW, 2);
+            const int n = ui::agent_conversation::count(s.conv.wrapScratch());
             maxStart = (n > s.agentMaxLines) ? (n - s.agentMaxLines) : 0;
         }
     }
 
     // Scroll is single-segment now: clamp to [0, maxStart]. Crossing into the
-    // next/previous segment is done explicitly via B (forward, animated) or A
-    // (back, snapped) — see onInput below.
+    // next/previous segment is done explicitly via B (forward) or A
+    // (back) — see onInput below.
     int ns = s.scrollLines + delta;
     if (ns < 0)        ns = 0;
     if (ns > maxStart) ns = maxStart;
+    s.followReply=ns==maxStart;
     if (ns == s.scrollLines) return false;
     s.scrollLines = ns;
     render::snapTypewriterToView(s);
@@ -129,12 +123,8 @@ bool advancePage(AgentState& s) {
         const int next = s.msgIndex + 1;
         s.msgIndex = next;
         s.scrollLines = 0;
-        if (next > s_maxSeenSegIdx) {
-            s_maxSeenSegIdx = next;
-            render::resetTypewriter(s);
-        } else {
-            render::snapTypewriterToView(s);
-        }
+        s.followReply=false;
+        render::snapTypewriterToView(s);
         render::paintReplyText(s);
         return true;
     }
@@ -148,9 +138,13 @@ void onInput(AgentState& s, hal::input::InputEvent ev) {
     if(ev.type==ET::Scroll || ev.type==ET::ButtonA_Tap || ev.type==ET::ButtonB_Tap)
         motion::completeReply(s);
 
+    if (ev.type == ET::ButtonC_Tap) return;   // C keeps its OS meaning only
     if (ev.type == ET::Scroll && ev.delta != 0) {
         scrollByLines(s, ev.delta);
         return;
+    }
+    if(s.documentVisible && (ev.type==ET::ButtonA_Tap || ev.type==ET::ButtonB_Tap)) {
+        s.documentVisible=false;render::paintReplyShell(s);return;
     }
     if (ev.type == ET::ButtonA_Tap) {
         // A goes BACK through segments. On the first segment there is nothing
@@ -158,10 +152,7 @@ void onInput(AgentState& s, hal::input::InputEvent ev) {
         if (s.msgIndex > 0) {
             s.msgIndex--;
             s.scrollLines = 0;
-            // snapTypewriterToView fills twRevealLen to the full visible
-            // string length, so serviceTypewriter short-circuits on the very
-            // next tick — no per-char reveal, no SFX. Re-visiting a previous
-            // segment should feel instant, not replay the animation.
+            s.followReply=false;
             render::snapTypewriterToView(s);
             render::paintReplyText(s);
         } else {
@@ -177,10 +168,9 @@ void onInput(AgentState& s, hal::input::InputEvent ev) {
 }
 
 bool onChord(AgentState& s) {
-    // Follow-up capture is one transition; do not play the home/idle scene first.
-    s.recStartedByChord = true;
-    flow::startRecording();
-    return true;
+    // Follow-up: hold for push-to-talk, tap for agent mode (decided in onTick).
+    (void)s;
+    return flow::beginTurnGesture();
 }
 
 void enterScreen() {

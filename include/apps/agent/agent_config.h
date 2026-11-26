@@ -76,6 +76,15 @@ constexpr uint32_t kIdleReplyPeriodMs = 72;
 /** A+B chord must be held this long after the chord event before it upgrades
  *  into a PTT recording. Shorter = "A+B tap" returns to eyes only. */
 constexpr uint32_t kChordHoldRecordMs = 200;
+// A+B released before this is a tap (agent mode); held longer is push-to-talk.
+// The microphone is already open during the decision so no speech is lost.
+constexpr uint32_t kTapHoldMs = 250;
+constexpr uint32_t kLockLeadMs = 150;         // let the lock cue play before the mic opens
+constexpr uint32_t kAgentSilenceMs = 60000;    // agent mode leaves after this much silence
+constexpr uint32_t kRevealCharMs = 14;         // natural reply reveal rate (~70 chars/s)
+constexpr uint32_t kRevealMaxLag = 40;         // reveal never trails received text by more
+constexpr uint32_t kTypingCueMs = 56;          // typing ticks at most this often
+constexpr uint32_t kCueWaitMs = 800;           // a cue waiting for the mic to close expires
 
 // ─── Network ─────────────────────────────────────────────────────────────────
 

@@ -70,6 +70,12 @@ void setEyeOffset(float x, float y);
 void setHomeMotion(float squeeze, bool contact);
 // Centered conversation actor uses the same cached geometry and natural blink.
 bool drawConversationEyes(TFT_eSPI& tft, float x, float y, uint32_t now, bool onlyChanged = false);
+// The natural-blink closure shared by every Kami eye view (1 open … 0 closed).
+// Advances the same blink schedule the Home and conversation eyes use. UI task.
+float sharedBlink(uint32_t now);
+// The caller cleared the panel: the next eye paint restores its whole rectangle
+// instead of only the band it last touched.
+void invalidatePaint();
 // Pure UI paint using the wake face/hand, starting open before the happy wave.
 // Does not start a wake action or mutate home expression/blink state.
 void drawOutroWave(TFT_eSPI& target,uint32_t age);
@@ -77,6 +83,10 @@ bool drawTravelEyes(TFT_eSPI& tft, float avatar, float offsetX=0, float offsetY=
 bool drawThinkingEyes(TFT_eSPI& tft, float settle, uint32_t now, bool onlyChanged);
 bool setEmotion(const char* name, bool immediate = false);
 void sleepTransition(TFT_eSPI& tft);
+/** One still frame of the sleeping pose sleepTransition() ends on, flushed at
+ *  once. Boot uses it to light the panel right after a deep-sleep wake, before
+ *  the rest of boot. Skips the animation caches and leaves no motion active. */
+void drawSleepingPose(TFT_eSPI& tft);
 bool handleDebugCommand(const char* line);
 
 /** Transition with the web emotion curve, evaluated each rendered frame. */

@@ -49,6 +49,7 @@
 #include "services/device_handoff.h"
 #include "control/device_handoff.h"
 #include "services/onboarding_progress.h"
+#include "sfx/product_sounds.h"
 #include "control/shipping.h"
 #include "services/alarms.h"
 #include "core/store.h"
@@ -266,6 +267,7 @@ static void printHelp() {
   Serial.println("  camera open        open the live Camera app");
   Serial.println("  hardware open|status|step audio|camera|recording [INDEX]  inspect isolated Hardware Test steps");
   Serial.println("  photos status      report gallery count, selection, and rendered pixels");
+  Serial.println("  photos loader [video] [ms]  paint a Photos loading screen for screenshots");
   Serial.println("  camera settle RUN FRAMES REPEAT  VGA trial; FRAMES=-1 for 600ms baseline");
 #endif
   Serial.println("  battery icon PERCENT 0|1 [-1|0|1] | off | status (display-only, 120s)");
@@ -2907,6 +2909,13 @@ static bool handleMp3VolumeCommand(char* line) {
 }
 
 static bool handleSfxVolumeCommand(char* line) {
+  // Play one product cue by index (WaterDrop=0 … LibraryClose=8) to check level.
+  if (strncmp(line, "sfx product ", 12) == 0) {
+    const int index = atoi(line + 12);
+    const bool ok = index >= 0 && index <= 8 && sfx::product::play((sfx::product::Sound)index);
+    Serial.printf("[sfx-product] request=%d played=%u\n", index, ok ? 1u : 0u);
+    return true;
+  }
   if (strcmp(line, "sfx volume") == 0 || strcmp(line, "sound volume") == 0) {
     const int ui = sfx::volume();
     const int gainBp = sfx::scaledVolumeBasisPoints();
@@ -3148,6 +3157,13 @@ static void handleLine(char* line, uint32_t nowMs) {
   }
   if (strcmp(line, "tutorial status") == 0) {
     apps::tutorial::printStatus();
+    return;
+  }
+  // Development boards: record setup as finished so boot opens Home, not the
+  // tutorial. Uses the production schema owner; the next boot reads it.
+  if (strcmp(line, "tutorial complete") == 0) {
+    const bool saved = services::onboarding_progress::save(0, true);
+    Serial.printf("[tutorial-dev] complete saved=%u (reboot to apply)\n", saved ? 1u : 0u);
     return;
   }
   if (strcmp(line, "tutorial reboot") == 0) {
@@ -3925,6 +3941,24 @@ static void handleLine(char* line, uint32_t nowMs) {
     } else selected = apps::hardware_test::selectDiagnosticStep(line + 14);
     Serial.printf("[hardware-test] selected=%d\n", selected);
     apps::hardware_test::dumpDiagnosticStatus(Serial);
+    return;
+  }
+  if (strncmp(line, "photos wait-anim ", 17) == 0) {
+    const bool on = line[17] == '1';
+    apps::photos::setWaitAnimationForDevelopment(on);
+    Serial.printf("[photos-loader] wait_anim=%d\n", on ? 1 : 0);
+    return;
+  }
+  if (strncmp(line, "photos loader", 13) == 0) {
+    // photos loader [video] [ms]
+    services::notifyUserActivity();
+    const char* rest = line + 13;
+    while (*rest == ' ') ++rest;
+    const bool video = strncmp(rest, "video", 5) == 0;
+    if (video) rest += 5;
+    const uint32_t ms = (uint32_t)strtoul(rest, nullptr, 10);
+    Serial.printf("[photos-loader] video=%d ms=%lu ok=%d\n", video ? 1 : 0, (unsigned long)ms,
+                  apps::photos::previewLoaderForDevelopment(video, ms) ? 1 : 0);
     return;
   }
   if (strcmp(line, "photos status") == 0) {

@@ -48,6 +48,10 @@ static bool s_replyReceived=false;
 static TaskHandle_t    s_sendHandle = nullptr;
 static bool   s_sendDone   = false;
 static bool   s_replyReady = false;
+static std::atomic<bool> s_continuous{false};
+static std::atomic<bool> s_startHeld{false};
+static std::atomic<int> s_documentWindow{-1};
+static std::atomic<bool> s_closeDocument{false};
 static bool   s_sendCancel = false;
 static uint8_t s_sendCancelNav = 0;
 static SendResult      s_sendResult;
@@ -62,6 +66,7 @@ static bool    s_listening = false; // Server acknowledged this turn's start.
 // task loop and can be reset externally.
 static bool    s_socketConfigured  = false;
 static std::atomic<bool> s_reconfigureRequest{false};
+static std::atomic<bool> s_replyAudio{true};
 static uint32_t         s_apiKeyRevision = 0; // Worker-owned observed revision.
 static bool    s_commitRequested = false;
 static bool    s_startSent       = false;
@@ -76,13 +81,16 @@ static uint32_t         s_lastTransportWaitLogMs = 0;
 static uint32_t s_wsConnectedSinceMs = 0;
 static portMUX_TYPE     s_audioMux        = portMUX_INITIALIZER_UNLOCKED;
 static uint32_t s_turnEpoch = 0; // Audio lock: identity, ring and all shared turn progress.
+static char s_documentId[37] = {}; // protected by s_audioMux
 static bool s_audioAttached = false; // Protected by s_audioMux, including pointer lookup.
 static uint32_t s_ringRead       = 0;
 static uint32_t s_ringWrite      = 0;
 static uint32_t s_ringUsed       = 0;
 static uint32_t s_streamDropped  = 0;
 static bool    s_streamOverflow  = false;
-static int16_t          s_wsFrame[cfg::agent::kAudioFrameBytes / sizeof(int16_t)];
+// The pinned WebSockets API reserves 14 bytes for its in-place frame header.
+// One TLS write avoids a header-only record and delayed-ACK stalls per frame.
+static int16_t          s_wsFrame[(cfg::agent::kAudioFrameBytes + 14) / sizeof(int16_t)];
 // Protocol extensions the server advertised in `ready`; `hello` opts in.
 static bool s_helloPending = false;
 
@@ -262,7 +270,7 @@ void handleSessionDrop() {
     s_listening = false;
     s_startSent = false;
     if (services::agent_coordination::isSessionActive() &&
-        (s_commitSent || s_replyReceived || !rewindRingForResendLocked())) s_transportLost = true;
+        (s_continuous.load() || s_commitSent || s_replyReceived || !rewindRingForResendLocked())) s_transportLost = true;
     s_commitSent = false;
     portEXIT_CRITICAL(&s_audioMux);
 }
@@ -379,10 +387,13 @@ void expireUnreadySocket(uint32_t nowMs) {
 }
 
 void sendStartFrame(uint32_t epoch) {
-    char json[192];
+    char json[320], documentId[37];
+    portENTER_CRITICAL(&s_audioMux);
+    memcpy(documentId,s_documentId,sizeof(documentId));
+    portEXIT_CRITICAL(&s_audioMux);
     snprintf(json, sizeof(json),
-             "{\"type\":\"start\",\"sessionId\":\"%s\",\"platform\":\"%s\",\"sampleRate\":16000}",
-             cfg::agent::kSessionId, cfg::agent::kPlatform);
+             "{\"type\":\"start\",\"sessionId\":\"%s\",\"platform\":\"%s\",\"sampleRate\":16000,\"turnId\":%lu,\"replyAudio\":%s,\"continuous\":%s,\"documentId\":\"%s\"}",
+             cfg::agent::kSessionId, cfg::agent::kPlatform, (unsigned long)epoch, s_replyAudio.load()?"true":"false", s_continuous.load()?"true":"false", documentId);
     if (s_socket.sendTXT(json)) {
         portENTER_CRITICAL(&s_audioMux);
         if (epoch == s_turnEpoch && services::agent_coordination::isSessionActive()) {
@@ -445,7 +456,7 @@ void handleSocketText(uint8_t* payload, size_t length) {
             ready ? (doc["slug"] | "") : "");
         return;
     }
-    if (!services::agent_coordination::isSessionActive()) { agent_delivery::reject(receipt,"not_waiting"); return; }
+    if (!services::agent_coordination::isSessionActive() && strcmp(type,"document_page")) { agent_delivery::reject(receipt,"not_waiting"); return; }
     if (!strcmp(type, "listening")) {
         portENTER_CRITICAL(&s_audioMux);
         if (replyEpoch == s_turnEpoch && s_startSent) s_listening = true;
@@ -458,11 +469,40 @@ void handleSocketText(uint8_t* payload, size_t length) {
     LOGD("agent-event", "e=%lu up=%lu rx=%.24s n=%u", (unsigned long)replyEpoch,
          (unsigned long)millis(), type, (unsigned)length);
 
-    if (!strcmp(type,"emotion") || !strcmp(type,"tool_start") || !strcmp(type,"tool_end")) {
+    const bool inputEvent=!strcmp(type,"input_begin") || !strcmp(type,"input_done") || !strcmp(type,"input_state") || !strcmp(type,"document_closed");
+    if(inputEvent && (!doc["turnId"].is<uint32_t>() || doc["turnId"].as<uint32_t>()!=replyEpoch)) return;
+    if(!strcmp(type,"input_begin")) { s_draftCount=0; s_replySegments=0; }
+    const bool endpoint=!strcmp(type,"endpoint");
+    const bool speech=!strncmp(type,"speech_",7);
+    const bool document=!strcmp(type,"document");
+    const bool documentPage=!strcmp(type,"document_page");
+    const bool documentPreview=!strcmp(type,"document_preview") || !strcmp(type,"document_preview_discard");
+    if(documentPreview && (!doc["turnId"].is<uint32_t>() || doc["turnId"].as<uint32_t>()!=replyEpoch))return;
+    if((endpoint||speech||document) && (!doc["turnId"].is<uint32_t>() || doc["turnId"].as<uint32_t>()!=replyEpoch)) return;
+    if(speech) {
+        if(!strcmp(type,"speech_data")) {
+            if(!doc["pcm"].is<const char*>() || strlen(doc["pcm"].as<const char*>())>2732 || !doc["sequence"].is<uint32_t>())return;
+        } else if(!strcmp(type,"speech_start")) { if((doc["rate"]|0)!=24000)return; }
+        else if(strcmp(type,"speech_end") && strcmp(type,"speech_error"))return;
+    }
+    if((document || documentPage) && (!doc["text"].is<const char*>() || strlen(doc["text"].as<const char*>())>4095 ||
+        !doc["id"].is<const char*>() || strlen(doc["id"].as<const char*>())!=36 ||
+        !doc["title"].is<const char*>() || strlen(doc["title"].as<const char*>())>63))return;
+    const bool conversationState=!strcmp(type,"conversation_state");
+    if(conversationState) {
+        const char* view=doc["view"] | "";
+        if(!doc["turnId"].is<uint32_t>() || doc["turnId"].as<uint32_t>()!=replyEpoch ||
+           (strcmp(view,"listening") && strcmp(view,"user") && strcmp(view,"thinking") && strcmp(view,"reply")))return;
+    }
+    const bool transcript=!strcmp(type,"transcript");
+    if(transcript && (!doc["turnId"].is<uint32_t>() || doc["turnId"].as<uint32_t>()!=replyEpoch ||
+       !doc["revision"].is<uint32_t>() || !doc["final"].is<bool>() ||
+       !doc["text"].is<const char*>() || strlen(doc["text"].as<const char*>())>=1536u)) return;
+    if (conversationState || inputEvent || documentPreview || endpoint || speech || document || documentPage || transcript || !strcmp(type,"emotion") || !strcmp(type,"tool_start") || !strcmp(type,"tool_end")) {
         if (!doc["requestId"].isNull()) return;
         // Re-serialize a bounded document: incoming payload need not be NUL-terminated.
         const size_t size=measureJson(doc)+1;
-        if (size>2048) return;
+        if (size>((document||documentPage||documentPreview)?30000u:speech?4096u:transcript?10000u:2048u)) return;
         void* storage=core::memory::allocPsram("agent.metadata",size);
         if(!storage) { finishSession(SendOutcome::NetworkError,"Reply buffer full",replyEpoch);return; }
         serializeJson(doc,static_cast<char*>(storage),size);
@@ -625,6 +665,7 @@ void pumpAudio() {
     const bool startNeeded = !s_startSent;
     portEXIT_CRITICAL(&s_audioMux);
     if (!active || !ready) return;
+    if (startNeeded && s_startHeld.load()) return;   // gesture still deciding; PCM keeps buffering
     if (startNeeded) sendStartFrame(epoch);
     portENTER_CRITICAL(&s_audioMux);
     const bool started = epoch == s_turnEpoch && services::agent_coordination::isSessionActive() && s_startSent;
@@ -653,10 +694,10 @@ void pumpAudio() {
         const auto memory = core::memory::snapshot();
         if (memory.dramFree < 12u * 1024u ||
             heap_caps_get_largest_free_block(MALLOC_CAP_DMA) < 4u * 1024u) return;
-        const uint32_t count = peekAudioFrame(epoch, s_wsFrame, maxSamplesPerFrame);
+        const uint32_t count = peekAudioFrame(epoch, s_wsFrame + 7, maxSamplesPerFrame);
         if (count == 0) break;
-        const uint8_t* bytes = reinterpret_cast<const uint8_t*>(s_wsFrame);
-        if (!s_socket.sendBIN(bytes, count * sizeof(int16_t))) {
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(s_wsFrame);
+        if (!s_socket.sendBIN(bytes, count * sizeof(int16_t), true)) {
             disconnectAfterWriteFailure("audio");
             return;
         }
@@ -691,13 +732,16 @@ bool sendTextRequest(const char* wire) {
 
 void sendHelloIfPending() {
     if (!s_helloPending || !s_socketConnected) return;
-    char json[192];
+    char json[320], documentId[37];
+    portENTER_CRITICAL(&s_audioMux);
+    memcpy(documentId,s_documentId,sizeof(documentId));
+    portEXIT_CRITICAL(&s_audioMux);
     const uint64_t after = services::agent_inbox::lastReplyEventId();
     if (after) snprintf(json, sizeof(json),
-        "{\"type\":\"hello\",\"capabilities\":[\"push_v1\",\"stream_v1\",\"widget_v1\",\"delivery_ack_v1\"],\"afterEventId\":%llu}",
+        "{\"type\":\"hello\",\"capabilities\":[\"push_v1\",\"stream_v1\",\"widget_v1\",\"delivery_ack_v1\",\"transcript_v1\",\"speech_v1\",\"document_v1\",\"turn_gate_v1\",\"continuous_v1\"],\"afterEventId\":%llu}",
         (unsigned long long)after);
     else snprintf(json, sizeof(json),
-        "{\"type\":\"hello\",\"capabilities\":[\"push_v1\",\"stream_v1\",\"widget_v1\",\"delivery_ack_v1\"]}");
+        "{\"type\":\"hello\",\"capabilities\":[\"push_v1\",\"stream_v1\",\"widget_v1\",\"delivery_ack_v1\",\"transcript_v1\",\"speech_v1\",\"document_v1\",\"turn_gate_v1\",\"continuous_v1\"]}");
     if (s_socket.sendTXT(json)) {
         s_helloPending = false;
         Serial.printf("[agent] WS hello after=%llu\n", (unsigned long long)after);
@@ -834,6 +878,19 @@ void kamiSendTask(void*) {
         if(loopMs>=250) LOGI("agent-io", "up=%lu socket_ms=%lu", (unsigned long)millis(), (unsigned long)loopMs);
         expireUnreadySocket(millis());
         sendHelloIfPending();
+        if(s_socketConnected) {
+            const int offset=s_documentWindow.exchange(-1);
+            if(offset>=0) {
+                char id[37],wire[160];
+                portENTER_CRITICAL(&s_audioMux);memcpy(id,s_documentId,sizeof(id));portEXIT_CRITICAL(&s_audioMux);
+                snprintf(wire,sizeof(wire),"{\"type\":\"document_window\",\"documentId\":\"%s\",\"offset\":%d}",id,offset);
+                if(!s_socket.sendTXT(wire))disconnectAfterWriteFailure("document_window");
+            }
+            if(s_closeDocument.exchange(false)) {
+                char wire[100];snprintf(wire,sizeof(wire),"{\"type\":\"document_close\",\"turnId\":%lu}",(unsigned long)s_turnEpoch);
+                if(!s_socket.sendTXT(wire))disconnectAfterWriteFailure("document_close");
+            }
+        }
         if (s_socketConnected) agent_delivery::pump(sendTextRequest);
         turn = turnSnapshot();
         if (turn.active && turn.commitRequested && !turn.commitSent &&
@@ -950,6 +1007,16 @@ bool setBackendUrl(const char* url) {
     return saved;
 }
 
+void setDocumentId(const char* id) {
+    portENTER_CRITICAL(&s_audioMux);
+    snprintf(s_documentId,sizeof(s_documentId),"%s",id?id:"");
+    portEXIT_CRITICAL(&s_audioMux);
+}
+void requestDocumentWindow(int offset) { if(offset>=0)s_documentWindow.store(offset); }
+void closeDocument() { s_closeDocument.store(true); }
+void setContinuous(bool enabled) { s_continuous.store(enabled); }
+void holdStart(bool held) { s_startHeld.store(held); }
+void setReplyAudio(bool enabled) { s_replyAudio.store(enabled); }
 void begin() { beginStreamingRecording(); }
 void detachAudio() {
     // Finish any in-flight ring copy before its owner frees the slab. Keep heap
@@ -959,11 +1026,12 @@ void detachAudio() {
     s_ringRead = s_ringWrite = s_ringUsed = 0;
     portEXIT_CRITICAL(&s_audioMux);
 }
-void abandon() { abandonActiveSession(); }
+void abandon() { s_startHeld.store(false); abandonActiveSession(); }
 bool appendAudio(const int16_t* samples, uint32_t count, void* user) {
     return streamMicSamples(samples,count,user);
 }
 void commit() {
+    s_startHeld.store(false);
     s_replyReady=false;
     const uint32_t now = millis();
     portENTER_CRITICAL(&s_audioMux);
@@ -998,6 +1066,9 @@ void pollReplies() {
         if (s_uiCancelled || s_uiRejected) continue;
         if (event.type()==ReplyMailbox::Type::Metadata) {
             if(callbacks->event) callbacks->event(event.text());
+            // A saved document can be the whole reply. Show it immediately,
+            // without waiting for a separate text message or turn completion.
+            s_replyReady=callbacks->hasReply();
         }
         else if (event.type()==ReplyMailbox::Type::Discard) {
             if (callbacks->discard) callbacks->discard(atoi(event.text()));

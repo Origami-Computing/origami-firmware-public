@@ -13,6 +13,9 @@ struct CameraCanvas {
  uint16_t readPixel(int x,int y)const {
   return x>=0&&x<280&&y>=0&&y<240?at(x,y):0;
  }
+ void drawPixel(int x,int y,uint16_t ink){
+  if(x>=0&&x<280&&y>=0&&y<240)pixels[(279-x)*240+y]=(ink>>8)|(ink<<8);
+ }
  void fillRect(int x,int y,int w,int h,uint16_t ink){
   uint16_t p=(ink>>8)|(ink<<8);
   for(int xx=x;xx<x+w;xx++)for(int yy=y;yy<y+h;yy++)
@@ -42,7 +45,8 @@ CameraPreview::Result CameraPreview::copyRgb565(const uint8_t* bytes,size_t leng
 }
 bool CameraPreview::copyDecoded(const uint16_t* pixels,bool video) {
     if (!hasSurfaces() || !pixels) return false;
-    memcpy(video?composite_:frame_,pixels,280u*240u*sizeof(uint16_t));frameReady_=true;
+    memcpy(frame_,pixels,280u*240u*sizeof(uint16_t));frameReady_=true;  // video also composes from frame_
+    (void)video;
     return true;
 }
 void CameraPreview::closeDecoder() { decoder_.close(); }
@@ -51,6 +55,7 @@ void CameraPreview::close() {
     heap_caps_free(frame_);
     heap_caps_free(composite_);
     frame_=composite_=nullptr;
+    presented_=nullptr;
     frameReady_=false;
 }
 bool CameraPreview::prepareSurfaces() {
@@ -132,7 +137,7 @@ bool CameraPreview::presentFallback(const uint8_t* jpeg, size_t length) {
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
 bool CameraPreview::copyCompositeForDevelopment(TFT_eSprite& target)const{
  if(!hasFrame()||!target.created())return false;
- CameraCanvas c{composite_};
+ CameraCanvas c{const_cast<uint16_t*>(presented_?presented_:composite_)};
  for(int y=0;y<240;++y)for(int x=0;x<280;++x)target.drawPixel(x,y,c.at(x,y));
  return true;
 }
@@ -143,21 +148,21 @@ CameraPreview::Result CameraPreview::decodeVideo(const uint8_t* jpeg, size_t len
     // Video owns this presentation surface until the next successful decode.
     // Never expose a partially replaced frame after decoder failure.
     frameReady_=false;
-    const auto result=decoder_.decode(jpeg,length,composite_,nullptr,nullptr,true);
+    const auto result=decoder_.decode(jpeg,length,frame_,nullptr,nullptr,false);
     if (result==Result::Decoded) frameReady_=true;
     return result;
 }
-CameraPreview::Presentation CameraPreview::presentVideo(const char* title, const char* controls, unsigned progress) {
+CameraPreview::Presentation CameraPreview::presentVideo(const photos_view::VideoCard& card, int cardAlpha) {
     if (!hasFrame()) return {};
+    if (cardAlpha <= 0) {  // card hidden: present the decoded frame as-is
+        presented_=frame_;
+        return presentNativeFrame(frame_);
+    }
+    // Compose over a copy so paused/held frames never accumulate the overlay.
+    memcpy(composite_,frame_,280u*240u*sizeof(uint16_t));
     CameraCanvas canvas{composite_};
-    // The fitted image occupies y=15..224. Restore both black text bars on
-    // every presentation, including paused/held frames and shorter labels.
-    canvas.fillRect(0,0,280,15,0);
-    canvas.fillRect(0,225,280,15,0);
-    ui::pixel_text::text(canvas,title,20,4,1,0xFFFF);
-    ui::pixel_text::text(canvas,controls,20,228,1,0xFFFF);
-    canvas.fillRect(20,222,240,2,0x4208);
-    canvas.fillRect(20,222,int(240*(progress>1000?1000:progress)/1000),2,0xFFFF);
+    photos_view::videoCard(canvas, photos_view::Bounds{280,240}, card, cardAlpha);
+    presented_=composite_;
     return presentNativeFrame(composite_);
 }
 

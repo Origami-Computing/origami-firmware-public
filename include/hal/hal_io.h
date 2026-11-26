@@ -11,6 +11,9 @@ bool init();
 bool begin();
 /** Re-establish the TCA6424A after I2C bus has been restarted (e.g. Wire.end()/Wire.begin()). Call after Wire.begin(), before using buttons. */
 bool reinitAfterI2CRestart();
+/** Restart Wire and reconnect the expander under the shared I2C mutex, so
+ * concurrent fuel-gauge/input transactions cannot access torn-down buffers. */
+bool restartBusAndReconnect();
 
 void configureDefaultPins();
 /** True if a button edge occurred since last clear (based on the expander ~INT → GPIO1 ISR). Clears the flag when read. */

@@ -26,7 +26,7 @@ void delay(unsigned);uint32_t millis();
 ''')
     write('esp_camera.h','enum framesize_t {FRAMESIZE_VGA=8,FRAMESIZE_HD=11,FRAMESIZE_QSXGA=21};constexpr int PIXFORMAT_JPEG=4;')
     write('hal/hal_wifi.h','namespace hal {namespace wifi {void stop();void powerDown();void restore();void scheduleRestore();}}')
-    write('hal/hal_io.h','namespace hal {namespace io {bool reinitAfterI2CRestart();}}')
+    write('hal/hal_io.h','namespace hal {namespace io {bool restartBusAndReconnect();}}')
     write('Pins.h','constexpr int SDA_PIN=1,SCL_PIN=2;')
     write('Wire.h','struct FakeWire {void end(){}void begin(int,int){}};extern FakeWire Wire;')
     write('services/background_network.h','#include <stdint.h>\nnamespace services {namespace background_network {void requestPeripheralIo();bool peripheralIoReady();bool suspendForPeripheralIo(uint32_t);void resumeAfterPeripheralIo();}}')
@@ -55,7 +55,7 @@ void TransportPause::release(){if(!held_)return;held_=false;trace.push_back("age
 }}
 namespace hal {
 namespace wifi {void stop(){trace.push_back("wifi-stop");}void powerDown(){trace.push_back("wifi-off");}void restore(){}void scheduleRestore(){}}
-namespace io {bool reinitAfterI2CRestart(){return true;}}
+namespace io {bool restartBusAndReconnect(){return true;}}
 namespace camera {
 bool configureCineIsp(const CineIspRequest&,CineIspReadback*){assert(false);return false;}
 bool init(int size,int format,const Tuning*t,int quality){assert(quality==-1);assert(format==4&&t->tag==42);sizes.push_back(size);trace.push_back("start"+std::to_string(size));live=starts.empty()?true:starts.front();if(!starts.empty())starts.erase(starts.begin());return live;}

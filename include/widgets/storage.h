@@ -17,7 +17,9 @@ uint32_t request(Operation,const Identity& = Identity{},const uint8_t* bytes=nul
 // Temporary worker preemption retries the owned request; explicit cancel/abandon
 // remains terminal. A retry never replaces a successfully committed outcome.
 enum class DownloadTarget { ByKind, Sd, Flash };
-// ByKind places Lua on SD and native modules in persistent internal flash.
+// ByKind (the default) installs into persistent internal flash, so apps never
+// depend on an SD card; only a Kami without the customapps partition (an older
+// table, updated over the air) uses SD. Flash and Sd force that medium.
 uint32_t requestDownload(const char* qr, DownloadTarget target=DownloadTarget::ByKind);
 // UI task: take terminal result once; transfers owned snapshot to package.
 // Catalog output optional. Outputs untouched until completion. No blocking.

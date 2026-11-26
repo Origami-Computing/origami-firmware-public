@@ -25,7 +25,7 @@ enum class CancelTarget {None,Eyes,Menu};
 enum class SendOutcome {Ok,HttpError,NetworkError,Cancelled};
 bool convOk,doneFlag;
 struct Conversation {bool ensure(){events.push_back("ensure-conversation");return convOk;}};
-struct AgentState {Stage stage;Conversation conv;char errBuf[128];uint32_t lastAnim=0,animFrame=0,miniBlinkMs=0;bool miniEyesOpen=false,returnHomeAfterReply=false;uint32_t returnHomeAtMs=0;} s_state;
+struct AgentState {bool handsFree=false,handsFreeReady=false,documentReceived=false;char transcript[8]={};Stage stage;Conversation conv;char errBuf[128];uint32_t lastAnim=0,animFrame=0,miniBlinkMs=0;bool miniEyesOpen=false,returnHomeAfterReply=false;uint32_t returnHomeAtMs=0;} s_state;
 namespace services {namespace agent_voice {void poll(){events.push_back("voice-poll");}}}
 namespace transport {
  struct Result {SendOutcome outcome;uint8_t cancelTag;uint8_t pendingTasks;} reply;
@@ -48,8 +48,8 @@ code+=r'''
 int main(){unsigned cases=0;
  for(unsigned ready=0;ready<2;++ready)for(unsigned stage=0;stage<5;++stage)
  for(unsigned outcome=0;outcome<4;++outcome)for(unsigned tag=0;tag<3;++tag)
- for(unsigned allocate=0;allocate<2;++allocate)for(unsigned pending=0;pending<2;++pending){
-  events.clear();delegated=-1;s_state={};s_state.stage=(Stage)stage;
+ for(unsigned document=0;document<2;++document)for(unsigned allocate=0;allocate<2;++allocate)for(unsigned pending=0;pending<2;++pending){
+  events.clear();delegated=-1;s_state={};s_state.stage=(Stage)stage;s_state.documentReceived=document;
   strcpy(s_state.errBuf,"test failure");convOk=allocate;doneFlag=ready;
   transport::reply={(SendOutcome)outcome,(uint8_t)tag,(uint8_t)pending};
   assert(flow::pollCompletion()==bool(ready));
@@ -57,21 +57,21 @@ int main(){unsigned cases=0;
   Stage expected=(Stage)stage;
   if(ready){
    if(outcome==3)expected=Stage::Eyes;
-   else if(outcome==0)expected=(stage==unsigned(Stage::Reply)||allocate)?Stage::Reply:Stage::Error;
+   else if(outcome==0)expected=(stage==unsigned(Stage::Reply)||allocate||document)?Stage::Reply:Stage::Error;
    else expected=Stage::Error;
   }
   assert(s_state.stage==expected&&!doneFlag);
   if(!ready)assert(events==std::vector<std::string>{"status"});
-  if(ready&&outcome==0&&stage!=unsigned(Stage::Reply)&&!allocate)
+  if(ready&&outcome==0&&stage!=unsigned(Stage::Reply)&&!allocate&&!document)
    assert(!strcmp(s_state.errBuf,cfg::agent::kErrReplyUi));
   else assert(!strcmp(s_state.errBuf,"test failure"));
   ++cases;
  }
- assert(cases==480);
+ assert(cases==960);
 }
 '''
 with tempfile.TemporaryDirectory() as d:
  p=Path(d);(p/'test.cpp').write_text(code)
  subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(ROOT/'include'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)
-print('PASS 480 completion cases: all stages, outcomes, cancel targets, readiness, delegation forwarding and conversation allocation failure')
+print('PASS 960 completion cases: all stages, outcomes, cancel targets, readiness, delegation forwarding and conversation allocation failure')

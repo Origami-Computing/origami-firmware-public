@@ -64,6 +64,7 @@ struct Node {
     uint8_t  strokeWidth = 0;
     uint8_t  radius      = 0;
     bool     filled      = true;
+    bool smoothFill = false; ///< Rounded Rect fill blends coverage against bgColor.
     FrameStyle frameStyle = FrameStyle::Plain;
 
     uint16_t fgColor = 0x0000;

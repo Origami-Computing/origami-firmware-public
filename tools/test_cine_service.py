@@ -38,7 +38,8 @@ with tempfile.TemporaryDirectory(prefix="cine-service-") as td:
 #include "hal/hal_camera.h"
 extern bool running,reserved;
 namespace services{namespace camera{class Session{public:
- enum class PrepareResult{Ready,BackgroundBusy};enum class Resume{DeferredWithInputRecovery};
+ enum class PrepareResult{Ready,BackgroundBusy,Pending};enum class Resume{DeferredWithInputRecovery};
+ PrepareResult pollPrepareScan();
  PrepareResult prepareCapture(bool);bool setStillPreviewSize(bool);bool start(int,int,const hal::camera::Tuning*,int);void stop();bool running()const{return ::running;}bool backgroundHeld()const{return ::reserved;}
  void restoreUi(Resume);bool read(hal::camera::CameraFrame*);void returnFrame();const char* lastError(){return "test";}
  bool configureCineIsp(const hal::camera::CineIspRequest&,hal::camera::CineIspReadback*);
@@ -71,6 +72,7 @@ int allocations=0,budget=-1;int64_t clockUs=0;bool running=false,reserved=false,
 bool fullSize=false;unsigned feedback=0;void cue(){assert(held&&fullSize);++feedback;}
 unsigned queued=0,marked=0;bool failQueue=false;uint32_t captureTime=1700000001;std::string queuedPath;
 unsigned liveUs=10000,liveGain=32;
+unsigned openingPaints=0;void paintOpening(){assert(!held);++openingPaints;}
 unsigned sequence=0,reads=0,configs=0;hal::camera::CineIspRequest last;std::vector<uint8_t> jpeg={255,216,255,192,0,8,8,6,0,8,0,1,255,217};std::map<std::string,std::vector<uint8_t>> files;
 const char* firmware="v1.0.5";
 namespace core{namespace device{const char* firmwareVersion(){return firmware;}}}
@@ -85,6 +87,8 @@ bool enqueue(const Target& t){assert(!held&&files.count(t.path)&&t.capturedAtUni
 bool write(const Target& t,const uint8_t* data,size_t n){if(failWrite)return false;files[t.path].assign(data,data+n);return true;}
 bool write(const Target& t,const uint8_t* data,size_t n,const uint8_t* exif,size_t count){assert(!count||(count>10&&count<=512&&exif[0]==255&&exif[1]==225));embeddedExif.assign(exif,exif+count);return write(t,data,n);}
 }namespace camera{
+Session::PrepareResult preparation=Session::PrepareResult::Pending;
+Session::PrepareResult Session::pollPrepareScan(){reserved=true;return preparation;}
 Session::PrepareResult Session::prepareCapture(bool deep){assert(!deep);reserved=true;return PrepareResult::Ready;}
 bool Session::start(int size,int format,const hal::camera::Tuning* t,int quality){assert(size==20&&format==4&&quality==8&&t->wb_mode==1&&t->ae_level==-1&&!t->lenc&&!t->allowNightMode);::running=!failInit;return ::running;}
 bool Session::setStillPreviewSize(bool full){assert(!held);fullSize=full;return true;}
@@ -98,7 +102,10 @@ void Session::releaseIspPreview(){}
 bool Session::renderIspPreview(const hal::camera::CameraFrame&,bool(*abort)(void*),void* p){if(abort&&abort(p)){status_.previewInterrupted=true;return false;}return !failDecode;}
 }}
 int main(){using services::cine_camera::Session;using services::cine_camera::ColorMode;
- {Session c;assert(c.open());}assert(!allocations&&!running&&!reserved);
+ {Session c;assert(c.prepareOpen()==Session::Preparation::Pending&&!running&&!allocations);c.close();assert(!reserved);
+ services::camera::preparation=services::camera::Session::PrepareResult::Ready;
+ assert(c.prepareOpen()==Session::Preparation::Ready&&c.open());c.close();assert(!reserved&&!running&&!allocations);}
+ {Session c;assert(c.open(paintOpening)&&openingPaints>0);}assert(!allocations&&!running&&!reserved);
  Session c;
  failInit=true;assert(!c.open()&&!allocations&&!reserved);failInit=false;
  budget=0;assert(!c.open()&&!allocations&&!reserved);budget=-1;

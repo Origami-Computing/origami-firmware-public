@@ -345,6 +345,8 @@ bool drawConversationEyes(TFT_eSPI& t,float x,float y,uint32_t now,bool onlyChan
   lastX=bx;lastY=by;lastBlink=phase;
   return paint(t,blink,0,now);
 }
+float sharedBlink(uint32_t now){return closure(now);}
+void invalidatePaint(){previousTop=previousBottom=-1;previousExpression=false;}
 bool drawFrame(TFT_eSPI& t,int frame,int yOff){
   if(frame<0||frame>=3)return false;
   return paint(t,frame==0?1:frame==1?.5f:.05f,yOff,millis());
@@ -411,6 +413,14 @@ void sleepTransition(TFT_eSPI& t){
     paint(t,1,0,now);hal::display::flush();core::watchdog::feed();delay(10);
   }
   Serial.println("[kami-motion] sleep bowl shown before backlight off");
+}
+void drawSleepingPose(TFT_eSPI& t){
+  skipAnimationCaches();
+  beginSession(t);offsetX=offsetY=0;frozen=false;blinking=false;setEmotion("neutral",true);
+  kami_motion::hold(kami_expression::Action::Sleep,
+                    kami_expression::kSleepCloseMs+kami_expression::kSleepPoseHoldMs-1);
+  paint(t,1,0,millis());hal::display::flush();
+  kami_motion::reset();  // Boot decides whether to greet; nothing stays held.
 }
 bool handleDebugCommand(const char* line){
   if(strncmp(line,"eyes ",5))return false;

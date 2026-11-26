@@ -21,7 +21,7 @@ enum class Stage { Eyes, Recording, Thinking, Reply, Error };
 enum class SendOutcome { Ok, Cancelled, NetworkError };
 enum class CancelTarget { None, Menu };
 struct Conv {bool nonempty=true,allocate=true;void release(){nonempty=false;}void buildLog(){}bool anyNonEmpty(){return nonempty;}int segmentCount(){return nonempty;}bool ensure(){return allocate;} };
-struct AgentState {Conv conv;Stage stage=Stage::Recording;CancelTarget cancelResult=CancelTarget::None;char errBuf[128]={};bool sendJustFinished=false,recStartedByChord=true,returnHomeAfterReply=false;uint32_t returnHomeAtMs=0;unsigned pcmN=0;} s_state;
+struct AgentState {bool gestureDeciding=false;bool continuous=false;bool documentReceived=false;bool handsFree=false,handsFreeReady=false;char transcript[1536]={};Conv conv;Stage stage=Stage::Recording;CancelTarget cancelResult=CancelTarget::None;char errBuf[128]={};bool sendJustFinished=false,recStartedByChord=true,returnHomeAfterReply=false;uint32_t returnHomeAtMs=0;unsigned pcmN=0;} s_state;
 int releases=0,commits=0,stops=0;bool capturing=true,releasePending=false;
 namespace services {namespace agent_latency {void submit(){}void milestone(const char*){}} namespace agent_voice {
 bool isCapturing(){return capturing;}
@@ -37,7 +37,8 @@ Status status(){return {done};}Result result(){return completed;}void clearDone(
 }
 namespace cfg {namespace agent {const char* kErrEmptyReply="empty";const char* kErrReplyUi="ui";}}
 struct Logger {template<class... T> void printf(const char*,T...){} } Serial;
-namespace sfx {void typewriterTeardown(){}}
+namespace sfx {void typewriterTeardown(){} namespace product {enum class Sound:uint8_t{WaterDrop,AddMenu,Typing,TalkStart,Send,Cancel,Lock,LibraryOpen,LibraryClose};}}
+int cues=0;void cue(uint8_t sound){assert(sound==(uint8_t)sfx::product::Sound::Send);++cues;}
 void restoreAudio(){}void requestExitToMenu(){}void goTo(Stage s){s_state.stage=s;}
 void awaitDelegatedReplies(uint8_t count){assert(count==0);}
 void startSend(){++commits;}
@@ -67,8 +68,12 @@ int main(){
  complete(SendOutcome::Ok);pollCompletion();assert(s_state.stage==Stage::Error&&!strcmp(s_state.errBuf,"empty"));
  s_state.stage=Stage::Thinking;s_state.conv.nonempty=true;s_state.conv.allocate=false;
  complete(SendOutcome::Ok);pollCompletion();assert(s_state.stage==Stage::Error&&!strcmp(s_state.errBuf,"ui"));
+ s_state.stage=Stage::Thinking;s_state.conv.nonempty=false;s_state.documentReceived=true;
+ complete(SendOutcome::Ok);pollCompletion();assert(s_state.stage==Stage::Reply); // Document-only success needs no text buffer.
+ s_state.documentReceived=false;s_state.stage=Stage::Thinking;
+ complete(SendOutcome::Ok);pollCompletion();assert(s_state.stage==Stage::Error); // An old document cannot hide an empty turn.
  capturing=true;s_state.stage=Stage::Recording;s_state.conv.allocate=true;
- finishRecording();assert(!capturing&&commits==1&&s_state.stage==Stage::Thinking);
+ finishRecording();assert(!capturing&&commits==1&&s_state.stage==Stage::Thinking&&cues==1); // push-to-talk send cue
 }
 '''
 cpp.write_text(prefix+extract('SendOutcome finishTransport(')+'\n'+extract('bool pollCompletion()')+'\n'+function('finishRecording')+tests)

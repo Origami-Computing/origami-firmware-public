@@ -39,12 +39,10 @@ namespace {
 //   Lone B tap   → push Cine camera
 //   C tap        → no action while awake (C wakes in the sleep service)
 //   C hold       → battery sleep via the shared input/power handler
-//   A+B chord    → start a PTT recording immediately (release of *both*
-//                  buttons ends the take; see screen_recording.cpp)
-//
-// The chord-hold deadline (chordHoldDeadlineMs) is preserved in onTick for the
-// case where screen_reply::onChord returns to Eyes and arms a hold-to-record
-// gesture — see screen_reply.cpp.
+//   A+B hold     → push-to-talk after kTapHoldMs (release of *both* buttons
+//                  sends; see screen_recording.cpp)
+//   A+B tap      → agent mode: lock cue, then the mic stays open and Kami ends
+//                  each turn itself (flow::serviceTurnGesture)
 
 static ui::home_motion::Model character;
 static core::haptic::DizzyFeedback dizzy;
@@ -70,16 +68,8 @@ void onTick(AgentState& s, uint32_t nowMs) {
     // A delegation result that arrived while the eyes were showing.
     if (flow::showInboxReply()) return;
 
-    // The chord-hold deadline lives in onTick because it must keep checking
-    // each frame whether both buttons are still down.
-    if (s.chordHoldDeadlineMs != 0 && (int32_t)(nowMs - s.chordHoldDeadlineMs) >= 0) {
-        s.chordHoldDeadlineMs = 0;
-        if (hal::input::buttonADown() && hal::input::buttonBDown()) {
-            s.recStartedByChord = true;
-            flow::startRecording();
-            return;
-        }
-    }
+    // A+B tap/hold decision: checked every frame while the buttons settle.
+    if (flow::serviceTurnGesture(nowMs)) return;
 
     if ((nowMs - s.lastAnim) >= 16u) {
         s.animFrame++;
@@ -131,8 +121,7 @@ void onTick(AgentState& s, uint32_t nowMs) {
 
 void onInput(AgentState& s, hal::input::InputEvent ev) {
     using ET = hal::input::EventType;
-    // C is reserved for wake/hold-to-sleep on Home. In particular, releasing
-    // a short or cancelled hold must never enable the old volume shortcut.
+    // C is reserved for wake/hold-to-sleep on Home; a short tap does nothing.
     if (ev.type == ET::ButtonC_Tap) {services::vibration::suppressInputFeedback();return;}
 
     if (ev.type == ET::Scroll && ev.delta != 0) {
@@ -151,12 +140,10 @@ void onInput(AgentState& s, hal::input::InputEvent ev) {
 }
 
 bool onChord(AgentState& s) {
-    // A+B chord on Eyes starts a PTT recording immediately. The take ends only
-    // when BOTH buttons are released (screen_recording::onInput enforces this
-    // via recStartedByChord).
-    s.recStartedByChord = true;
-    flow::startRecording();
-    return true;
+    // A+B: hold to ask one thing (push-to-talk, ends when BOTH are released),
+    // tap for agent mode. The talk-start cue plays now; onTick decides.
+    (void)s;
+    return flow::beginTurnGesture();
 }
 
 void tickScreen(uint32_t nowMs) {

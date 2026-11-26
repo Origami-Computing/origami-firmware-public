@@ -16,6 +16,9 @@ code=r'''
 #include "scene/screen.h"
 #include <cassert>
 #include <vector>
+#include <cstdlib>
+namespace services {namespace agent_speech {void stop(){}}}
+namespace core {namespace memory {void freePsram(void*& p){free(p);p=nullptr;}}}
 #include <cstring>
 using namespace apps::agent;
 AgentState s_state;

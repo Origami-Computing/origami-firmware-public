@@ -436,10 +436,16 @@ bool doBatterySleep() {
     hal::wifi::restore();
     hal::ble::restoreAfterSleep();
 
-    Wire.end();
-    Wire.begin(SDA_PIN, SCL_PIN);
-    delay(50);
-    if (hal::io::reinitAfterI2CRestart()) delay(50);
+    // The sleep loop has been reading the expander on this bus since the CPU
+    // woke, so a full bus restart (and its 100 ms of settling) is only needed
+    // when that read now fails.
+    uint8_t p0 = 0, p1 = 0, p2 = 0;
+    if (!hal::io::readExpanderInputs(&p0, &p1, &p2)) {
+        Wire.end();
+        Wire.begin(SDA_PIN, SCL_PIN);
+        delay(50);
+        if (hal::io::reinitAfterI2CRestart()) delay(50);
+    }
     hal::imu::pollWakeUp();
 
     hal::input::resetRotaryEncoderPins();

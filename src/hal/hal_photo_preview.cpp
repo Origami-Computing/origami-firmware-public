@@ -19,10 +19,14 @@ struct Reader {
   hal::sd::StreamReader stream;
   ~Reader() { hal::sd::closeStream(&stream); }
 };
+// Maps decoded source blocks onto a dw x dh scaled image, keeping only the
+// ow x oh window at (ox, oy): the whole image when fitting, the centre crop
+// when covering.
 struct Sink {
   uint16_t *pixels;
   unsigned sw, sh, dw, dh, written;
   bool valid;
+  unsigned ox, oy, ow, oh;
 };
 int paint(JPEGDRAW *block) {
   if (!block || !block->pUser)
@@ -41,12 +45,12 @@ int paint(JPEGDRAW *block) {
                  x1 = ((unsigned(x) + unsigned(w)) * s.dw + s.sw - 1) / s.sw;
   const unsigned y0 = (unsigned(y) * s.dh + s.sh - 1) / s.sh,
                  y1 = ((unsigned(y) + unsigned(h)) * s.dh + s.sh - 1) / s.sh;
-  for (unsigned dy = y0; dy < y1 && dy < s.dh; ++dy)
-    for (unsigned dx = x0; dx < x1 && dx < s.dw; ++dx) {
-      s.pixels[dy * s.dw + dx] =
+  for (unsigned dy = y0 > s.oy ? y0 : s.oy; dy < y1 && dy < s.dh && dy < s.oy + s.oh; ++dy)
+    for (unsigned dx = x0 > s.ox ? x0 : s.ox; dx < x1 && dx < s.dw && dx < s.ox + s.ow; ++dx) {
+      s.pixels[(dy - s.oy) * s.ow + (dx - s.ox)] =
           block->pPixels[(dy * s.sh / s.dh - unsigned(y)) * unsigned(stride) +
                          (dx * s.sw / s.dw - unsigned(x))];
-      if (++s.written > s.dw * s.dh) {
+      if (++s.written > s.ow * s.oh) {
         s.valid = false;
         return 0;
       }
@@ -66,6 +70,7 @@ void PhotoPreview::close() {
   jpeg_ = nullptr;
   pixels_ = nullptr;
   jpegCapacity_ = pixelCapacity_ = 0;
+  jpegLoaded_ = false;
 }
 bool PhotoPreview::draw(const char *path, int x, int y, int maxW, int maxH, Mode mode) {
   timing_ = Timing{};
@@ -73,9 +78,10 @@ bool PhotoPreview::draw(const char *path, int x, int y, int maxW, int maxH, Mode
       x > 280 - maxW || y > 240 - maxH)
     return false;
   const uint32_t started = micros();
+  jpegLoaded_ = false;
   auto legacy = [&]() {
     const uint32_t at = micros();
-    const bool ok = drawJpegFileScaled(path, x, y, maxW, maxH);
+    const bool ok = drawJpegFileScaled(path, x, y, maxW, maxH, cover_ ? ImageFit::Cover : ImageFit::Contain);
     timing_.decodeUs += uint32_t(micros() - at);
     timing_.totalUs = micros() - started;
     return ok;
@@ -114,6 +120,7 @@ bool PhotoPreview::draw(const char *path, int x, int y, int maxW, int maxH, Mode
         }
         timing_.readUs = micros() - at;
         loaded = used == timing_.bytes;
+        jpegLoaded_ = loaded;
       }
     }
   }
@@ -121,10 +128,10 @@ bool PhotoPreview::draw(const char *path, int x, int y, int maxW, int maxH, Mode
   if (loaded) {
     if (mode == Mode::Buffered) {
       const uint32_t at = micros();
-      ok = drawJpegBufferScaled(jpeg_, timing_.bytes, x, y, maxW, maxH);
+      ok = drawJpegBufferScaled(jpeg_, timing_.bytes, x, y, maxW, maxH, cover_ ? ImageFit::Cover : ImageFit::Contain);
       timing_.decodeUs = micros() - at;
     } else
-      ok = reduced(x, y, maxW, maxH);
+      ok = reduced(jpeg_, x, y, maxW, maxH);
   }
   if (!ok) {
     timing_.fallback = true;
@@ -134,7 +141,19 @@ bool PhotoPreview::draw(const char *path, int x, int y, int maxW, int maxH, Mode
   timing_.totalUs = micros() - started;
   return true;
 }
-bool PhotoPreview::reduced(int x, int y, int maxW, int maxH) {
+bool PhotoPreview::drawBuffer(const uint8_t *data, size_t bytes, int x, int y, int maxW, int maxH) {
+  timing_ = Timing{};
+  jpegLoaded_ = false;  // jpeg() describes file draws only; this buffer is borrowed
+  if (!data || bytes < 4 || bytes > kMaxJpeg || maxW <= 0 || maxH <= 0 || maxW > 280 || maxH > 240 ||
+      x < 0 || y < 0 || x > 280 - maxW || y > 240 - maxH)
+    return false;
+  const uint32_t started = micros();
+  timing_.bytes = bytes;
+  const bool ok = reduced(data, x, y, maxW, maxH);
+  timing_.totalUs = micros() - started;
+  return ok;
+}
+bool PhotoPreview::reduced(const uint8_t *data, int x, int y, int maxW, int maxH) {
   uint32_t at = micros();
   if (!decoder_) {
     void *memory = allocate(sizeof(JPEGDEC));
@@ -145,7 +164,7 @@ bool PhotoPreview::reduced(int x, int y, int maxW, int maxH) {
   if (!decoder_)
     return false;
   at = micros();
-  bool ok = decoder_->openRAM(jpeg_, int(timing_.bytes), paint) != 0;
+  bool ok = decoder_->openRAM(const_cast<uint8_t *>(data), int(timing_.bytes), paint) != 0;
   const int width = ok ? decoder_->getWidth() : 0, height = ok ? decoder_->getHeight() : 0;
   if (width <= 0 || height <= 0 || width > 16384 || height > 16384) {
     decoder_->close();
@@ -154,7 +173,16 @@ bool PhotoPreview::reduced(int x, int y, int maxW, int maxH) {
   timing_.width = width;
   timing_.height = height;
   unsigned dw = width, dh = height;
-  if (dw > unsigned(maxW) || dh > unsigned(maxH)) {
+  if (cover_) {
+    // Scale so both axes reach the box (up or down), then crop the overflow.
+    if (uint64_t(width) * maxH >= uint64_t(height) * maxW) {
+      dh = maxH;
+      dw = unsigned((uint64_t(width) * maxH + height - 1) / height);
+    } else {
+      dw = maxW;
+      dh = unsigned((uint64_t(height) * maxW + width - 1) / width);
+    }
+  } else if (dw > unsigned(maxW) || dh > unsigned(maxH)) {
     if (uint64_t(dw) * maxH > uint64_t(dh) * maxW) {
       dh = uint64_t(dh) * maxW / dw;
       dw = maxW;
@@ -175,7 +203,9 @@ bool PhotoPreview::reduced(int x, int y, int maxW, int maxH) {
       options = trial == 8 ? JPEG_SCALE_EIGHTH : trial == 4 ? JPEG_SCALE_QUARTER : JPEG_SCALE_HALF;
     }
   timing_.scale = scale;
-  const size_t bytes = size_t(dw) * dh * 2;
+  const unsigned ow = cover_ ? unsigned(maxW) : dw, oh = cover_ ? unsigned(maxH) : dh;
+  const unsigned ox = (dw - ow) / 2, oy = (dh - oh) / 2;
+  const size_t bytes = size_t(ow) * oh * 2;
   const uint32_t allocateAt = micros();
   if (pixelCapacity_ < bytes) {
     heap_caps_free(pixels_);
@@ -194,10 +224,14 @@ bool PhotoPreview::reduced(int x, int y, int maxW, int maxH) {
             dw,
             dh,
             0,
-            true};
+            true,
+            ox,
+            oy,
+            ow,
+            oh};
   decoder_->setUserPointer(&sink);
   decoder_->setPixelType(RGB565_LITTLE_ENDIAN);
-  ok = decoder_->decode(0, 0, options) != 0 && sink.valid && sink.written == dw * dh;
+  ok = decoder_->decode(0, 0, options) != 0 && sink.valid && sink.written == ow * oh;
   decoder_->close();
   timing_.decodeUs = uint32_t(micros() - at) - pixelAllocUs;
   if (!ok)
@@ -206,7 +240,7 @@ bool PhotoPreview::reduced(int x, int y, int maxW, int maxH) {
   auto &output = tft();
   const bool swap = output.getSwapBytes();
   output.setSwapBytes(true);
-  output.pushImage(x + (maxW - int(dw)) / 2, y + (maxH - int(dh)) / 2, dw, dh, pixels_);
+  output.pushImage(x + (maxW - int(ow)) / 2, y + (maxH - int(oh)) / 2, ow, oh, pixels_);
   output.setSwapBytes(swap);
   timing_.composeUs = micros() - at;
   return true;

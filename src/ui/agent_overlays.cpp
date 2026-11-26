@@ -89,7 +89,7 @@ void paintKamiNotice(TFT_eSPI& tft,apps::agent::notice::Kind kind,int topY){
     ui::kami_dialogue::drawAvatar(tft,26,topY+2,true,"neutral");
     ui::pixel_dialogue::draw(tft,{22,78,236,136},kUiFg,kUiBg);
     ui::text::wrappedSized(tft,message(kind),36,90,208,5,kUiFg,kUiBg,2);
-    const char* hint=needsWifi(kind)?"A Back   B Wi-Fi":kind==Kind::Auth?"A Back   B Settings":"A Back   A+B Talk";
+    const char* hint=needsWifi(kind)?"A Back   B Wi-Fi":kind==Kind::Auth?"A Back   B Settings":"A Back   A+B Retry";
     centered(tft,hint,224,kUiFg,kUiBg,1);
     hal::display::markDirty(topY,tft.height()-topY);
 }

@@ -7,6 +7,21 @@ hardware testing. [Release downloads](https://github.com/Origami-Computing/origa
 The published history starts at v1.0.1. Versions v1.0.6 and v1.0.7 were qualification
 builds, not published updates; their changes are included under v1.0.8.
 
+## v1.0.17
+
+Unreleased.
+
+Changes since v1.0.16.
+
+- Show photos and videos full screen, cropped to fill the display, with the capture date from each photo's EXIF data and controls (play, upload, delete) only when needed; uploads show progress over the photo.
+- Open videos on a title card that the first frame takes over, and keep the Photos card stack moving while the library loads.
+- Redesign voice turns around Kami's eyes: your words on one line, short answers large and longer ones scrolling; A+B tap starts agent mode and hold is push-to-talk, with new interface sounds.
+- Refine menus with consistent four-row lists, typography and 220 ms transitions.
+- Show an animated Camera opening screen, return an idle Camera home after 60 seconds (to setup when opened from onboarding), and fix Camera handoff during background uploads.
+- Light the screen first when waking from sleep instead of after boot finishes.
+- Explain video upload failures and stop retrying files over the upload size limit.
+- Keep installed apps in internal flash on Kamis flashed with this partition table; Kamis updated over the air from an older table keep using the SD card.
+
 ## v1.0.16
 
 Unreleased.

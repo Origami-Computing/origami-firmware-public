@@ -1,6 +1,7 @@
 #pragma once
 #include "core/preview_decoder.h"
 #include "ui/native_frame.h"
+#include "ui/photos_view.h"
 class TFT_eSprite;
 namespace ui {
 // UI-task renderer for Camera and recorded-video views. Owns decoder and two PSRAM
@@ -46,13 +47,13 @@ public:
     // Legacy low-memory QVGA path using shared JPEGDecoder on the UI task.
     // Caller retains view chrome; this clips blocks above the bottom 28px band.
     bool presentFallback(const uint8_t* jpeg, size_t length);
-    // Recorded video: fit the entire image with black letterboxing, then show
-    // playback controls instead of camera/shutter overlays. Decodes directly to
-    // the presentation surface; failure invalidates it. presentVideo restores
-    // text bars and the entire progress track without copying the image.
+    // Recorded video: cover the panel (scale to full height, crop the sides)
+    // into the frame surface; failure invalidates it. presentVideo shows the
+    // frame directly when the title card is hidden (cardAlpha 0, no copy), or
+    // composes the card over a copy while it is visible or fading.
     // UI-task only; call decodeVideo before the first presentVideo.
     Result decodeVideo(const uint8_t* jpeg, size_t length);
-    Presentation presentVideo(const char* title, const char* controls, unsigned progress);
+    Presentation presentVideo(const photos_view::VideoCard& card, int cardAlpha);
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
     bool copyCompositeForDevelopment(TFT_eSprite& target) const;
 #endif
@@ -60,6 +61,7 @@ private:
     core::images::PreviewDecoder decoder_;
     uint16_t* frame_=nullptr;
     uint16_t* composite_=nullptr;
+    const uint16_t* presented_=nullptr;  // last video surface sent to the panel
     bool frameReady_=false;
 };
 }

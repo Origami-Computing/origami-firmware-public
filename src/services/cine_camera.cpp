@@ -14,7 +14,16 @@
 #include <stdio.h>
 namespace services {
 namespace cine_camera {
-bool Session::open() {
+Session::Preparation Session::prepareOpen() {
+  const auto result = camera_.pollPrepareScan();
+  if (result == camera::Session::PrepareResult::Pending)
+    return Preparation::Pending;
+  if (result == camera::Session::PrepareResult::Ready)
+    return Preparation::Ready;
+  snprintf(status_.message, sizeof(status_.message), "Camera resources busy");
+  return Preparation::Failed;
+}
+bool Session::open(void (*onProgress)()) {
   if (!close(false))
     return false;
   autoFrameVts_ = 0;
@@ -58,6 +67,7 @@ bool Session::open() {
     snprintf(status_.message, sizeof(status_.message), "Preview size unavailable");
     return false;
   }
+  if (onProgress) onProgress();
   const uint64_t aeAt = esp_timer_get_time();
   // Observe AE over distinct frames rather than always sleeping 1.1 seconds.
   // Require three stable transitions and >=450ms; retain the old maximum.
@@ -68,6 +78,7 @@ bool Session::open() {
     if (!camera_.read(&frame))
       break;
     camera_.returnFrame();
+    if (onProgress) onProgress();
     hal::camera::ShutterInfo value{};
     if (hal::camera::readJpegShutter(&value) && value.valid) {
       const uint64_t before = uint64_t(previous.actualUs) * previous.gainQ4,
@@ -89,6 +100,7 @@ bool Session::open() {
   bool first = false;
   do {
     first = preview();
+    if (onProgress) onProgress();
   } while (!first && shutterReadyUs_ &&
            uint64_t(esp_timer_get_time()) <
                shutterReadyUs_ + uint64_t(shutter_.frameUs) * 3 + 250000);

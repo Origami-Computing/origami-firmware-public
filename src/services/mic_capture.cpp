@@ -49,6 +49,8 @@ bool MicCapture::startStream(SampleSink sink, void* user) {
     if (!sink || !startMicSession(true)) return false;
     n_         = 0;
     peak_      = 0;
+    decimationSum_ = 0;
+    decimationCount_ = 0;
     sink_      = sink;
     sinkUser_  = user;
     streaming_ = true;
@@ -67,12 +69,16 @@ void MicCapture::tick() {
         if (hal::audio::readMic(raw, sizeof(raw), &br, pdMS_TO_TICKS(0)) != ESP_OK || br == 0) break;
         const int cnt = (int)(br / sizeof(int32_t));
         waveform_.ingestRaw(raw, (size_t)cnt);
-        int16_t out[512 / kDS];
+        int16_t out[(512 + kDS - 1) / kDS];
         uint32_t outN = 0;
-        for (int i = 0; i + (int)kDS <= cnt; i += (int)kDS) {
-            int64_t acc = 0;
-            for (uint32_t k = 0; k < kDS; k++) acc += (int64_t)((int32_t)(raw[i + (int)k] >> 16));
-            int32_t v = (int32_t)(acc / (int64_t)kDS);
+        for (int i = 0; i < cnt; ++i) {
+            // I2S reads need not end on a 3-sample boundary. Retain the
+            // unfinished group instead of dropping two samples every 512.
+            decimationSum_ += (int32_t)(raw[i] >> 16);
+            if (++decimationCount_ < kDS) continue;
+            int32_t v = (int32_t)(decimationSum_ / (int64_t)kDS);
+            decimationSum_ = 0;
+            decimationCount_ = 0;
             v = (int32_t)(((int64_t)v * kGainN) / kGainD);
             if (v >  32767) v =  32767;
             if (v < -32768) v = -32768;

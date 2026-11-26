@@ -445,7 +445,7 @@ void applyPickerListLayout() {
 
 void pickerEnter() {
     rescanWidgets();
-    Serial.printf("[lua-app] picker: %d SD widget(s) + built-in\n", s_sdCount);
+    Serial.printf("[lua-app] picker: %d installed app(s) + built-in\n", s_sdCount);
     s_needRedraw = true;
     hal::display::markAllDirty();
 }

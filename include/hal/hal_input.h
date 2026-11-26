@@ -64,6 +64,13 @@ void injectEvent(EventType type, int16_t delta = 0, uint8_t key = 0);
 bool buttonADown();
 /** True while button B is physically held (regardless of chord state). */
 bool buttonBDown();
+/** Measured A+B hold for the most recent chord: from the first poll that saw
+ *  both buttons down to the last poll that still did. Loop stalls can only
+ *  shorten it (no samples during a stall), so a quick tap never reads as a
+ *  hold. Frozen once either button is released. UI task. */
+uint32_t chordHeldMs();
+/** True while the poll currently sees both A and B down. */
+bool chordDown();
 /** True while encoder button C is physically held. */
 bool buttonCDown();
 /** Discard the wake gesture and any held A/B until all buttons are released. */

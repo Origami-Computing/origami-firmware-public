@@ -112,8 +112,12 @@ void process(bool (*pause)()){
         if(outcome==Result::Ok)outcome=inspect(fetched.bytes,fetched.size,view);
         if(outcome==Result::Ok)outcome=validateLua(fetched.bytes,fetched.size);
         if(outcome==Result::Ok){
-            selected.medium=download.target==DownloadTarget::ByKind ? (view.native && hal::app_storage::hasFlashStore()?Medium::Flash:Medium::Sd) :
-                download.target==DownloadTarget::Flash?Medium::Flash:Medium::Sd;
+            // Downloaded apps live in internal flash: an SD card may be missing
+            // or failed. SD only when a caller asks for it, or on a Kami whose
+            // partition table predates the customapps partition (OTA cannot add
+            // it; a USB flash does), so those can still install apps.
+            selected.medium=download.target==DownloadTarget::Sd ? Medium::Sd :
+                download.target==DownloadTarget::Flash || hal::app_storage::hasFlashStore() ? Medium::Flash : Medium::Sd;
             strcpy(selected.id,view.id);
             // Public packages never overwrite local or account apps. A package
             // from Kami's store, or one carrying a valid publisher signature, is

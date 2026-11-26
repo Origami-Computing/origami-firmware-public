@@ -7,6 +7,7 @@
 #include "apps/tutorial_app.h"
 #include "services/cine_camera.h"
 #include "core/cine_controls.h"
+#include "core/haptic_catalog.h"
 #include "services/vibration.h"
 #include "hal/hal_display.h"
 #include "hal/hal_input.h"
@@ -31,10 +32,13 @@ services::camera::VideoRecording recorder;
 services::camera::Settings cameraSettings;
 bool microphone = true, clipActive = false, stopping = false;
 bool transitionPulse = false, tutorialRequested = false, tutorialCapture = false;
+uint32_t errorShownAt = 0;  // setup's first photo hands back after showing an open error
 bool transitionFlushPending = false;
 uint32_t transitionAt = 0, transitionPaintAt = 0, transitionPaintMaxUs = 0;
 services::photos::Target tutorialPhoto;
 uint32_t clipStartedAt = 0;
+constexpr uint32_t kIdleReturnMs = 60000u;
+uint32_t lastCameraActivityAt = 0;
 core::cine::WheelControl wheel;
 ui::ListView settingsList;
 bool menuEditing = false;
@@ -91,6 +95,7 @@ bool finishClip() {
   Serial.printf("[camera-clip] saved=%u frames=%lu path=%s\n", saved,
                 (unsigned long)recorder.frames(), recorder.path());
   clipActive = stopping = false;
+  lastCameraActivityAt = millis();
   return saved;
 }
 bool close(bool keepReservation = false) {
@@ -103,6 +108,15 @@ bool close(bool keepReservation = false) {
 }
 void begin();
 void draw(TFT_eSprite &);
+uint32_t openingPaintAt = 0;
+void paintOpening() {
+  const uint32_t now = millis();
+  if (uint32_t(now - openingPaintAt) < 50u) return;
+  openingPaintAt = now;
+  invalidate();
+  draw(hal::display::canvas());
+  hal::display::flush();
+}
 void advanceShutter() {
   const uint32_t paintStarted = micros();
   if (transitionFlushPending) {
@@ -143,8 +157,15 @@ void presentCue(const sfx::PcmClip& cue, const char* label) {
   Serial.printf("[camera-sfx] %s visual_us=%lu played=%u fade_ms=%lu paint_us=%lu\n", label,
                 (unsigned long)shown, played, (unsigned long)(transitionPaintAt - transitionAt), (unsigned long)transitionPaintMaxUs);
 }
-void photoFeedback() { presentCue(sfx::kCameraShutter, "photo"); }
+void photoFeedback() {
+  // The sensor frame is already secured: vibration cannot disturb this exposure.
+  // Use the scroll tick as the initial photo feel, independent of audio volume.
+  if (services::vibration::hapticsEnabled())
+    services::vibration::playEffect(core::haptic::catalog::scroll);
+  presentCue(sfx::kCameraShutter, "photo");
+}
 void activate() {
+  lastCameraActivityAt = millis();
   tutorialCapture = tutorialRequested;
   tutorialRequested = false;
   tutorialPhoto = {};
@@ -166,6 +187,7 @@ void cover() {
   close();
 }
 void resume() {
+  lastCameraActivityAt = millis();
   if (restoreAfterClip) {
     current = View::Opening;
     invalidate();
@@ -177,14 +199,20 @@ void begin() {
   wheel.reset();
   current = View::Opening;
   invalidate();
-  ui::showAppOpeningSplash("Camera");
+  openingPaintAt = millis() - 50u;
+  paintOpening();
 }
 void snap() {
   if (current != View::Preview)
     return;
+  // Capture owns its feedback. Do not append the navigator's generic Select
+  // cue after this synchronous operation, including when capture fails.
+  services::vibration::suppressInputFeedback();
   // Secure the exposure before presenting the synchronized shutter feedback.
   const bool saved = session.capture(photoFeedback, !tutorialCapture);
+  lastCameraActivityAt = millis();
   Serial.printf("[camera-photo] saved=%u queued=%u path=%s\n", saved, session.status().queued, session.status().photoPath);
+  if (!saved) Serial.printf("[camera-error] capture: %s\n", session.status().message);
   if (saved && tutorialCapture) {
     const auto& result = session.status();
     tutorialPhoto.sequence = result.sequence;
@@ -257,6 +285,19 @@ void tick(uint32_t) {
     }
     return;
   }
+  // Setup's first photo returns to setup, which reports to the phone; popping
+  // to the root would leave onboarding mid-way.
+  if (tutorialCapture && current == View::Error && uint32_t(now - errorShownAt) >= 3000u) {
+    Serial.println("[camera-error] returning to setup");
+    NavHandler::instance().pop();
+    return;
+  }
+  if (uint32_t(now - lastCameraActivityAt) >= kIdleReturnMs) {
+    Serial.printf("[camera-idle] returning %s after 60s without input\n", tutorialCapture ? "to setup" : "home");
+    if (tutorialCapture) NavHandler::instance().pop();
+    else NavHandler::instance().popToRoot();
+    return;
+  }
   if (shutterHeld && !tutorialCapture && current == View::Preview) {
     if (hal::input::buttonADown() || hal::input::buttonCDown()) {
       shutterHeld = false;
@@ -274,12 +315,20 @@ void tick(uint32_t) {
     invalidate();
   }
   if (current == View::Opening) {
-    current = session.open() ? View::Preview : View::Error;
+    paintOpening();
+    const auto preparation = session.prepareOpen();
+    if (preparation == cine::Session::Preparation::Pending)
+      return;
+    current = preparation == cine::Session::Preparation::Ready && session.open(paintOpening)
+                  ? View::Preview : View::Error;
     if (restoreAfterClip && current == View::Preview && !session.restoreSettings(clipSettings))
       current = View::Error;
     restoreAfterClip = false;
-    if (current == View::Error)
+    if (current == View::Error) {
+      Serial.printf("[camera-error] open: %s\n", session.status().message);
       session.close();
+      errorShownAt = now;
+    }
     lastPreview = millis();
     invalidate();
   } else if (current == View::Preview && uint32_t(now - lastPreview) >= 1u) {
@@ -364,6 +413,18 @@ void build(ui::scene::Scene &view, int16_t w, int16_t h) {
     return;
   }
   view.addRect("cine.bg", {0, 38, w, (int16_t)(h - 38)}, bg);
+  if (current == View::Opening) {
+    view.addLabel("cine.opening", {8, 96, (int16_t)(w - 16), 44},
+                  "Opening camera", fg, bg, 3, ui::scene::TextAlign::MiddleCenter);
+    for (int i = 0; i < 3; ++i) {
+      const unsigned phase = (millis() / 50u + 24u - unsigned(i) * 5u) % 24u;
+      const int rise = phase < 6 ? phase : phase < 12 ? 12 - phase : 0;
+      char id[24];
+      snprintf(id, sizeof(id), "cine.opening.dot%d", i);
+      view.addRect(id, {(int16_t)(w / 2 - 24 + i * 20), (int16_t)(157 - rise), 8, 8}, fg, 4);
+    }
+    return;
+  }
   if (current == View::Menu) {
     settingsList.totalItems = 5;
     settingsList.buildScene(view, 0, 38, w, h - 38, settingsItem, nullptr, kUiSelBg, kUiSelFg, bg,
@@ -373,7 +434,7 @@ void build(ui::scene::Scene &view, int16_t w, int16_t h) {
   view.addLabel("cine.title", {0, 55, w, 26}, "Camera", fg, bg, 2,
                 ui::scene::TextAlign::MiddleCenter);
   view.addLabel("cine.status", {8, 96, (int16_t)(w - 16), 50},
-                current == View::Opening ? "Preparing camera..." : session.status().message, fg, bg,
+                session.status().message, fg, bg,
                 1, ui::scene::TextAlign::MiddleCenter);
   view.addLabel("cine.controls", {0, 212, w, 18}, "A: back", muted, bg, 1,
                 ui::scene::TextAlign::MiddleCenter);
@@ -498,6 +559,7 @@ void input(hal::input::InputEvent e) {
 }
 void shutterInput(hal::input::InputEvent e) {
   using ET = hal::input::EventType;
+  lastCameraActivityAt = millis();
   if (e.type == ET::ButtonB_Press) {
     shutterHeld = current == View::Preview;
     cancelTap = false;

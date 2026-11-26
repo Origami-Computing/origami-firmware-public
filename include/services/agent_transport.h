@@ -39,6 +39,16 @@ bool selectServerMode(core::secrets::ServerMode mode);
 // Preserve the URL setter's result; refresh only on success. This overrides the
 // current URL and persists the dev URL only in dev mode; saving is not atomic.
 bool setBackendUrl(const char* url);
+void setDocumentId(const char* id); // UI task, copied for next turn.
+void requestDocumentWindow(int offset);
+void closeDocument();
+void setContinuous(bool enabled);
+// UI task. While held, the worker keeps the socket ready but does not send this
+// turn's start frame; captured PCM accumulates in the ring and streams in full
+// once released. Lets the A+B gesture choose push-to-talk or continuous mode
+// without closing the microphone. Every path that ends a turn releases it.
+void holdStart(bool held);
+void setReplyAudio(bool enabled); // UI task, applies to the next turn.
 void begin(); // Attach the current PCM storage for this turn.
 // UI task, after capture stops. Waits for any ring copy under the existing audio
 // lock, then prevents further PCM access until begin(). Does not wait on sockets.

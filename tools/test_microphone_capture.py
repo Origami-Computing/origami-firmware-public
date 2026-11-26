@@ -76,8 +76,8 @@ int main(){
  blocks={{raw(3),raw(6),raw(9),raw(-3),raw(-6),raw(-9),
           raw(32767),raw(32767),raw(32767),raw(-32768),raw(-32768),raw(-32768),raw(99)},
          {raw(12),raw(12),raw(12)}};
- mic.tick();assert((received==std::vector<int16_t>{7,-7,32767,-32768,15}));
- assert(mic.samplesN()==5&&callbacks==2); // Incomplete raw group is discarded per read.
+ mic.tick();assert((received==std::vector<int16_t>{7,-7,32767,-32768,51}));
+ assert(mic.samplesN()==5&&callbacks==2); // Partial group continues into the next read.
  for(int i=0;i<17;++i)blocks.push_back({raw(8),raw(8),raw(8)});
  int before=dataReads;mic.tick();assert(dataReads-before==16&&blocks.size()==1);
  assert(mic.samplesN()==21&&callbacks==18); // False sink result does not end capture.
@@ -86,6 +86,17 @@ int main(){
  readFails=false;mic.stop();assert(stops==1&&mic.samplesN()==22);
  before=dataReads;mic.tick();assert(dataReads==before); // No reads after stop.
  assert(mic.startStream(sink,&callbacks)&&mic.samplesN()==0&&resets==1);
+ received.clear();
+ for(int block=0;block<3;++block){
+  std::vector<int32_t> values;
+  for(int i=0;i<512;++i)values.push_back(raw((block*512+i)%100));
+  blocks.push_back(values);
+ }
+ mic.tick();assert(mic.samplesN()==512&&received.size()==512);
+ for(int i=0;i<512;++i){
+  const int mean=((i*3)%100+(i*3+1)%100+(i*3+2)%100)/3;
+  assert(received[i]==mean*5/4);
+ }
  mic.stop();assert(stops==2);
  codecAddress=-1;codecValid=false;MicCapture absent;
  assert(absent.startStream(sink,&callbacks)); // Existing I2S-only fallback.

@@ -1,3 +1,6 @@
+#include "core/memory.h"
+#include "services/agent_speech.h"
+#include "services/agent_transport.h"
 #include "apps/agent/agent_motion.h"
 #include "services/agent_voice.h"
 #include "apps/agent/agent_emotion.h"
@@ -30,6 +33,8 @@
 #include "services.h"
 #include "scene/screen.h"
 #include "sfx/sfx_typewriter.h"
+#include "sfx/product_sounds.h"
+#include "services/vibration.h"
 #include "ui/agent_overlays.h"
 #include "app.h"
 #include "nav_handler.h"
@@ -51,7 +56,9 @@ namespace transport = services::agent_transport;
 // ─── Transition table ────────────────────────────────────────────────────────
 
 void goTo(Stage next) {
+    if(next==Stage::Eyes || next==Stage::Error) s_state.handsFree=s_state.handsFreeReady=false;
     if (s_state.stage == next) return;
+    if(next==Stage::Eyes || next==Stage::Error)services::agent_speech::stop();
     if(next==Stage::Error)services::agent_latency::fail();
     if(next==Stage::Eyes)services::agent_latency::cancel();
     if(next==Stage::Reply)services::agent_latency::replyReady();
@@ -107,6 +114,14 @@ void serviceNotice(uint32_t now){
 }
 
 void startRecording() {
+    if(s_state.suppressHeldChord) return;
+    s_state.handsFreeReady=false;
+    s_state.documentReceived=false;
+    services::agent_speech::stop();
+    services::agent_transport::setDocumentId(s_state.documentVisible?s_state.documentId:"");
+    s_state.continuous = s_state.handsFree;
+    services::agent_transport::setContinuous(s_state.continuous);
+    services::agent_transport::setReplyAudio(services::agent_speech::enabled());
     services::agent_latency::begin();
     services::agent_delivery::dismiss();
     services::agent_inbox::setAccepting(true);
@@ -119,6 +134,7 @@ void startRecording() {
         s_state.previousScrollLines=s_state.scrollLines;
     }
     if(!wifiReady()){
+        s_state.handsFree=s_state.handsFreeReady=false;
         s_state.recStartedByChord=false;s_state.chordHoldDeadlineMs=0;
         const bool pending=hal::wifi::connecting()||hal::wifi::suspended();
         snprintf(s_state.errBuf,sizeof(s_state.errBuf),"%s",pending?"Reconnecting Wi-Fi":cfg::agent::kErrWifi);
@@ -132,6 +148,12 @@ void startRecording() {
     const uint32_t entryMs = millis();
     s_state.voiceEntryMs = entryMs;
     s_state.pcmN = 0;
+    s_state.endpointRequested=false;
+    s_state.chordHoldDeadlineMs=0; s_state.agentStartAtMs=0;
+    s_state.agentActivityMs=millis();
+    s_state.transcript[0]=0; s_state.transcriptRevision=0;
+    s_state.conversationView=AgentState::ConversationView::Listening;
+    s_state.transcriptPainted=0; s_state.transcriptFinal=false;
     goTo(Stage::Recording);
     NavHandler::instance().draw(hal::display::canvas());
     hal::display::flush();
@@ -172,7 +194,26 @@ void startRecording() {
 
 }
 
+void startHandsFree() {
+    if(s_state.stage!=Stage::Eyes && s_state.stage!=Stage::Reply && s_state.stage!=Stage::Error) return;
+    s_state.handsFree=true;
+    s_state.recStartedByChord=false;
+    s_state.suppressHeldChord=false;
+    services::agent_speech::setEnabled(false);
+    startRecording();
+}
+
+bool continueHandsFree() {
+    if(!s_state.handsFree || !s_state.handsFreeReady || s_state.stage!=Stage::Reply ||
+       services::agent_speech::busy() || s_state.suppressHeldChord) return false;
+    s_state.handsFreeReady=false;
+    s_state.recStartedByChord=false;
+    startRecording();
+    return true;
+}
+
 void finishRecording() {
+    s_state.gestureDeciding = false;
     services::agent_latency::submit();
     // A server error may arrive before the user releases the buttons. Consume
     // it before checking/committing audio so its message cannot be overwritten.
@@ -180,6 +221,7 @@ void finishRecording() {
     s_state.recStartedByChord = false;
     services::agent_voice::finish();
     services::agent_latency::milestone("mic_stopped");
+    if (!s_state.continuous) cue((uint8_t)sfx::product::Sound::Send);
     s_state.pcmN = services::agent_voice::samples();
     sfx::typewriterTeardown();
     startSend();
@@ -198,7 +240,7 @@ SendOutcome finishTransport(SendOutcome outcome, const char* error, uint32_t sen
         s.conv.release();
     } else if (outcome == SendOutcome::Ok) {
         LOGD("agent", "WS reply: segments=%d\n", s.conv.segmentCount());
-        if (!s.conv.anyNonEmpty()) {
+        if (!s.conv.anyNonEmpty() && !s.documentReceived) {
             snprintf(s.errBuf, sizeof(s.errBuf), "%s", cfg::agent::kErrEmptyReply);
             finalOutcome = SendOutcome::NetworkError;
             s.conv.release();
@@ -229,10 +271,11 @@ int16_t* transportPcm() { return services::agent_voice::pcm(); }
 uint32_t transportCapacity() { return services::agent_voice::capacity(); }
 bool transportMessage(const char* text, bool append) {
     const bool ok=append ? s_state.conv.appendToken(text) : s_state.conv.pushMessage(text);
+    if(ok) {++s_state.replyRevision; s_state.agentActivityMs=millis();}
     if(ok) emotion::bind(s_state.conv.segmentCount()-1);
     return ok;
 }
-bool transportHasReply() { return s_state.conv.anyNonEmpty(); }
+bool transportHasReply() { return s_state.conv.anyNonEmpty() || s_state.documentReceived; }
 void transportStatus(const char* text) {
     snprintf(s_state.thinkStatus, sizeof(s_state.thinkStatus), "%s", text);
     s_state.thinkDotPhase = 255;
@@ -240,12 +283,103 @@ void transportStatus(const char* text) {
 void transportDiscard(int segment) {
     AgentState& s = s_state;
     if (!s.conv.removeSegment(segment)) return;
+    ++s.replyRevision;
     if (s.msgIndex >= s.conv.segmentCount()) s.msgIndex = s.conv.segmentCount() > 0 ? s.conv.segmentCount() - 1 : 0;
 }
 void transportEvent(const char* json) {
     JsonDocument doc;
     if (!deserializeJson(doc,json)) {
         if (!strcmp(doc["type"] | "", "delivery")) services::agent_delivery::bind(doc["receiptId"] | "",doc["segment"] | -1);
+        else if (!strcmp(doc["type"] | "", "transcript")) {
+            const uint32_t revision=doc["revision"] | 0u;
+            if(revision>s_state.transcriptRevision) {
+                if(!s_state.transcriptRevision) services::agent_latency::milestone("transcript");
+                snprintf(s_state.transcript,sizeof(s_state.transcript),"%s",doc["text"] | "");
+                s_state.lastTranscriptMs=millis(); s_state.agentActivityMs=s_state.lastTranscriptMs;
+                s_state.transcriptRevision=revision;
+                s_state.transcriptFinal=doc["final"] | false;
+            }
+        }
+        else if(!strcmp(doc["type"] | "", "conversation_state")) {
+            const char* view=doc["view"] | "";
+            using View=AgentState::ConversationView;
+            const View before=s_state.conversationView;
+            if(!strcmp(view,"user"))s_state.conversationView=View::User;
+            else if(!strcmp(view,"thinking"))s_state.conversationView=View::Thinking;
+            else if(!strcmp(view,"reply"))s_state.conversationView=View::Reply;
+            else if(!strcmp(view,"listening"))s_state.conversationView=View::Listening;
+            else return;
+            s_state.agentActivityMs=millis();
+            // Agent mode keeps the mic open, so turn changes are felt, not heard:
+            // Kami took the turn, or Kami finished and is listening again.
+            if(s_state.continuous && before!=s_state.conversationView &&
+               ((s_state.conversationView==View::Thinking && (before==View::User || before==View::Listening)) ||
+                (s_state.conversationView==View::Listening && before==View::Reply)))
+                services::vibration::pulse(services::vibration::Owner::Navigation,12);
+            s_state.transcriptPainted=UINT32_MAX;
+        }
+        else if(!strcmp(doc["type"] | "", "endpoint")) {
+            if(s_state.stage==Stage::Recording) s_state.endpointRequested=true;
+        }
+        else if(!strncmp(doc["type"] | "", "speech_", 7)) services::agent_speech::receive(json);
+        else if(!strcmp(doc["type"] | "", "input_begin")) {
+            // Keep the opening lines readable as chunks arrive. Wheel scrolling
+            // to the current end explicitly enables following subsequent text.
+            s_state.conv.clear(); s_state.previousScrollLines=0; s_state.listeningReplyFollowTail=false; ++s_state.replyRevision; s_state.agentWorking=true;
+        }
+        else if(!strcmp(doc["type"] | "", "input_done")) { s_state.agentWorking=false; ++s_state.replyRevision; s_state.agentActivityMs=millis(); }
+        else if(!strcmp(doc["type"] | "", "input_state")) {
+            if(!strcmp(doc["state"] | "", "failed")) {
+                snprintf(s_state.thinkStatus,sizeof(s_state.thinkStatus),"%s",doc["message"] | "Could not apply input");
+                s_state.conv.pushMessage(s_state.thinkStatus); ++s_state.replyRevision;
+            }
+        }
+        else if(!strcmp(doc["type"] | "", "document_preview")) {
+            if(!s_state.documentPreview) {
+                s_state.documentBeforePreviewVisible=s_state.documentVisible;
+                if(s_state.documentText) {
+                    s_state.documentSavedText=static_cast<char*>(core::memory::allocPsram("agent.document.saved",4096));
+                    if(!s_state.documentSavedText)return;
+                    snprintf(s_state.documentSavedText,4096,"%s",s_state.documentText);
+                }
+                snprintf(s_state.documentSavedTitle,sizeof(s_state.documentSavedTitle),"%s",s_state.documentTitle);
+                s_state.documentPreview=true;
+            }
+            if(!s_state.documentText)s_state.documentText=static_cast<char*>(core::memory::allocPsram("agent.document",4096));
+            if(s_state.documentText) {
+                snprintf(s_state.documentText,4096,"%s",doc["text"] | "");
+                snprintf(s_state.documentTitle,sizeof(s_state.documentTitle),"%s",doc["title"] | "Note");
+                s_state.documentVisible=true;++s_state.replyRevision;
+            }
+        }
+        else if(!strcmp(doc["type"] | "", "document_preview_discard")) {
+            if(s_state.documentPreview) {
+                if(s_state.documentText)snprintf(s_state.documentText,4096,"%s",s_state.documentSavedText?s_state.documentSavedText:"");
+                snprintf(s_state.documentTitle,sizeof(s_state.documentTitle),"%s",s_state.documentSavedTitle);
+                s_state.documentVisible=s_state.documentBeforePreviewVisible;s_state.documentPreview=false;
+                {void* saved=s_state.documentSavedText;core::memory::freePsram(saved);s_state.documentSavedText=nullptr;}++s_state.replyRevision;
+            }
+        }
+        else if(!strcmp(doc["type"] | "", "document_closed")) {
+            s_state.documentVisible=false;s_state.documentReceived=false;s_state.documentId[0]=0;
+            services::agent_transport::setDocumentId("");++s_state.replyRevision;
+        }
+        else if(!strcmp(doc["type"] | "", "document") || !strcmp(doc["type"] | "", "document_page")) {
+            const bool page=!strcmp(doc["type"] | "", "document_page");
+            if(page && (!s_state.documentVisible || strcmp(doc["id"] | "",s_state.documentId)))return;
+            if(!s_state.documentText) s_state.documentText=static_cast<char*>(core::memory::allocPsram("agent.document",4096));
+            if(s_state.documentText) {
+                s_state.documentPreview=false;{void* saved=s_state.documentSavedText;core::memory::freePsram(saved);s_state.documentSavedText=nullptr;}
+                snprintf(s_state.documentText,4096,"%s",doc["text"] | "");
+                snprintf(s_state.documentId,sizeof(s_state.documentId),"%s",doc["id"] | "");
+                snprintf(s_state.documentTitle,sizeof(s_state.documentTitle),"%s",doc["title"] | "Note");
+                s_state.documentVisible=true;s_state.documentScroll=0;s_state.documentReceived=true;
+                s_state.documentOffset=doc["offset"] | 0;s_state.documentNextOffset=doc["nextOffset"] | -1;s_state.documentPagePending=false;
+                services::agent_transport::setDocumentId(s_state.documentId);
+                s_state.documentTruncated=doc["truncated"] | false;
+                ++s_state.replyRevision;
+            }
+        }
         else emotion::receive(doc.as<JsonVariantConst>(),true);
     }
 }
@@ -278,13 +412,13 @@ void startSend() {
         transport::abandon();
         restoreAudio(); services::agent_voice::release(); goTo(Stage::Error); return;
     }
-    if (!s.conv.ensure()) {
+    if (!s.documentReceived && !s.conv.ensure()) {
         snprintf(s.errBuf, sizeof(s.errBuf), "%s", cfg::agent::kErrConvBuf);
         transport::abandon();
         restoreAudio(); services::agent_voice::release(); goTo(Stage::Error); return;
     }
 
-    s.conv.clear();
+    if(!s.continuous) s.conv.clear();
     transport::commit();
 }
 
@@ -299,7 +433,7 @@ bool isCommitSent() { return transport::status().commitSent; }
 static void showReplyIfReady() {
     AgentState& s = s_state;
     if (!transport::status().replyReady || s.stage != Stage::Thinking) return;
-    if (!s.conv.ensure() || !s.conv.anyNonEmpty()) return;
+    if (!s.documentReceived && (!s.conv.ensure() || !s.conv.anyNonEmpty())) return;
 
     transport::clearReplyReady();
     restoreAudio();
@@ -332,6 +466,7 @@ void pollThinking(uint32_t visibleSinceMs) {
 
 
 void cancelSend(CancelTarget nav) {
+    cue((uint8_t)sfx::product::Sound::Cancel);
     if (s_state.stage == Stage::Recording) {
         transport::abandon();
         return;
@@ -358,6 +493,8 @@ bool pollCompletion() {
             return true;
 
         case SendOutcome::Ok:
+            s.handsFreeReady=s.handsFree && s.transcript[0];
+            if(!s.transcript[0]) s.handsFree=false;
             awaitDelegatedReplies(r.pendingTasks);
             s.returnHomeAfterReply = false;
             s.returnHomeAtMs = 0;
@@ -365,7 +502,7 @@ bool pollCompletion() {
                 transport::clearDone();
                 return true;
             }
-            if (!s.conv.ensure()) {
+            if (!s.documentReceived && !s.conv.ensure()) {
                 snprintf(s.errBuf, sizeof(s.errBuf), "%s", cfg::agent::kErrReplyUi);
                 restoreAudio();
                 goTo(Stage::Error);
@@ -389,6 +526,9 @@ bool pollCompletion() {
 // ─── Return to home ──────────────────────────────────────────────────────────
 
 void returnToHome() {
+    s_state.handsFree=s_state.handsFreeReady=false;
+    s_state.gestureDeciding=false; transport::holdStart(false);
+    s_state.viewInit=false; s_state.eyesUp=false; s_state.chordHoldDeadlineMs=0; s_state.agentStartAtMs=0;
     services::agent_latency::cancel();
     // Eyes is another view of Kami: keep the delegated job and its network lease.
     const bool keepDelegation = waitingForDelegation();
@@ -488,6 +628,84 @@ void pollReturnHomeAfterReply(uint32_t nowMs, bool revealed) {
 void keepReply() {
     s_state.returnHomeAfterReply = false;
     s_state.returnHomeAtMs = 0;
+}
+
+// ─── A+B turn gesture and cues ───────────────────────────────────────────────
+
+void cue(uint8_t productSound) {
+    if (sfx::product::play((sfx::product::Sound)productSound)) return;
+    s_state.pendingCue = productSound + 1;
+    s_state.pendingCueUntilMs = millis() + cfg::agent::kCueWaitMs;
+}
+
+void serviceCue(uint32_t now) {
+    if (!s_state.pendingCue) return;
+    if ((int32_t)(now - s_state.pendingCueUntilMs) > 0) { s_state.pendingCue = 0; return; }
+    if (sfx::product::play((sfx::product::Sound)(s_state.pendingCue - 1))) s_state.pendingCue = 0;
+}
+
+bool beginTurnGesture() {
+    AgentState& s = s_state;
+    if (s.stage != Stage::Eyes && s.stage != Stage::Reply && s.stage != Stage::Error) return false;
+    if (s.suppressHeldChord) return true;
+    // The microphone opens at once so the first word is never lost, but the
+    // session start waits for the tap/hold decision (PCM buffers meanwhile).
+    // A cue cannot play while the mic is open, so the press is felt.
+    services::vibration::pulse(services::vibration::Owner::Navigation, 12);
+    s.recStartedByChord = true;
+    s.gestureDeciding = true;
+    transport::holdStart(true);
+    startRecording();
+    if (s.stage != Stage::Recording) { s.gestureDeciding = false; transport::holdStart(false); }
+    return true;
+}
+
+bool takeTapAsAgentMode(uint32_t now) {
+    AgentState& s = s_state;
+    if (s.stage != Stage::Recording || !s.gestureDeciding) return false;
+    // Tap vs hold is how long A+B were physically held, not when we got here.
+    if (hal::input::chordHeldMs() >= cfg::agent::kTapHoldMs) {
+        s.gestureDeciding = false; transport::holdStart(false); return false;
+    }
+    // Released quickly: a tap. Keep the same microphone and session, switch it
+    // to continuous agent mode before its start frame goes out.
+    s.gestureDeciding = false;
+    s.recStartedByChord = false;
+    s.handsFree = s.continuous = true;
+    services::agent_speech::setEnabled(false);
+    transport::setReplyAudio(false);
+    transport::setContinuous(true);
+    transport::holdStart(false);
+    s.agentActivityMs = now;
+    s.transcriptPainted = UINT32_MAX;
+    // Locked: a double buzz (the speaker is unavailable while listening).
+    services::vibration::pulse(services::vibration::Owner::Navigation, 30);
+    return true;
+}
+
+bool serviceTurnGesture(uint32_t now) {
+    AgentState& s = s_state;
+    if (s.stage != Stage::Recording || !s.gestureDeciding) return false;
+    // Only a hold we have actually seen lasts long enough; a release still in
+    // the queue is decided by takeTapAsAgentMode from the measured hold.
+    if (!hal::input::chordDown() || hal::input::chordHeldMs() < cfg::agent::kTapHoldMs) return false;
+    (void)now;
+    // Still held past the window: ordinary push-to-talk.
+    s.gestureDeciding = false;
+    transport::holdStart(false);
+    return false;
+}
+
+void leaveAgentMode() {
+    cue((uint8_t)sfx::product::Sound::Cancel);       // plays once returnToHome closes the mic
+    returnToHome();
+}
+
+void serviceAgentSilence(uint32_t now) {
+    AgentState& s = s_state;
+    if (!s.continuous || s.stage != Stage::Recording || s.agentWorking) return;
+    if (s.conversationView == AgentState::ConversationView::Thinking) return;
+    if ((int32_t)(now - s.agentActivityMs) >= (int32_t)cfg::agent::kAgentSilenceMs) leaveAgentMode();
 }
 
 uint8_t micLevel() { return services::agent_voice::waveform().level(); }

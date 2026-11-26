@@ -63,7 +63,11 @@ unsigned newest(const Record (&r)[2]){return r[1].valid && (!r[0].valid||r[1].ge
 Result publish(const Identity& id,const uint8_t* bytes,size_t size,bool tombstone,Cancel cancel){
     if(!validIdentity(id)||id.legacy)return Result::Invalid;
     if(!tombstone){View v;auto s=inspect(bytes,size,v);if(s!=Result::Ok)return s;if(strcmp(id.id,v.id))return Result::Invalid;}
-    auto s=fromDisk(disk::mount(id.medium));if(s!=Result::Ok)return s;
+    auto s=fromDisk(disk::mount(id.medium));
+    // First install on a new flash store: format it only if it is entirely
+    // blank (never over existing data).
+    if(s!=Result::Ok && id.medium==Medium::Flash)s=fromDisk(disk::initializeBlankFlash(cancel));
+    if(s!=Result::Ok)return s;
     Record r[2];s=records(id,r);if(s!=Result::Ok)return s;
     const unsigned current=newest(r);uint32_t generation=0;
     for(auto& item:r)if(item.valid && item.generation>generation)generation=item.generation;

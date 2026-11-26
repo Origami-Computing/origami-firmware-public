@@ -1,4 +1,6 @@
-"""Differential event traces for real old/new Thinking ticks and response policy."""
+"""Differential event traces for real old/new Thinking ticks and response policy.
+
+The new tick paints every frame (painter-side dedup); paint events are compared separately."""
 from pathlib import Path
 import subprocess,tempfile
 ROOT=Path(__file__).resolve().parents[1]
@@ -21,15 +23,15 @@ with tempfile.TemporaryDirectory() as directory:
 #include <vector>
 #include <string>
 #include "apps/agent/agent_config.h"
-struct AgentState {uint8_t thinkDotPhase=255;char thinkStatus[64]={};};
+struct AgentState {uint32_t transcriptRevision=0,transcriptPainted=0;uint8_t thinkDotPhase=255;char thinkStatus[64]={};};
 uint32_t sThinkingEnteredMs=0,clockMs=0;
 unsigned flags=0,commitReads=0;
-std::vector<unsigned long> events;
+std::vector<unsigned long> events;unsigned paintCalls=0;
 uint32_t millis(){events.push_back(1);return clockMs;}
 struct SerialFake {void printf(const char*,int committed,unsigned long elapsed){events.push_back(2);events.push_back(committed);events.push_back(elapsed);}} Serial;
 namespace services {namespace agent_latency {void fail(){}}}
 namespace motion {bool tick(AgentState&,uint32_t){return false;}}
-namespace render {void paintThinkingShell(AgentState&s,uint8_t phase){events.push_back(100+phase);s.thinkDotPhase=phase;}}
+namespace render {void paintThinkingShell(AgentState&s,uint8_t phase){++paintCalls;s.thinkDotPhase=phase;}}
 namespace flow {
 bool isCommitSent(){events.push_back(3);return (flags>>(commitReads++%3))&1;}
 bool isReplyReady(){events.push_back(4);return flags&8;}
@@ -54,11 +56,15 @@ int main(){
   flags=f;sThinkingEnteredMs=entered;clockMs=now;
   AgentState a,b;
   if(painted){a.thinkDotPhase=b.thinkDotPhase=1;strcpy(a.thinkStatus,"Thinking");strcpy(b.thinkStatus,"Thinking");}
-  events.clear();commitReads=0;before::onTick(a,tick);const auto expected=events;
-  events.clear();commitReads=0;after::onTick(b,tick);
+  // Paints are filtered: the new tick hands every frame to the painter, which
+  // skips unchanged frames itself (the eyes glance and look around while Kami
+  // thinks). Poll, watchdog and reply/done ordering must stay identical.
+  paintCalls=0;events.clear();commitReads=0;before::onTick(a,tick);const auto expected=events;
+  paintCalls=0;events.clear();commitReads=0;after::onTick(b,tick);
+  assert(paintCalls==1);
   assert(events==expected);assert(a.thinkDotPhase==b.thinkDotPhase);assert(strcmp(a.thinkStatus,b.thinkStatus)==0);++cases;
  }
- printf("PASS %u old/new event traces: paint order, changing commit snapshots, reply/done precedence, watchdog boundaries and clock rollover\\n",cases);
+ printf("PASS %u old/new event traces: one painter call per tick, changing commit snapshots, reply/done precedence, watchdog boundaries and clock rollover\\n",cases);
 }
 ''')
  subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(ROOT/'include'),str(p),'-o',str(p.with_suffix(''))],check=True)

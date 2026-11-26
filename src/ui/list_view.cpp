@@ -184,7 +184,8 @@ void ListView::buildScene(scene::Scene& scene, int areaX, int areaY, int areaW, 
 
         char id[32];
         snprintf(id, sizeof(id), "list.row.%d.bg", idx);
-        scene.addRect(id, {(int16_t)x, (int16_t)y, (int16_t)fittedW, (int16_t)row.h}, bg, 5, 1);
+        auto* background = scene.addRect(id, {(int16_t)x, (int16_t)y, (int16_t)fittedW, (int16_t)row.h}, bg, 5, 1);
+        if (background) { background->smoothFill = sel; background->bgColor = rowBg; }
 
 
         if (presentation.icon) {

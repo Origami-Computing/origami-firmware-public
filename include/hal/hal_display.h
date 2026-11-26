@@ -157,7 +157,8 @@ bool drawJpegFileScaled(const char* path,
                         int32_t maxW, int32_t maxH, ImageFit fit=ImageFit::Contain);
 
 // Same fitting/composition as files; borrows JPEG bytes synchronously on UI task.
-bool drawJpegBufferScaled(const uint8_t* data,size_t bytes,int32_t dstX,int32_t dstY,int32_t maxW,int32_t maxH);
+bool drawJpegBufferScaled(const uint8_t* data,size_t bytes,int32_t dstX,int32_t dstY,int32_t maxW,int32_t maxH,
+                          ImageFit fit=ImageFit::Contain);
 
 // ---------------------------------------------------------------------------
 // Direct-draw SPI mutex bracket

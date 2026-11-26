@@ -1,4 +1,5 @@
 #include "services/agent_voice.h"
+#include "services/agent_speech.h"
 #include "services/agent_transport.h"
 // agent_app.cpp — Kami app coordinator.
 //
@@ -73,6 +74,12 @@ bool developmentUi(const char* command) {
         Serial.printf("[agent-ui] stage=%d segment=%d scroll=%d lines=%d lineHeight=%d typing=%d open=%d emotion=%s revision=%lu\n",
           (int)s.stage,s.msgIndex,s.scrollLines,s.agentMaxLines,s.agentLineH,
           render::typewriterInProgress(s)?1:0,s.miniEyesOpen?1:0,s.miniEmotionName,(unsigned long)s.miniEmotionRevision);
+        Serial.printf("[agent-view] state=%u working=%u\n",(unsigned)s.conversationView,s.agentWorking?1:0);
+        // Development serial only: what Kami heard and answered, for local tuning.
+        Serial.printf("[agent-text] heard=\"%.200s\" final=%u reply=\"%.240s\" reveal=%u\n",
+          s.transcript,s.transcriptFinal?1:0,s.conv.displayText()?s.conv.displayText():"",(unsigned)s.twRevealLen);
+        Serial.printf("[agent-ui] text received=%lu painted=%lu chars=%u\n",
+          (unsigned long)s.replyRevision,(unsigned long)s.replyPainted,(unsigned)(s.conv.displayText() ? strlen(s.conv.displayText()) : 0));
         const auto replies=services::agent_transport::replyQueueStats();
         Serial.printf("[agent-ui] reply queued=%lu peak=%lu events=%lu done=%u\n",
           (unsigned long)replies.bytes,(unsigned long)replies.peakBytes,
@@ -172,6 +179,10 @@ bool developmentUi(const char* command) {
 void prepareHome() {
 
     AgentState& s = S();
+    s.viewInit=false; s.eyesUp=false; s.agentStartAtMs=0;
+    void* document=s.documentText;core::memory::freePsram(document);s.documentText=nullptr;
+    void* savedDocument=s.documentSavedText;core::memory::freePsram(savedDocument);s.documentSavedText=nullptr;s.documentPreview=false;
+    s.documentVisible=false;s.documentId[0]=0;
     s.cancelResult       = CancelTarget::None;
     s.chordHoldDeadlineMs = 0;
     s.prevStageForIdle   = Stage::Eyes;
@@ -214,6 +225,9 @@ static void resumeWorkflow() {
 }
 
 void exitApp() {
+    S().handsFree=S().handsFreeReady=false;
+    S().viewInit=false; S().eyesUp=false; S().agentStartAtMs=0; S().pendingCue=0;
+    services::agent_speech::stop();
     stopEyesFeedback();
     flow::cancelDelegation();
     motion::cancel();
@@ -223,6 +237,9 @@ void exitApp() {
     services::agent_voice::releaseResources();
 
     AgentState& s = S();
+    void* document=s.documentText;core::memory::freePsram(document);s.documentText=nullptr;
+    void* savedDocument=s.documentSavedText;core::memory::freePsram(savedDocument);s.documentSavedText=nullptr;s.documentPreview=false;
+    s.documentVisible=false;s.documentId[0]=0;
     s.cancelResult       = CancelTarget::None;
     s.recStartedByChord  = false;
     s.chordHoldDeadlineMs = 0;
@@ -264,14 +281,9 @@ void prepareScreenInput(hal::input::InputEvent ev) {
     AgentState& s = S();
     using ET = hal::input::EventType;
 
-    // Chord-hold cancellation: if a button is released while the hold window
-    // is armed and the other button is also up, cancel the upgrade-to-record.
-    if (s.chordHoldDeadlineMs != 0 &&
-        (ev.type == ET::ButtonA_Release || ev.type == ET::ButtonB_Release)) {
-        if (!hal::input::buttonADown() || !hal::input::buttonBDown()) {
-            s.chordHoldDeadlineMs = 0;
-        }
-    }
+    // An early A/B release during the A+B decision window is a tap, not a
+    // cancellation: flow::serviceTurnGesture reads the buttons on the next tick.
+    (void)s; (void)ev;
 }
 
 // ─── Public predicates ───────────────────────────────────────────────────────
@@ -301,6 +313,8 @@ void serviceMicCaptureEarly() {
 
 static void preTick(uint32_t now) {
     serviceMicCaptureEarly();
+    flow::serviceCue(now);   // plays a waiting cue once the mic has closed; never navigates
+    if(!hal::input::buttonADown() && !hal::input::buttonBDown()) S().suppressHeldChord=false;
     flow::pollDelegation(now);
     if(NavHandler::instance().top()!=&app) {
         flow::cancelDelegation();
@@ -374,6 +388,13 @@ static const ::scene::Screen* const kScreens[] = {
 static AppPresentation presentationPolicy() {
     AppPresentation p{};
     if (motion::ownsStatusBackground()) p.statusBar=AppPresentation::StatusBar::GlyphOverlay;
+    // Time, Wi-Fi and battery show only on Home; the conversation uses the
+    // whole panel. Errors keep the bar (the notice painter sits below it).
+    const Stage stage=S().stage;
+    if (stage==Stage::Recording || stage==Stage::Thinking || stage==Stage::Reply) {
+        p.contentUsesStatusArea=true;
+        p.statusBar=AppPresentation::StatusBar::Hidden;
+    }
     // A covered recording retains its stage until resume; cancellation is async.
     // Its full listening scene must not overwrite the newly mounted app.
     p.drawOverlay=[](TFT_eSprite&) {
@@ -383,7 +404,7 @@ static AppPresentation presentationPolicy() {
 }
 static core::health::RuntimePolicy runtimePolicy() {
     const bool recording=isRecording();
-    const bool midOperation=recording || isSending() || flow::waitingForDelegation();
+    const bool midOperation=services::agent_speech::busy() || recording || isSending() || flow::waitingForDelegation();
     const bool reading=isOnReplyScreen() || isShowingError();
     core::health::RuntimePolicy policy{!recording, !midOperation, !(midOperation || reading), false};
     policy.allowBackgroundUploads = !midOperation;
@@ -391,6 +412,7 @@ static core::health::RuntimePolicy runtimePolicy() {
     return policy;
 }
 static void prepareForSleep() {
+    S().handsFree=S().handsFreeReady=false;
     stopEyesFeedback();
     // Preserve the existing sleep contract: an in-flight turn is cancelled;
     // idle/reply/error state keeps its resources until the normal wake refresh.
@@ -403,6 +425,8 @@ App app = [] {
     App descriptor = SCENE_APP_CATALOG_POLICIES("Kami", "kami", &kScreenEyes, exitApp,
                             "src/apps/agent_app.cpp", kScreens, presentationPolicy, runtimePolicy);
     descriptor.onCover = [] {
+        S().handsFree=S().handsFreeReady=false;
+        services::agent_speech::stop();
         stopEyesFeedback();
         flow::cancelDelegation();
         if(flow::isSessionActive()) services::agent_transport::cancel(static_cast<uint8_t>(CancelTarget::Eyes));

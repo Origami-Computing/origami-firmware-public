@@ -103,6 +103,7 @@
 #include "services/wifi_qr_session.h"
 #include "sfx/sfx_lib.h"
 #include "ui/automation_alert.h"
+#include "ui/home_eyes.h"
 #include "services/morning_quote.h"
 
 // ---------------------------------------------------------------------------
@@ -517,6 +518,18 @@ void setup() {
         while (1) delay(1000);
     }
     Serial.printf("[boot-phase] bringup done at %lu ms\n", (unsigned long)millis());
+    // A deep-sleep wake reboots the board. Light the panel on the sleeping eyes
+    // as soon as it is up instead of after the rest of boot; the boot screen then
+    // greets from that pose as before.
+    const bool deepSleepWake = esp_reset_reason() == ESP_RST_DEEPSLEEP;
+    bool backlightLit = false;
+    if (deepSleepWake) {
+        ui::home_eyes::drawSleepingPose(hal::display::tft());
+        hal::display::rampBacklight(120);
+        backlightLit = true;
+        Serial.printf("[boot-time] deep-sleep wake frame visible at %lu ms\n",
+                      (unsigned long)millis());
+    }
     Serial.println("\n======== Origami Menu (serial trace) ========");
     services::screen_brightness::initialize();
     // Build the shared CA bundle index before any network task can connect.
@@ -528,7 +541,9 @@ void setup() {
     Serial.printf("[boot-phase] tls done at %lu ms\n", (unsigned long)millis());
     core::time::init();
 
-    runProvisioningGate(kNormalProvisionProbeMs);
+    // A host provisioning session never starts from a deep-sleep wake; the A+B
+    // manual window still opens if those buttons are held.
+    runProvisioningGate(deepSleepWake ? 0u : kNormalProvisionProbeMs);
 
     services::ota_client::init();
 
@@ -585,11 +600,11 @@ void setup() {
     // Keep the LEDs dark until the UI task has produced and flushed a valid
     // boot frame. This turns the former white interval into useful animation.
     const uint32_t firstFrameDeadline = millis() + 500u;
-    while (hal::display::lastFlushUs() == 0u &&
+    while (!backlightLit && hal::display::lastFlushUs() == 0u &&
            (int32_t)(millis() - firstFrameDeadline) < 0) {
         delay(1);
     }
-    hal::display::rampBacklight(120);
+    if (!backlightLit) hal::display::rampBacklight(120);
     Serial.printf("[boot-time] first frame visible at %lu ms flush_us=%lu\n",
                   (unsigned long)millis(),
                   (unsigned long)hal::display::lastFlushUs());
