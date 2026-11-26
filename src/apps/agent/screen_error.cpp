@@ -25,7 +25,10 @@ void onEnter(AgentState& s) {
     if(!services::vibration::previewing())services::vibration::previewCustom(tap,100);
 }
 void onExit(AgentState& s) { s.errBuf[0]='\0'; }
-void onTick(AgentState&,uint32_t nowMs) { flow::serviceNotice(nowMs); }
+void onTick(AgentState&,uint32_t nowMs) {
+    if(flow::serviceTurnGesture(nowMs))return;
+    flow::serviceNotice(nowMs);
+}
 void onInput(AgentState& s,hal::input::InputEvent ev) {
     using ET=hal::input::EventType;
     if(!s.noticeInput.armed)return;
@@ -36,7 +39,7 @@ void onInput(AgentState& s,hal::input::InputEvent ev) {
 }
 bool onChord(AgentState& s) {
     if(!s.noticeInput.armed)return true;
-    s.recStartedByChord=true;flow::startRecording();return true;
+    return flow::beginTurnGesture();
 }
 
 void enterScreen() {

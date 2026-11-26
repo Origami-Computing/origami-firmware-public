@@ -11,6 +11,7 @@ def function(signature):
     return source[start:end]
 code=r'''
 #include "core/mjpeg_avi.h"
+#include "ui/photos_loader.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -48,6 +49,8 @@ static services::video::Library s_library;
 static ui::CameraPreview s_preview;
 static bool s_frame=false,s_playing=false,s_ended=false,s_dirty=true,s_failed=false;
 static bool s_audioTail=false;
+static bool s_singleClip=false;
+static uint32_t s_cardSinceMs=0,s_loaderFrameMs=0;
 static uint32_t s_number=0,s_startedMs=0,s_elapsedMs=0,s_skipped=0,s_decodeMaxMs=0,s_presentMaxMs=0;
 static uint32_t s_imageNumber=0,s_presentedMs=0,s_decoded=0,s_held=0;
 static uint32_t s_tickExit=0,s_tickOutside=0,s_tickWork=0,s_tickCalls=0,s_tickGapMax=0;
@@ -56,15 +59,18 @@ unsigned openPolls=0;static void open(){++openPolls;}
 std::vector<uint32_t> displayed;
 static void present(){displayed.push_back(s_number);clockMs+=50;s_presentedMs=clockMs;}
 '''
-code+='\n'.join(function(sig) for sig in ['static uint32_t playbackTimeMs(', 'static bool setPlaying(', 'static void failPlayback(', 'static bool finishIfDone(', 'static void tick(', 'bool copyPreviewForDevelopment('])
+code+='\n'.join(function(sig) for sig in ['static bool showsLoader(', 'static uint32_t playbackTimeMs(', 'static bool setPlaying(', 'static void failPlayback(', 'static bool finishIfDone(', 'static void tick(', 'bool copyPreviewForDevelopment('])
 code+=r'''
 void reset(uint32_t now){
  clockMs=now;openPolls=0;s_library={};s_preview={};s_frame=s_playing=s_ended=s_failed=false;
  s_number=s_startedMs=s_elapsedMs=s_skipped=s_imageNumber=s_presentedMs=s_decoded=s_held=0;s_audioTail=false;displayed.clear();
  s_tickExit=s_tickOutside=s_tickWork=s_tickCalls=s_tickGapMax=0;
+ s_singleClip=false;s_cardSinceMs=s_loaderFrameMs=0;
 }
 void step(){uint32_t before=s_library.takes;tick(clockMs);assert(s_library.takes-before<=3);assert(!s_library.borrowed);clockMs+=5;}
 void check(){
+ reset(0);s_singleClip=true;s_library.loading=true;s_dirty=false;
+ clockMs=ui::photos_loader::kFrameMs;tick(clockMs);assert(s_dirty&&showsLoader()&&!s_frame);
  reset(0);s_library.waiting=true;step();assert(openPolls==1 && !s_library.takes);
  reset(0);s_library.loading=true;step();assert(!s_frame&&!s_failed&&s_library.takes==0);
  s_library.loading=false;step();assert(s_frame&&!s_failed);

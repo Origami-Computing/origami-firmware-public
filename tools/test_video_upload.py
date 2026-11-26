@@ -86,6 +86,15 @@ int main(){
  reset();reply(BackendOperation::Status);reply(BackendOperation::Admit);reply(BackendOperation::Complete,State::Pending,0,BackendOutcome::HttpError,503);transferred={Transfer::Retry,410};assert(run().step==Step::Retry&&!persisted.location[0]);
  reset();reply(BackendOperation::Status,State::Pending,0,BackendOutcome::HttpError,401);assert(run().step==Step::Deferred&&tokenClears==1);
  reset();reply(BackendOperation::Status,State::Pending,0,BackendOutcome::HttpError,404);assert(run().step==Step::Rejected&&!transfers);
+ // Size refusal is permanent at either admission or the direct storage hop.
+ reset(false);reply(BackendOperation::Admit,State::Pending,0,BackendOutcome::HttpError,413);
+ {auto r=run();assert(r.step==Step::Rejected&&r.httpStatus==413&&!transfers&&!strcmp(r.reason,"Video too large"));}
+ reset();reply(BackendOperation::Status);reply(BackendOperation::Admit);transferred={Transfer::Retry,413};
+ {auto r=run();assert(r.step==Step::Rejected&&r.httpStatus==413&&transfers==1&&!strcmp(r.reason,"Video too large"));}
+ for(unsigned code:{0u,401u,403u,429u,503u}){
+  reset();reply(BackendOperation::Status);reply(BackendOperation::Admit);transferred={Transfer::Retry,code};
+  auto r=run();assert(r.step==Step::Retry&&r.httpStatus==code&&strcmp(r.reason,"Video storage retry"));
+ }
  reset();reply(BackendOperation::Status);changeDuringRequest=true;assert(run().step==Step::Cancelled&&!transfers&&!saves);
  reset();strcpy(config.backend.apiKey,"other-account");assert(run().step==Step::Rejected);
  reset();config.token[0]=0;assert(run().step==Step::Deferred);

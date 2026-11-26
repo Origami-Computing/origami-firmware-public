@@ -11,6 +11,9 @@ def function(signature):
 code=r'''
 #include <cassert>
 #include <vector>
+#include <cstdlib>
+namespace services {namespace agent_speech {void stop(){}}}
+namespace core {namespace memory {void freePsram(void*& p){free(p);p=nullptr;}}}
 #include <initializer_list>
 std::vector<int> events;
 int feedbackStops=0,delegationCancels=0;
@@ -28,7 +31,7 @@ enum class Stage {Eyes,Recording,Thinking,Reply,Error};
 enum class CancelTarget {None,Eyes};
 struct Conv {void release(){events.push_back(8);}};
 struct PreviousReply {void release(){events.push_back(10);}};
-struct AgentState {Stage stage;CancelTarget cancelResult;bool recStartedByChord;int chordHoldDeadlineMs,pcmN;Conv conv;PreviousReply previousReply;bool hasPreviousReply;} state;
+struct AgentState {bool viewInit=false,eyesUp=false;uint32_t agentStartAtMs=0;uint8_t pendingCue=0;char* documentSavedText=nullptr;bool documentPreview=false;bool handsFree=false,handsFreeReady=false;char* documentText=nullptr;char documentId[37]={};bool documentVisible=false;Stage stage;CancelTarget cancelResult;bool recStartedByChord;int chordHoldDeadlineMs,pcmN;Conv conv;PreviousReply previousReply;bool hasPreviousReply;} state;
 AgentState& S(){return state;}
 void NavHandler::runtimePolicyChanged(){assert(state.stage==Stage::Eyes);events.push_back(9);}
 bool isRecording(){return state.stage==Stage::Recording;}
@@ -54,7 +57,7 @@ for(int depth:{0,1,2,8}){
  assert(nav.pops==(depth>1?1:0));
 }
 for(Stage stage:{Stage::Eyes,Stage::Recording,Stage::Thinking,Stage::Reply,Stage::Error}){
- state.stage=stage;state.hasPreviousReply=true;events.clear();feedbackStops=delegationCancels=0;exitApp();assert(feedbackStops==1&&delegationCancels==1);assert(state.stage==Stage::Eyes&&!state.hasPreviousReply);
+ state.handsFree=state.handsFreeReady=true;state.stage=stage;state.hasPreviousReply=true;events.clear();feedbackStops=delegationCancels=0;exitApp();assert(feedbackStops==1&&delegationCancels==1);assert(state.stage==Stage::Eyes&&!state.hasPreviousReply&&!state.handsFree&&!state.handsFreeReady);
  if(stage==Stage::Thinking)assert((events==std::vector<int>{0,1,4,5,9,6,7,8,10}));
  else if(stage==Stage::Recording)assert((events==std::vector<int>{1,2,0,4,5,9,6,7,8,10}));
  else assert((events==std::vector<int>{1,4,5,9,6,7,8,10}));

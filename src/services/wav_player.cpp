@@ -219,6 +219,33 @@ bool WavPlayer::startPcm(const int16_t* pcm,uint32_t frames,uint32_t rate,bool l
     playing_=true;usageTrackActive_=true;core::usage::emit("recordings","audio.start");return true;
 }
 
+bool WavPlayer::startPcmStream(uint32_t rate) {
+    if(rate<8000 || rate>48000 || !sessionReady_ || !ready()) return false;
+    PlaybackWorker::Control control(worker_);
+    if(!control || !worker_.running() || worker_.cleanupPending()) return false;
+    stopTrackUnlocked();
+    info_={}; info_.hz=rate; info_.channels=1;
+    progress_.reset(); outputProgress_.reset(); outputSampleRemainder_=0;
+    wantsNext_=false; streamFailed_=false; masterRecording_=false;
+    if(!hal::audio::txBegin(rate)) return false;
+    livePcm_=true; liveFinished_=false; playing_=true;
+    return true;
+}
+uint32_t WavPlayer::appendPcmStream(const int16_t* pcm,uint32_t frames) {
+    if(!pcm || !frames) return 0;
+    PlaybackWorker::Control control(worker_);
+    if(!control || !livePcm_ || liveFinished_ || !worker_.running()) return 0;
+    const uint32_t accepted=std::min(frames,uint32_t(ring_.free()/2));
+    core::dsp::pushStereoWithVolumeBasisPoints(pcm,accepted,1,scaledVolumeBasisPoints(),ring_);
+    progress_.add(accepted,info_.hz);
+    return accepted;
+}
+bool WavPlayer::finishPcmStream() {
+    PlaybackWorker::Control control(worker_);
+    if(!control || !livePcm_) return false;
+    liveFinished_=true; return true;
+}
+
 bool WavPlayer::stopTrack() {
     PlaybackWorker::Control control(worker_);
     if (!control) return false;
@@ -230,6 +257,7 @@ void WavPlayer::stopTrackUnlocked() {
     if (usageTrackActive_) core::usage::emit("recordings","audio.stop");
     usageTrackActive_ = false;
     playing_ = false;
+    livePcm_=liveFinished_=false;
     hal::audio::txEnd();
     if (fileOpen_) {
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
@@ -402,6 +430,7 @@ bool WavPlayer::recoverSdFile_() {
 }
 
 bool WavPlayer::atEndOfFile_() {
+    if(livePcm_) return liveFinished_;
     if (memoryPcm_) return !memoryLoop_ && memoryPosition_>=memoryFrames_;
     bool atEnd = false;
     hal::bus::lockSpi();
@@ -448,6 +477,7 @@ bool WavPlayer::prepareAviAudioChunk_() {
 }
 
 bool WavPlayer::pumpFileToRing_() {
+    if(livePcm_) return false;
     if (memoryPcm_) {
         if (!pcmBuf_ || !memoryFrames_) return false;
         int frames=ring_.free()/2;
@@ -569,7 +599,7 @@ void WavPlayer::taskFn_(void* arg) {
     while (!self->worker_.stopRequested()) {
         if (!self->worker_.beginIteration()) { vTaskDelay(pdMS_TO_TICKS(1)); continue; }
         unsigned waitMs = 10;
-        if (self->playing_ && (self->fileOpen_ || self->memoryPcm_) && self->ring_.buf) {
+        if (self->playing_ && (self->fileOpen_ || self->memoryPcm_ || self->livePcm_) && self->ring_.buf) {
             while (self->ring_.free() > 2048) {
                 if (!self->pumpFileToRing_()) break;
             }

@@ -2,6 +2,7 @@
 #include "ui/draw.h"
 #include "ui/alpha_bitmap.h"
 #include "ui/list_icon.h"
+#include "ui/rounded_fill.h"
 #include "ui/scrollbar_layout.h"
 #include "ui/safe_area_draw.h"
 #include "ui/toggle_row_layout.h"
@@ -90,7 +91,7 @@ void listRow(TFT_eSPI& c, int x, int y, int w, int h,
     const uint16_t rowBg = presentation.background;
     const uint16_t rowFg = presentation.foreground;
     c.fillRect(x, y, w, h, bg);
-    if (selected) c.fillRoundRect(x, y, w, h, 5, rowBg);
+    if (selected) rounded_fill::draw(c,{float(x),float(y),float(w),float(h),5},rowBg,bg,{x,y,w,h});
     c.setTextFont(1);
     c.setTextDatum(TL_DATUM);
     c.setTextSize(2);

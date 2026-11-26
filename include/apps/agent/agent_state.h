@@ -17,9 +17,9 @@ namespace agent {
  * screen — the screen's name documents what the user is seeing.
  *
  *   Eyes       → home screen with the animated Kami eyes
- *   Recording  → full-size Kami eyes + amplitude-driven red border (PTT held)
- *   Thinking   → "..." dialogue box (WebSocket agent turn in flight)
- *   Reply      → typewriter dialogue with the assistant text
+ *   Recording  → canonical eyes + live user transcript (PTT held)
+ *   Thinking   → last transcript remains while reply is pending
+ *   Reply      → immediate, quiet streamed assistant text
  *   Error      → one of several error screens (see agent_config::kErr*)
  */
 enum class Stage : uint8_t {
@@ -55,6 +55,28 @@ struct AgentState {
 
     // ── Buffers ──────────────────────────────────────────────────────────────
     core::ConversationBuffer conv;
+    // UI-task-owned bounded display snapshot, independent of reply storage.
+    char transcript[1536] = {};
+    bool documentPreview = false, documentBeforePreviewVisible = false;
+    char* documentSavedText = nullptr;
+    char documentSavedTitle[64] = {};
+    char* documentText = nullptr; // UI-owned PSRAM snapshot; full document saved by server.
+    char documentId[37] = {}, documentTitle[64] = {};
+    bool documentVisible = false, documentTruncated = false, documentReceived = false;
+    int documentScroll = 0, documentOffset = 0, documentNextOffset = -1;
+    bool documentPagePending = false;
+    uint32_t transcriptRevision = 0, transcriptPainted = 0;
+    bool transcriptFinal = false;
+    bool endpointRequested = false, suppressHeldChord = false;
+    bool continuous = false, agentWorking = false;
+    // Server-owned presentation state; never infer speaker from packet timing.
+    enum class ConversationView { Listening, User, Thinking, Reply };
+    ConversationView conversationView = ConversationView::Listening;
+    uint32_t lastTranscriptMs = 0;
+    bool handsFree = false, handsFreeReady = false; // UI-owned; never persisted.
+    bool followReply = true;
+    uint32_t replyRevision = 0, replyPainted = 0;
+    uint32_t conversationPaintMs = 0;
     uint32_t voiceEntryMs = 0;
     uint32_t                pcmN = 0;   // captured sample count after stopRec()
 
@@ -124,6 +146,20 @@ struct AgentState {
     core::ConversationBuffer previousReply;
     bool hasPreviousReply = false, restoringReply = false, resumeNotice = false;
     int previousMsgIndex = 0, previousScrollLines = 0;
+    bool listeningReplyFollowTail = false;
+    // Conversation view (UI task). viewMode is render's Mode; eyes ease from
+    // viewFromT toward the mode's size starting at viewSinceMs.
+    bool viewInit = false; uint8_t viewMode = 0, viewLayer = 0; float viewFromT = 0, levelSmooth = 0;
+    // Once a long reply moved the eyes up they stay up for the rest of the
+    // conversation (follow-ups, agent-mode turns); cleared only on Home.
+    bool eyesUp = false;
+    uint32_t viewSinceMs = 0, viewPaintMs = 0, viewSignature = 0, viewContentSig = 0;
+    uint32_t typingCueMs = 0; bool replyDoneCue = false;
+    // A+B gesture: the mic opens at once with the session start held; a release
+    // within kTapHoldMs switches that same session to agent mode.
+    uint32_t agentStartAtMs = 0, agentActivityMs = 0;
+    bool gestureDeciding = false; // A+B down < kTapHoldMs: session start held
+    uint8_t pendingCue = 0; uint32_t pendingCueUntilMs = 0; // sfx::product::Sound + 1
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
     int wifiOverride = -1; // diagnostic gate only; never changes the radio
 #endif

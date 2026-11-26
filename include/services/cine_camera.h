@@ -18,7 +18,13 @@ public:
   ~Session() { close(); }
   Session(const Session &) = delete;
   Session &operator=(const Session &) = delete;
-  bool open();
+  enum class Preparation { Ready, Pending, Failed };
+  // UI-task admission before open(): Pending retains the request without
+  // blocking input. close() cancels it and releases any acquired gates.
+  Preparation prepareOpen();
+  // Optional UI-task progress callback, only between operations with no frame
+  // loan held. May paint feedback; must not mutate/re-enter this session.
+  bool open(void (*onProgress)() = nullptr);
   bool close(bool restoreUi = true);
   bool holdsResources() const { return camera_.backgroundHeld() || camera_.running(); }
   bool preview(bool (*shouldAbort)(void *) = nullptr, void *context = nullptr);

@@ -2,8 +2,6 @@
 #include "services/agent_coordination.h"
 #include "hal/hal_wifi.h"
 #include "hal/hal_io.h"
-#include "Pins.h"
-#include <Wire.h>
 #include <assert.h>
 
 namespace services { namespace camera {
@@ -79,9 +77,7 @@ void Session::restoreUi(Resume mode) {
     }
     if (mode == Resume::DeferredWithInputRecovery && inputRecoveryPending_) {
         // Preserve the existing rev-4 recovery after camera SCCB/I2C use.
-        Wire.end();
-        Wire.begin(SDA_PIN, SCL_PIN);
-        (void)hal::io::reinitAfterI2CRestart();
+        (void)hal::io::restartBusAndReconnect();
         inputRecoveryPending_ = false;
     }
 }

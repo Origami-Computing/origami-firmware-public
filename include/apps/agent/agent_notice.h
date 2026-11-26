@@ -14,7 +14,7 @@ inline const char* message(Kind k){
  case Kind::Lost:return "Wi-Fi dropped. Please say that again when I'm connected.";
  case Kind::Timeout:return "It's taking too long. Please try again.";
  case Kind::Mic:return "I couldn't start the mic. Please try again.";
- case Kind::Empty:return "I didn't catch anything. Hold A+B while you speak.";
+ case Kind::Empty:return "I didn't catch anything. Tap C and speak.";
  case Kind::Busy:return "I need a moment. Please try again.";
  case Kind::Overflow:return "I couldn't send all of that. Please try again.";
  case Kind::Auth:return "I couldn't sign in. Check my setup in Settings.";

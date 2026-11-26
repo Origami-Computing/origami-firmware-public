@@ -1,3 +1,6 @@
+#include "services/agent_transport.h"
+#include "ui/agent_conversation.h"
+#include "services/agent_speech.h"
 #include "services/agent_latency.h"
 #include "ui/default_font_metrics.h"
 #include "apps/agent/agent_motion.h"
@@ -5,6 +8,8 @@
 #include "apps/agent/agent_render.h"
 
 #include <Arduino.h>
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <stdio.h>
 
@@ -21,6 +26,7 @@
 #include "hal/hal_display.h"
 #include "sfx/sfx.h"
 #include "sfx/sfx_typewriter.h"
+#include "sfx/product_sounds.h"
 #include "ui/agent_overlays.h"
 #include "ui/dialogue_box.h"
 #include "ui/home_eyes.h"
@@ -40,24 +46,6 @@
 namespace apps {
 namespace agent {
 namespace render {
-
-using ui::text::kPokeCW;
-static constexpr int kPokeLH=ui::kami_dialogue::kLineH;
-using ui::text::kPokeSz;
-
-// ─── Layout constants derived from ui_layout.h ──────────────────────────────
-//
-// The dialogue box outer rectangle is fixed (kDialogueX/Y/W/H). Inside it we
-// inset by the border + padding to get the text region (kDlgTextX/Y/W/H).
-// First-line baseline sits kPokeAscent px below the inner top edge because
-// PixelFont's cursor y is the baseline.
-
-static constexpr int kPokeAscent = 7 * kPokeSz;
-static constexpr int kDlgTextX = kDialogueBorderW + kDialoguePadX;
-static constexpr int kDlgInsetY = kDialogueBorderW + kDialoguePadY;
-static constexpr int kDlgTextY = kDlgInsetY + kPokeAscent;
-static constexpr int kDlgTextW = kDialogueW - 2 * kDlgTextX;
-static constexpr int kDlgTextH = kDialogueH - 2 * kDlgInsetY;
 
 static inline TFT_eSPI& T() { return hal::display::tft(); }
 static inline int       scrW() { return T().width(); }
@@ -80,47 +68,26 @@ void buildEyesScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
                    ui::scene::TextAlign::TopLeft, 3);
 }
 
+// Tooling previews mirror the full-panel conversation layout (no status bar).
 void buildRecordingScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
     scene.clear();
-    scene.addRect("recording.bg", {0,0,width,height}, TFT_RED, 0, 0);
-    constexpr int inset = ui::agent_listening::kMinThickness;
-    scene.addRect("listening.window", {inset,inset,(int16_t)(width-2*inset),
-                  (int16_t)(height-2*inset)}, kUiBg, ui::agent_listening::kRadius-inset, 1);
-    scene.addBitmap("listening.eyes", {42,57,196,126}, assets::kBootKamiEyesAlpha4,
-                    assets::kBootKamiEyesW,assets::kBootKamiEyesH,kUiFg,kUiBg,2,4);
+    scene.addRect("conversation.bg",{0,0,width,height},kUiBg,0,0);
+    scene.addRect("conversation.eyes",{40,40,200,116},kUiBg,0,1);
+    scene.addLabel("conversation.line",{24,196,232,20},"Listening...",kUiMuted,kUiBg,2,ui::scene::TextAlign::TopCenter,2);
 }
 
 void buildThinkingScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
     scene.clear();
-    scene.addRect("thinking.bg", {0, kSystemStatusBarH, width,
-                                  (int16_t)(height - kSystemStatusBarH)},
-                  kUiBg, 0, 0);
-    scene.addLabel("thinking.label", {0, agent_layout::kThinkingY, width, 16},
-                   "...", kUiFg, kUiBg, 2, ui::scene::TextAlign::TopCenter, 2);
+    scene.addRect("conversation.bg",{0,0,width,height},kUiBg,0,0);
+    scene.addRect("conversation.eyes",{40,40,200,116},kUiBg,0,1);
+    scene.addLabel("conversation.line",{24,196,232,20},"Your words stay here, dimmed",kUiMuted,kUiBg,2,ui::scene::TextAlign::TopCenter,2);
 }
 
 void buildReplyScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
     scene.clear();
-    scene.addRect("reply.bg", {0, kSystemStatusBarH, width,
-                               (int16_t)(height - kSystemStatusBarH)},
-                  kUiBg, 0, 0);
-    scene.addBitmap("mini.eye", {kMiniEyeX,kMiniEyeY,kMiniEyeW,kMiniEyeH},
-                    assets::kami_dialogue::kBody,24,26,0xF945,kUiBg,1,4);
-    scene.addBitmap("mini.pupils", {kMiniEyeX+4,kMiniEyeY+7,16,10},
-                    assets::kami_dialogue::kEyes,16,10,kUiFg,0xF945,2,4);
-    scene.addRect("dialogue.box", {kDialogueX, kDialogueY, kDialogueW, kDialogueH},
-                  kUiDialogueFill, kDialogueCornerR, 1);
-    scene.addRect("dialogue.padding",
-                  {(int16_t)(kDialogueX + kDialoguePadX),
-                   (int16_t)(kDialogueY + kDialoguePadY),
-                   (int16_t)(kDialogueW - 2 * kDialoguePadX),
-                   (int16_t)(kDialogueH - 2 * kDialoguePadY)},
-                  kUiDialogueFill, 0, 2);
-    scene.addLabel("dialogue.scroll.hint",
-                   {(int16_t)(kDialogueX + kDialogueW - kDialogueScrollHintInsetX),
-                    (int16_t)(kDialogueY + kDialogueH - 18), 12, 12},
-                   "v", kUiMuted, kUiDialogueFill, 1,
-                   ui::scene::TextAlign::TopLeft, 3);
+    scene.addRect("conversation.bg",{0,0,width,height},kUiBg,0,0);
+    scene.addRect("conversation.eyes",{100,16,80,48},kUiBg,0,1);
+    scene.addLabel("conversation.reply",{24,84,232,120},"Replies appear as they arrive",kUiFg,kUiBg,2,ui::scene::TextAlign::TopLeft,2);
 }
 
 void buildErrorScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
@@ -128,7 +95,7 @@ void buildErrorScene(ui::scene::Scene& scene, int16_t width, int16_t height) {
     const auto kind=flow::state().noticeKind;
     scene.addRect("error.bg", {0,kSystemStatusBarH,width,(int16_t)(height-kSystemStatusBarH)},kUiBg,0,0);
     scene.addLabel("error.text",{36,90,208,110},notice::message(kind),kUiFg,kUiBg,2,ui::scene::TextAlign::TopLeft,1);
-    scene.addLabel("error.footer",{36,224,208,12},notice::needsWifi(kind)?"A Back   B Wi-Fi":kind==notice::Kind::Auth?"A Back   B Settings":"A Back   A+B Talk",kUiFg,kUiBg,1,ui::scene::TextAlign::TopLeft,1);
+    scene.addLabel("error.footer",{36,224,208,12},notice::needsWifi(kind)?"A Back   B Wi-Fi":kind==notice::Kind::Auth?"A Back   B Settings":"A Back   A+B Retry",kUiFg,kUiBg,1,ui::scene::TextAlign::TopLeft,1);
 }
 
 static void publishEyesRuntimeScene(AgentState& s) {
@@ -160,78 +127,15 @@ static void publishEyesRuntimeScene(AgentState& s) {
     if (info) info->visible = false;
 }
 
-// ─── Internal: text-wrap thin wrappers ──────────────────────────────────────
-
-static int countWrappedLines(const char* s, int maxW) {
-    return ui::text::countWrapped(s, maxW, 2);
-}
-
-static const char* skipWrappedLines(const char* s, int skip, int maxW) {
-    return ui::text::skipWrapped(s, skip, maxW, 2);
-}
-
-static size_t visibleWrappedWindowLen(const char* s, int maxLines, int maxW) {
-    if (!s || !*s || maxLines <= 0 || maxW <= 0) return 0;
-    const char* next = ui::text::skipWrapped(s, maxLines, maxW, 2);
-    if (!next || next < s) return strlen(s);
-    return (size_t)(next - s);
-}
-
-static int drawWrappedPokeTextPrefix(TFT_eSPI& d, AgentState& s, const char* text,
-                                     size_t pc, int x, int y, int maxW, int maxLines) {
-    return ui::text::wrappedPokemonPrefix(d, text, pc, x, y, maxW, maxLines,
-                                          kUiFg, kUiDialogueFill,
-                                          s.conv.wrapScratch(), s.conv.wrapScratchSize(), kPokeLH);
-}
-
-static void flushDialogueSprite(AgentState& s) {
-    if (!s.spritesReady || !s.sprDialogue || !s.sprDialogue->created()) return;
-    s.sprDialogue->pushSprite(kDialogueX, kDialogueY);
-    hal::display::markDirty(kDialogueY, s.sprDialogueH);
-}
-
-// ─── Layout ──────────────────────────────────────────────────────────────────
+namespace view = ui::agent_conversation;
 
 void computeDialogueLayout(AgentState& s) {
-    s.agentTextX    = kDialogueX + kDlgTextX;
-    s.agentTextY    = kDialogueY + kDlgTextY;
-    s.agentTextW    = kDlgTextW;
-    s.agentTextH    = kDlgTextH;
-    // Include the selected face's complete cell, including descenders.
-#ifdef ORIGAMI_INSTRUMENT_FONT
-    s.agentMaxLines = (kDlgTextH - ui::default_font::height(2)) / kPokeLH + 1;
-#else
-    s.agentMaxLines = (kDlgTextH - 18) / kPokeLH + 1;
-#endif
-    if (s.agentMaxLines < 2)  s.agentMaxLines = 2;
-    if (s.agentMaxLines > 48) s.agentMaxLines = 48;
-    s.agentLineH    = kPokeLH;
+    s.agentTextX = view::x; s.agentTextY = view::replyY; s.agentTextW = view::width;
+    s.agentMaxLines = view::replyRows; s.agentLineH = view::pitch;
+    s.agentTextH = view::replyRows * view::pitch;
 }
 
 // ─── Sprite lifecycle ────────────────────────────────────────────────────────
-
-bool ensureChatSprites(AgentState& s) {
-    if (s.agentTextW <= 0 || s.agentTextH <= 0) return false;
-
-    const int  sprW = kDialogueW;
-    const int  sprH = kDialogueH;
-    const bool hasDialogue =
-        s.sprDialogue && s.sprDialogue->created() &&
-        s.sprDialogueW == sprW && s.sprDialogueH == sprH;
-    if (s.spritesReady && hasDialogue) return true;
-
-    releaseChatSprites(s);
-
-    s.sprDialogue = core::memory::allocSprite("agent.dialogue", T(), sprW, sprH, 16);
-    if (!s.sprDialogue) return false;
-    s.sprDialogueW = sprW;
-    s.sprDialogueH = sprH;
-
-    // The small native avatar paints directly without a sprite or SD read.
-
-    s.spritesReady = true;
-    return true;
-}
 
 void releaseChatSprites(AgentState& s) {
     s.spritesReady = false;
@@ -240,167 +144,333 @@ void releaseChatSprites(AgentState& s) {
     s.sprDialogueW = s.sprDialogueH = 0;
 }
 
-// ─── Reply text (typewriter) ─────────────────────────────────────────────────
+// ─── Conversation view ───────────────────────────────────────────────────────
+//
+// One painter for listening, thinking and replying. compose() decides what the
+// panel shows from workflow state; paintConversation() draws the whole panel
+// (the status bar is hidden outside Home) and skips frames where nothing
+// visible changed. Eye size eases between the listening and reply sizes.
 
-static void paintReplyTextInner(AgentState& s) {
-    if (s.agentTextW <= 0 || s.agentTextH <= 0) return;
+namespace {
+enum class Mode : uint8_t { Listening, Thinking, Reply, Answer }; // Answer: one line, big
+struct Content {
+    Mode mode = Mode::Listening;
+    const char* line = nullptr; bool interim = false, dim = false;
+    const char* hint = nullptr;
+    const char* reply = nullptr; int scroll = 0, rows = view::replyRows;
+    const char* answer = nullptr; int answerPx = 0;
+    bool sub = false;          // agent mode: line/hint drawn small under the answer
+    bool dot = false;
+    int page = 0, pages = 0;   // one message per screen
+};
 
+float easeOut(float p) { p = p < 0 ? 0 : p > 1 ? 1 : p; const float q = 1 - p; return 1 - q * q * q; }
+
+// Reply prefix revealed so far; copied into the conversation's wrap scratch so
+// the display buffer stays intact. Falls back to the full text if it can't fit.
+const char* revealedReply(AgentState& s) {
     s.conv.refreshDisplay(s.msgIndex);
-    const char* view = skipWrappedLines(s.conv.displayText(), s.scrollLines, s.agentTextW);
-    const size_t vl  = visibleWrappedWindowLen(view, s.agentMaxLines, s.agentTextW);
-    size_t pc        = s.twRevealLen;
-    if (pc > vl) pc = vl;
+    const char* full = s.conv.displayText();
+    const size_t n = strlen(full);
+    char* scratch = s.conv.wrapScratch();
+    if (s.twRevealLen >= n || !scratch || s.conv.wrapScratchSize() <= s.twRevealLen) return full;
+    memcpy(scratch, full, s.twRevealLen); scratch[s.twRevealLen] = 0;
+    return scratch;
+}
 
-    const int  totalLines = countWrappedLines(s.conv.displayText(), s.agentTextW);
-    const bool moreBelow  = (s.scrollLines + s.agentMaxLines) < totalLines;
-
-    if (s.spritesReady && s.sprDialogue && s.sprDialogue->created()) {
-        s.sprDialogue->fillSprite(kUiDialogueFill);
-        ui::dialogue::drawFrame(*s.sprDialogue, kDialogueW, kDialogueH);
-        drawWrappedPokeTextPrefix(*s.sprDialogue, s, view ? view : "", pc,
-                                  kDlgTextX, kDlgTextY, kDlgTextW, s.agentMaxLines);
-        if (moreBelow) {
-            const int lastBaseline = kDlgTextY + (s.agentMaxLines - 1) * kPokeLH;
-            const int chevronX     = kDialogueW - kDialogueScrollHintInsetX;
-            const int chevronY     = lastBaseline + kDialogueScrollHintGapY;
-            ui::dialogue::drawScrollHint(*s.sprDialogue, chevronX, chevronY);
+static Content composeView(AgentState& s);
+Content compose(AgentState& s) {
+    Content c = composeView(s);
+    if (s.eyesUp && c.mode == Mode::Answer) {
+        // Eyes stay up: a one-line answer becomes ordinary reply text below them.
+        c.mode = Mode::Reply; c.reply = c.answer; c.answer = nullptr; c.answerPx = 0;
+        c.rows = c.sub ? view::replyRows - 1 : view::replyRows; c.sub = false; c.scroll = 0;
+    }
+    return c;
+}
+static Content composeView(AgentState& s) {
+    using View = AgentState::ConversationView;
+    Content c;
+    c.dot = s.continuous && s.stage == Stage::Recording;
+    if (s.stage == Stage::Reply) {
+        // Decide on everything received so far, so a short answer keeps the big
+        // eyes and a long one moves to the paragraph view as soon as it outgrows.
+        s.conv.refreshDisplay(s.msgIndex);
+        c.page = s.msgIndex; c.pages = s.conv.segmentCount();
+        const int px = view::answerPx(s.conv.displayText());
+        if (px) {
+            c.mode = Mode::Answer; c.answer = revealedReply(s); c.answerPx = px;
+            return c;
         }
+        c.mode = Mode::Reply;
+        c.reply = revealedReply(s);
+        const int lines = view::count(c.reply), maxScroll = std::max(0, lines - c.rows);
+        if (s.followReply && s.msgIndex == s.conv.segmentCount() - 1) s.scrollLines = maxScroll;
+        else if (s.scrollLines > maxScroll) s.scrollLines = maxScroll;
+        c.scroll = s.scrollLines;
+        return c;
+    }
+    if (s.stage == Stage::Thinking) {
+        c.mode = Mode::Thinking;
+        if (s.transcript[0]) { c.line = s.transcript; c.dim = true; }
+        return c;
+    }
+    if (s.continuous) {
+        // Agent mode: Kami's last answer stays until a new turn really starts
+        // (the server clears it on input_begin). Stray noise transcripts and
+        // rejected turns show only in the bottom line, so the answer never
+        // flickers away. Your live words sit under it.
+        const bool wordsHeard = s.transcript[0] != 0;
+        if (s.conv.anyNonEmpty()) {
+            if (s.conversationView == View::Thinking && wordsHeard) {
+                c.mode = Mode::Thinking; c.line = s.transcript; c.dim = true;
+                return c;
+            }
+            // The newest message, with its position when Kami sent several.
+            const int latest = std::max(0, s.conv.segmentCount() - 1);
+            s.conv.refreshDisplay(latest);
+            c.page = latest; c.pages = s.conv.segmentCount();
+            const char* text = s.conv.displayText();
+            if (wordsHeard && s.conversationView == View::User) { c.line = s.transcript; c.interim = !s.transcriptFinal; }
+            else c.hint = "Listening...";
+            if (const int px = view::answerPx(text)) {
+                c.mode = Mode::Answer; c.answer = text; c.answerPx = px;
+                c.sub = true;   // your live line moves under the big answer
+                return c;
+            }
+            c.mode = Mode::Reply; c.reply = text; c.rows = view::replyRows - 1;
+            const int maxScroll = std::max(0, view::count(text) - c.rows);
+            if (s.listeningReplyFollowTail) s.previousScrollLines = maxScroll;
+            s.previousScrollLines = std::min(s.previousScrollLines, maxScroll);
+            c.scroll = s.previousScrollLines;
+            return c;
+        }
+        if (s.conversationView == View::Thinking) {
+            c.mode = Mode::Thinking;
+            if (wordsHeard) { c.line = s.transcript; c.dim = true; }
+            return c;
+        }
+    }
+    if (s.transcript[0]) { c.line = s.transcript; c.interim = !s.transcriptFinal; }
+    else c.hint = "Listening...";
+    return c;
+}
+
+float eyeT(const AgentState& s, uint32_t now) {
+    const float target = s.viewMode == (uint8_t)Mode::Reply || s.eyesUp ? 1.f : 0.f;
+    const float duration = target > 0 ? 380.f : 300.f;
+    const float p = easeOut((float)(now - s.viewSinceMs) / duration);
+    return s.viewFromT + (target - s.viewFromT) * p;
+}
+
+// Every eye view uses the Home renderer's natural blink.
+float blinkOpen(uint32_t now) { return ui::home_eyes::isLoaded() ? ui::home_eyes::sharedBlink(now) : 1.f; }
+bool blinkClosed(uint32_t now) { return blinkOpen(now) < .5f; }
+
+// Eye travel between the Home size and the reply size reuses the cached Home
+// "travel" frames (as staging's agent motion did). kTravelEnd is how far along
+// that path the reply size sits; the small resting eyes match its last frame.
+constexpr float kTravelEnd = .75f;
+constexpr float kSmallNominal = 88.f + (16.f / 2.2f - 88.f) * kTravelEnd;
+constexpr float kSmallSpacing = .9f + .1f * kTravelEnd;
+constexpr float kSmallCenterY = 46.f;
+float travelOffsetY(float a) { return kSmallCenterY - (127.f - 75.f * kTravelEnd) * (a / kTravelEnd); }
+
+void paintDocument(AgentState& s, uint32_t now, bool force) {
+    using View = AgentState::ConversationView;
+    const bool showingReply = s.conversationView == View::Reply && s.conv.anyNonEmpty();
+    const uint32_t sig = 0x9e3779b9u ^ (uint32_t)s.documentScroll * 131u ^ s.replyRevision * 40503u ^
+                         s.transcriptRevision * 2654435761u ^ (uint32_t)s.conversationView * 7u ^ (s.documentPreview ? 1u : 0u);
+    if (!force && sig == s.viewSignature) return;
+    if (!force && now - s.viewPaintMs < 30u) return;
+    const auto pose = emotion::snapshot(s.msgIndex).pose;
+    view::documentEyes(T(), pose, blinkClosed(now) ? .12f : 1.f);
+    if (s.continuous) {
+        s.conv.refreshDisplay(std::max(0, s.conv.segmentCount() - 1));
+        const char* live = showingReply ? s.conv.displayText()
+                         : s.conversationView == View::User && s.transcript[0] ? s.transcript : "Listening...";
+        if (!live) live = "";
+        if (strlen(live) > 140) live += strlen(live) - 140;
+        char footer[160];
+        snprintf(footer, sizeof(footer), "%s: %.145s", showingReply ? "Kami" : "You", live);
+        view::document(T(), s.documentTitle, s.documentText, s.documentScroll, s.documentTruncated, footer, s.documentPreview);
     } else {
-        ui::dialogue::drawFrameDirect(T(), kDialogueX, kDialogueY, kDialogueW, kDialogueH);
-        drawWrappedPokeTextPrefix(T(), s, view ? view : "", pc,
-                                  kDialogueX + kDlgTextX, kDialogueY + kDlgTextY,
-                                  kDlgTextW, s.agentMaxLines);
-        if (moreBelow) {
-            const int x=kDialogueX+kDialogueW-kDialogueScrollHintInsetX;
-            const int y=kDialogueY+kDlgTextY+(s.agentMaxLines-1)*kPokeLH+kDialogueScrollHintGapY;
-            T().fillTriangle(x,y,x+6,y,x+3,y+3,kUiDialogueHint);
+        view::document(T(), s.documentTitle, s.documentText, s.documentScroll, s.documentTruncated);
+    }
+    hal::display::markDirty(0, 240);
+    s.viewSignature = sig; s.viewPaintMs = now; s.viewInit = false;
+    s.transcriptPainted = s.transcriptRevision; s.replyPainted = s.replyRevision;
+}
+}  // namespace
+
+// Text layer: everything except the eyes. Drawn after the eyes.
+static void paintText(AgentState& s, const Content& c) {
+    if (c.reply) {
+        view::reply(T(), c.reply, c.scroll, c.rows);
+        if (c.reply[0]) services::agent_latency::painted(view::replyY, view::replyY + c.rows * view::pitch);
+    }
+    if (c.answer) {
+        view::answer(T(), c.answer, c.answerPx);
+        if (c.answer[0]) services::agent_latency::painted(view::lineBaseline - 24, view::lineBaseline + 8);
+    }
+    if (c.sub) view::subLine(T(), c.line ? c.line : c.hint);
+    else if (c.line) view::line(T(), c.line, c.interim, c.dim);
+    else if (c.hint) view::hint(T(), c.hint);
+    if (c.dot) view::liveDot(T(), c.sub ? view::subBaseline : view::lineBaseline);
+    view::pageMarker(T(), c.page, c.pages);
+}
+
+void paintConversation(AgentState& s, uint32_t now, bool force) {
+    if (s.documentVisible && s.documentText) { paintDocument(s, now, force); return; }
+    const Content c = compose(s);
+    const bool raising = c.mode == Mode::Reply && c.reply;
+    if (!s.viewInit) {
+        s.viewInit = true; s.viewMode = (uint8_t)c.mode; s.viewSinceMs = now;
+        s.viewFromT = c.mode == Mode::Reply || s.eyesUp ? 1.f : 0.f; s.levelSmooth = 0; s.viewLayer = 0;
+    } else if ((uint8_t)c.mode != s.viewMode) {
+        s.viewFromT = eyeT(s, now); s.viewMode = (uint8_t)c.mode; s.viewSinceMs = now;
+    }
+    // Set after the starting point is captured so the rise still animates.
+    if (raising) s.eyesUp = true;
+    const float t = eyeT(s, now);
+    const uint32_t age = now - s.viewSinceMs;
+    const uint32_t contentSig = (uint32_t)c.mode * 0x45d9f3bu ^ s.transcriptRevision * 2654435761u ^
+                                s.replyRevision * 40503u ^ (uint32_t)s.twRevealLen * 97u ^ (uint32_t)c.scroll * 131u ^
+                                (s.transcriptFinal ? 0x1000u : 0u) ^ (c.dot ? 0x2000u : 0u) ^ (uint32_t)s.msgIndex * 7919u ^
+                                (uint32_t)s.conversationView * 0x9e37u ^ (uint32_t)c.pages * 0x51u;
+    const auto pose = c.mode == Mode::Reply || c.mode == Mode::Answer ? emotion::snapshot(s.msgIndex).pose : ui::eye_rig::kPresets[0].pose;
+
+    // The microphone level lifts the eyes slightly: "I hear you" before words arrive.
+    float bob = 0;
+    if (c.mode == Mode::Listening && s.stage == Stage::Recording) {
+        const float level = std::min(1.f, flow::micLevel() / 160.f);
+        s.levelSmooth = s.levelSmooth * .7f + level * .3f;
+        bob = -3.f * s.levelSmooth;
+    }
+
+    if (ui::home_eyes::isLoaded()) {
+        // ── Home-size eyes: literally the Home renderer (same blink, motion, frames).
+        if (t <= 0.f && c.mode != Mode::Reply && !s.eyesUp) {
+            const bool textChanged = force || s.viewLayer != 1 || contentSig != s.viewContentSig;
+            if (textChanged && !force && now - s.viewPaintMs < 33u) return;
+            if (textChanged) {
+                view::clear(T());
+                ui::home_eyes::invalidatePaint();
+            }
+            const bool thinking = c.mode == Mode::Thinking;
+            if (thinking) ui::home_eyes::drawThinkingEyes(T(), easeOut(age / 300.f), now, !textChanged);
+            else ui::home_eyes::drawConversationEyes(T(), 0, bob, now, !textChanged);
+            if (textChanged) {
+                paintText(s, c);
+                hal::display::markDirty(0, 240);
+                s.viewLayer = 1; s.viewContentSig = contentSig; s.viewPaintMs = now;
+            }
+            s.transcriptPainted = s.transcriptRevision; s.replyPainted = s.replyRevision;
+            return;
+        }
+        // ── Travelling between sizes: the cached travel frames, every frame.
+        if (t < 1.f && (t > 0.f || c.mode == Mode::Reply || s.eyesUp)) {
+            if (!force && now - s.viewPaintMs < 16u) return;
+            const float a = t * kTravelEnd;
+            view::clear(T());
+            if (!ui::home_eyes::drawTravelEyes(T(), a, 102.f * a, travelOffsetY(a))) {
+                view::EyeFrame e; e.t = t; view::eyes(T(), pose, e);
+            }
+            paintText(s, c);
+            hal::display::markDirty(0, 240);
+            s.viewLayer = 2; s.viewContentSig = contentSig; s.viewPaintMs = now;
+            s.transcriptPainted = s.transcriptRevision; s.replyPainted = s.replyRevision;
+            return;
         }
     }
-    // Arm only after at least one non-whitespace reply character was painted.
-    // Completion is recorded by HAL after the dirty text band reaches SPI.
-    for(size_t i=0;view && i<pc;++i)if((unsigned char)view[i]>' '){
-        services::agent_latency::painted(kDialogueY,kDialogueY+kDialogueH);break;
+
+    // ── Small resting eyes (reply) or no Home renderer: one full paint per change.
+    const float open = blinkOpen(now);
+    const float glance = c.mode == Mode::Thinking ? easeOut(age / 300.f) : 0.f;
+    const uint32_t eyeSig = (uint32_t)(open * 40.f) | (uint32_t)(t * 100.f) << 8 | (uint32_t)(int)(bob * 4 + 64) << 16 |
+                            (uint32_t)(glance * 20.f) << 24;
+    const uint32_t sig = eyeSig * 31u ^ contentSig;
+    if (!force && s.viewLayer == 3 && sig == s.viewSignature) return;
+    if (!force && now - s.viewPaintMs < 16u) return;
+    view::clear(T());
+    if (ui::home_eyes::isLoaded()) {
+        const int h = (int)(kSmallNominal * 91.f / 67.f * 1.3f) + 8;
+        ui::eye_rig::drawRaster(T(), 0, (int)kSmallCenterY - h / 2, 280, h, pose, open, kUiBg, kSmallNominal,
+                                3.f * glance, -3.f * glance + .5f * bob, false, 255, 0, -1, kSmallSpacing, 1);
+    } else {
+        view::EyeFrame e; e.t = t; e.open = open; e.offsetY = bob;
+        if (c.mode == Mode::Thinking) { e.offsetX = 6 * glance; e.offsetY = -6 * glance; }
+        view::eyes(T(), pose, e);
     }
-
+    paintText(s, c);
+    hal::display::markDirty(0, 240);
+    s.viewLayer = 3; s.viewSignature = sig; s.viewContentSig = contentSig; s.viewPaintMs = now;
+    s.transcriptPainted = s.transcriptRevision; s.replyPainted = s.replyRevision;
 }
 
-void paintReplyText(AgentState& s) {
-    paintReplyTextInner(s);
-    if (s.spritesReady) flushDialogueSprite(s);
-}
-
-// ─── Mini eyes ───────────────────────────────────────────────────────────────
-static ui::eye_rig::Pose miniPose=ui::eye_rig::kPresets[0].pose,miniFrom=miniPose;
-static uint32_t miniPoseStarted=0;
-static bool miniPoseReady=false;
-static ui::kami_expression::Shape miniShape=ui::kami_expression::Shape::Open;
-
+void paintReplyText(AgentState& s) { paintConversation(s, millis(), true); }
 
 void paintMiniEyes(AgentState& s) {
-    const auto selected=s.stage==Stage::Reply?emotion::snapshot(s.msgIndex):emotion::Selection{};
-    const uint32_t now=millis();
-    if(!miniPoseReady){miniPose=miniFrom=selected.pose;miniShape=selected.shape;miniPoseReady=true;miniPoseStarted=now;}
-    if(s.miniEmotionRevision!=selected.revision || s.miniEmotionSegment!=s.msgIndex){
-      miniFrom=miniPose;miniPoseStarted=now;
-    }
-    miniPose=ui::eye_rig::interpolate(miniFrom,selected.pose,
-        ui::agent_motion::ramp(now-miniPoseStarted,0,280));
-    // Named shapes switch while the eyes are already closed, never by a flash
-    // during an otherwise open pose. Ordinary lids ease continuously.
-    if(!s.miniEyesOpen && now-s.miniBlinkStarted>=50 && now-s.miniBlinkStarted<130)
-      miniShape=selected.shape;
-    auto frame=s.miniEyesOpen?ui::kami_expression::Frame{}:ui::kami_expression::blink(now-s.miniBlinkStarted);
-    if(frame.shape==ui::kami_expression::Shape::Open){frame.shape=miniShape;
-      if(frame.shape==ui::kami_expression::Shape::Spiral)frame.spinMs=now%2078700u;
-      if(frame.shape==ui::kami_expression::Shape::Bowl)frame.zzzMs=now%3400u;}
-    ui::kami_dialogue::drawAvatarPose(T(),kMiniEyeX,kMiniEyeY,s.miniEyesOpen,miniPose,ui::eye_rig::kDefaultSpacing,&frame);
-    if(s.miniEmotionRevision!=selected.revision||s.miniEmotionSegment!=s.msgIndex||strcmp(s.miniEmotionName,selected.name))
-        Serial.printf("[agent-emotion] rendered=%s segment=%d avatar=24x26\n",selected.name,s.msgIndex);
-    s.miniEmotionRevision=selected.revision;s.miniEmotionSegment=s.msgIndex;s.miniEmotionName=selected.name;
-    hal::display::markDirty(kMiniEyeY,kMiniEyeH);
+    // Expression changed: repaint now so the new pose shows without waiting for text.
+    s.miniEmotionRevision = emotion::snapshot(s.msgIndex).revision; s.miniEmotionSegment = s.msgIndex;
+    paintConversation(s, millis(), true);
 }
 
 void beginRecordingView(AgentState& s, uint32_t nowMs) {
-    s.recordingEnvelope.reset(nowMs);
-    s.recordingBorderThickness = 0;
-#ifdef ORIGAMI_DEV_SERIAL_INPUT
-    s.recordingLevelOverride = -1;
-#endif
-    ui::home_eyes::setEyeOffset(0,0);
-    motion::startListening(nowMs,s.eyeFloatX,s.eyeFloatY);
-    // NavHandler draws the recording overlay before startRecording() flushes.
-    // Drawing here too repeats the expensive first frame before it is visible.
+    motion::cancel();
+    s.miniEyesOpen = true;
+    hal::display::setFlushService(serviceMicCaptureEarly);
+    s.transcriptPainted = UINT32_MAX;
+    paintConversation(s, nowMs, true);
+}
+
+bool scrollListeningReply(AgentState& s, int delta) {
+    if (s.handsFree && (s.continuous || !s.transcript[0]) && s.documentVisible && s.documentText) {
+        const int maximum = std::max(0, view::count(s.documentText) - (s.continuous ? 2 : 4));
+        const int next = std::max(0, std::min(maximum, s.documentScroll + delta));
+        if (next == s.documentScroll) {
+            const int offset = delta > 0 ? s.documentNextOffset : s.documentOffset > 0 ? std::max(0, s.documentOffset - 4095) : -1;
+            if (offset >= 0 && !s.documentPagePending) { s.documentPagePending = true; services::agent_transport::requestDocumentWindow(offset); return true; }
+            return false;
+        }
+        s.documentScroll = next;
+        s.transcriptPainted = UINT32_MAX;
+        return true;
+    }
+    // Agent mode scrolls the newest message, the one on screen.
+    if (!delta || !s.continuous || !s.conv.anyNonEmpty()) return false;
+    s.conv.refreshDisplay(std::max(0, s.conv.segmentCount() - 1));
+    const int maximum = std::max(0, view::count(s.conv.displayText()) - (view::replyRows - 1));
+    const int next = std::max(0, std::min(maximum, s.previousScrollLines + delta));
+    s.listeningReplyFollowTail = delta > 0 && next == maximum;
+    if (next == s.previousScrollLines) return false;
+    s.previousScrollLines = next;
+    s.transcriptPainted = UINT32_MAX;
+    return true;
 }
 
 void paintRecordingBorder(AgentState& s, uint32_t nowMs, bool clear) {
-    // Keep the border base until Thinking has faded the listening scene.
-    if (!clear) motion::drawListening(s,nowMs);
+    if (clear) { hal::display::setFlushService(nullptr); return; }
+    paintConversation(s, nowMs, false);
 }
 
 void paintReplyShell(AgentState& s) {
-    miniPoseReady=false;
     computeDialogueLayout(s);
-
-    s.conv.refreshDisplay(s.msgIndex);
-
-    hal::display::clearContentArea(kUiBg);
-    hal::display::releaseSpiForSd();
-
-    paintMiniEyes(s);
-
-    if (ensureChatSprites(s)) {
-        paintReplyTextInner(s);
-        s.sprDialogue->pushSprite(kDialogueX, kDialogueY);
-    } else {
-        Serial.println("[agent] shell: sprite alloc FAILED, drawing direct to TFT");
-        paintReplyTextInner(s);
-    }
+    paintConversation(s, millis(), true);
 }
 
 // ─── Recording dot ───────────────────────────────────────────────────────────
 
 void paintRecDot(AgentState& s, AgentState::RecDot mode, uint32_t nowMs) {
-    using cfg::agent::kRecBlinkOnMs;
-    using cfg::agent::kRecBlinkPeriodMs;
-    const int radius = agent_layout::kRecDotRadius;
-    const int cx   = agent_layout::kRecDotX;
-    const int cy   = agent_layout::kRecDotY;
-    const int wipe = radius * 2 + 4;
-
-    if (mode == AgentState::RecDot::Off) {
-        if (s.recDotMode != AgentState::RecDot::Off) {
-            T().fillRect(cx - radius - 1, cy - radius - 1, wipe, wipe, kUiBg);
-        }
-        s.recDotMode  = AgentState::RecDot::Off;
-        s.recDotPhase = 255;
-        return;
-    }
-
-    uint8_t targetPh = 254;  // solid (grey)
-    if (mode == AgentState::RecDot::RedBlink) {
-        const bool lit = ((nowMs % kRecBlinkPeriodMs) < kRecBlinkOnMs);
-        targetPh = lit ? 1u : 0u;
-    }
-
-    if (mode == s.recDotMode && targetPh == s.recDotPhase) return;
-
-    T().fillRect(cx - radius - 1, cy - radius - 1, wipe, wipe, kUiBg);
-    s.recDotMode  = mode;
-    s.recDotPhase = targetPh;
-
-    if (mode == AgentState::RecDot::RedBlink && targetPh == 0u) return;  // off half
-
-    const uint16_t fill = (mode == AgentState::RecDot::Grey)
-                              ? agent_layout::kRecDotIdleColor
-                              : agent_layout::kRecDotActiveColor;
-    T().fillCircle(cx, cy, radius, fill);
+    (void)mode; (void)nowMs;
+    s.recDotMode = AgentState::RecDot::Off;
 }
 
 // ─── Thinking shell ──────────────────────────────────────────────────────────
 
 void paintThinkingShell(AgentState& s, uint8_t dotPhase) {
-    s.thinkDotPhase=dotPhase%3;
-    motion::drawThinking(millis());
+    s.thinkDotPhase = dotPhase % 3;
+    paintConversation(s, millis(), false);
 }
 
 void paintEyesHomeStatic(AgentState& s) {
@@ -470,63 +540,59 @@ void paintError(AgentState& s) {
     ui::paintKamiNotice(T(), s.noticeKind, kSystemStatusBarH);
 }
 
-// ─── Typewriter ──────────────────────────────────────────────────────────────
+// ─── Reply reveal ────────────────────────────────────────────────────────────
+//
+// The reveal chases the received text instead of gating it: the first chunk
+// paints one character at once, then text appears at a natural rate and never
+// lags more than kRevealMaxLag characters behind what has arrived. Typing ticks
+// play at most every kTypingCueMs while it moves, only when the microphone is
+// closed and Kami is not speaking.
 
 bool typewriterInProgress(const AgentState& s) {
-    if (s.stage != Stage::Reply || s.agentTextW <= 0) return false;
-    const char* view = skipWrappedLines(s.conv.displayText(), s.scrollLines, s.agentTextW);
-    const size_t vl = visibleWrappedWindowLen(view, s.agentMaxLines, s.agentTextW);
-    return view && view[0] && s.twRevealLen < vl;
+    if (s.stage != Stage::Reply) return false;
+    const char* text = s.conv.displayText();
+    return text && s.twRevealLen < strlen(text);
 }
 
 void resetTypewriter(AgentState& s) {
     s.twRevealLen = 0;
-    s.twLastMs    = millis() - cfg::agent::kCharIntervalMs;
-}
-
-void snapTypewriterToView(AgentState& s) {
-    s.conv.refreshDisplay(s.msgIndex);
-    const char* view = skipWrappedLines(s.conv.displayText(), s.scrollLines, s.agentTextW);
-    s.twRevealLen = visibleWrappedWindowLen(view, s.agentMaxLines, s.agentTextW);
     s.twLastMs    = millis();
 }
 
+void snapTypewriterToView(AgentState& s) {
+    s.conv.refreshDisplay(s.msgIndex); s.twRevealLen = strlen(s.conv.displayText());
+}
+
 bool typewriterRevealed(AgentState& s) {
-    if (s.stage != Stage::Reply || s.agentTextW <= 0) return false;
+    if (s.stage != Stage::Reply) return false;
     s.conv.refreshDisplay(s.msgIndex);
-    const char* view = skipWrappedLines(s.conv.displayText(), s.scrollLines, s.agentTextW);
-    return s.twRevealLen >= visibleWrappedWindowLen(view, s.agentMaxLines, s.agentTextW);
+    return s.twRevealLen >= strlen(s.conv.displayText());
+}
+
+static bool typingCueAllowed(const AgentState& s) {
+    return !s.continuous && !services::agent_speech::enabled() && !services::agent_speech::busy() &&
+           !services::agent_voice::isCapturing();
 }
 
 void serviceTypewriter(AgentState& s, uint32_t nowMs) {
-    using cfg::agent::kCharIntervalMs;
-    using cfg::agent::kFastBurstMax;
-    using cfg::agent::kFastBurstThreshold;
-
-    if (s.stage != Stage::Reply || s.agentTextW <= 0) return;
+    if (s.stage != Stage::Reply) return;
     s.conv.refreshDisplay(s.msgIndex);
-    const char* view = skipWrappedLines(s.conv.displayText(), s.scrollLines, s.agentTextW);
-    const size_t vl  = visibleWrappedWindowLen(view, s.agentMaxLines, s.agentTextW);
-    if (vl == 0 || s.twRevealLen >= vl) return;
-    if ((uint32_t)(nowMs - s.twLastMs) < kCharIntervalMs) return;
-    s.twLastMs = nowMs;
-
-    size_t remaining = vl - s.twRevealLen;
-    size_t burst     = 1;
-    if (vl >= kFastBurstThreshold && remaining > 0) {
-        burst = remaining / 24u;
-        if (burst < 2u)               burst = 2u;
-        if (burst > kFastBurstMax)    burst = kFastBurstMax;
-        if (burst > remaining)        burst = remaining;
+    const char* full = s.conv.displayText();
+    const size_t target = strlen(full);
+    if (s.twRevealLen > target) s.twRevealLen = target;
+    if (s.twRevealLen < target) {
+        const uint32_t elapsed = nowMs - s.twLastMs;
+        if (s.twRevealLen == 0 || elapsed >= cfg::agent::kRevealCharMs) {
+            const size_t step = s.twRevealLen == 0 ? 1 : std::max<size_t>(1, elapsed / cfg::agent::kRevealCharMs);
+            if (target - s.twRevealLen > cfg::agent::kRevealMaxLag) s.twRevealLen = target - cfg::agent::kRevealMaxLag;
+            s.twRevealLen = std::min(target, s.twRevealLen + step);
+            s.twLastMs = nowMs;
+            if ((unsigned char)full[s.twRevealLen - 1] > ' ' && typingCueAllowed(s) &&
+                nowMs - s.typingCueMs >= cfg::agent::kTypingCueMs &&
+                sfx::product::play(sfx::product::Sound::Typing)) s.typingCueMs = nowMs;
+        }
     }
-
-    char lastRevealed = ' ';
-    for (size_t n = 0; n < burst && s.twRevealLen < vl; n++) {
-        lastRevealed = view[s.twRevealLen];
-        s.twRevealLen++;
-    }
-    sfx::typewriterServiceChar(lastRevealed, s.twRevealLen - 1u);
-    paintReplyText(s);
+    paintConversation(s, nowMs, false);
 }
 
 }  // namespace render

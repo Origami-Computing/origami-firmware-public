@@ -74,14 +74,14 @@ using Bytes=std::vector<uint8_t>;
 std::map<std::string,Bytes> files;
 bool fatCatalog=false,enumerateCatalog=false;
 bool pauseDownload=false,pauseInDownload=false,clearPauseOnRead=false;
-bool noMemory=false,offline=false,ioRead=false,ioClose=false,corruptWrite=false;
+bool noMemory=false,offline=false,blankFlash=false,ioRead=false,ioClose=false,corruptWrite=false;
 int writes=0,failWrite=0,cancelPoint=0,checkpoints=0;
 size_t cut=SIZE_MAX;uint64_t space=1024*1024;
 namespace hal { namespace app_storage {
 std::string key(Medium m,const char* path){return std::to_string(int(m))+":"+path;}
-bool hasFlashStore(){return false;}
-Result initializeBlankFlash(Cancel){return Result::Ok;}
-Result mount(Medium){return offline?Result::Unavailable:Result::Ok;}
+bool flashStore=false;bool hasFlashStore(){return flashStore;}
+unsigned blankInits=0;Result initializeBlankFlash(Cancel){++blankInits;if(offline)return Result::Unavailable;blankFlash=false;return Result::Ok;}
+Result mount(Medium m){return offline||(blankFlash&&m==Medium::Flash)?Result::Unavailable:Result::Ok;}
 Result mkdir(Medium,const char*){return Result::Ok;}
 Result freeBytes(Medium,uint64_t& n){n=space;return Result::Ok;}
 Result read(Medium m,const char* path,uint8_t* out,size_t cap,size_t& n){n=0;if(ioRead)return Result::Io;auto it=files.find(key(m,path));if(it==files.end())return Result::Missing;
@@ -152,6 +152,9 @@ int main(){
    assert(install(id,b.bytes,b.size,cancel)==Result::Cancelled);resetFaults();expectVersion(id,"1");}
  files=baseline;resetFaults();space=1;assert(install(id,b.bytes,b.size)==Result::NoSpace);expectVersion(id,"1");
  resetFaults();offline=true;assert(install(id,b.bytes,b.size)==Result::Unavailable);resetFaults();
+ // A never-formatted internal app store is created on first install.
+ files=baseline;blankFlash=true;hal::app_storage::blankInits=0;assert(install(id,b.bytes,b.size)==Result::Ok);
+ assert(hal::app_storage::blankInits==1&&!blankFlash);expectVersion(id,"2");files=baseline;resetFaults();
  ioRead=true;assert(install(id,b.bytes,b.size)==Result::Io);resetFaults();expectVersion(id,"1");
  noMemory=true;assert(load(id,p)==Result::NoMemory);resetFaults();
  // Corrupting the new data cannot publish it.
@@ -262,6 +265,10 @@ int main(){
  ticket=jobs::requestDownload(qr.c_str());assert(ticket);jobs::process(nullptr);
  assert(jobs::take(ticket,result,nullptr,nullptr,&installed)&&result==Result::Ok);
  assert(installed.medium==Medium::Sd);expectVersion(installed,"1");
+ // With the customapps partition (USB-flashed table), downloads go to internal flash.
+ hal::app_storage::flashStore=true;ticket=jobs::requestDownload(qr.c_str());assert(ticket);jobs::process(nullptr);
+ assert(jobs::take(ticket,result,nullptr,nullptr,&installed)&&result==Result::Ok&&installed.medium==Medium::Flash);
+ hal::app_storage::flashStore=false;
  // Real USB adapter drives the real job owner and store, without a serial device.
  Print serial;
  auto command=[&](const std::string& line){serial.output.clear();assert(tooling::handleCustomAppCommand(line.c_str(),serial));return serial.output;};

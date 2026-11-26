@@ -25,7 +25,8 @@ void onEnter(AgentState& s) {
     sThinkingEnteredMs = millis();
     s.thinkDotPhase = 255;  // force first repaint
     snprintf(s.thinkStatus, sizeof(s.thinkStatus), "%s", "Connecting agent");
-    motion::startThinking();
+    motion::cancel();
+    render::paintThinkingShell(s,0);
 }
 
 void onExit(AgentState& /*s*/) {
@@ -38,15 +39,16 @@ void onTick(AgentState& s, uint32_t nowMs) {
         snprintf(s.thinkStatus, sizeof(s.thinkStatus), "%s", status);
         s.thinkDotPhase = 255;
     }
-    if (!motion::tick(s,nowMs) && phase != s.thinkDotPhase) {
-        render::paintThinkingShell(s, phase);
-    }
+    // The painter skips unchanged frames; the eyes glance and then look around.
+    render::paintThinkingShell(s, phase);
     flow::pollThinking(sThinkingEnteredMs);
 }
 
-void onInput(AgentState& /*s*/, hal::input::InputEvent ev) {
+void onInput(AgentState& s, hal::input::InputEvent ev) {
     // Lone A press: abort to eyes home. B press: abort to menu.
     using ET = hal::input::EventType;
+    if (ev.type == ET::ButtonC_Tap) return;   // C keeps its OS meaning only
+    if (s.handsFree) s.handsFreeReady = false;
     if (ev.type == ET::ButtonA_Tap || ev.type == ET::ButtonA_Release) {
         flow::cancelSend(CancelTarget::Eyes);
     } else if (ev.type == ET::ButtonB_Press) {

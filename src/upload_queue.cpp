@@ -660,15 +660,19 @@ bool UploadQueue::processOnePending() {
 // ---------------------------------------------------------------------------
 
 UploadQueue::UploadResult UploadQueue::uploadWithGalleryReceipt(QueueItem& item) {
+    services::media_upload::current().set(0,0);
+    const bool video = strcmp(item.type,"video")==0;
+    // Dispatch before entering the multipart implementation: its large local
+    // buffers must not remain on the worker stack during the video TLS handshake.
     if(item.deleteAfterUpload || (strcmp(item.type,"image") && strcmp(item.type,"video")))
-        return doUpload(item);
+        return video ? doVideoUpload(item) : doUpload(item);
     const auto revision=core::secrets::backendRequest().revision;
     char binding[65];
     size_t bytes=0;
     uint32_t modified=0;
     const bool identified=services::video_upload::binding(core::secrets::backendConfig(),binding)
         && hal::sd::fileInfo(item.filePath,bytes,modified);
-    const auto result=doUpload(item);
+    const auto result=video ? doVideoUpload(item) : doUpload(item);
     if(identified && result.kind==UploadResultKind::HttpResponse && result.httpCode>=200 &&
        result.httpCode<300 && revision==core::secrets::backendRequest().revision)
         services::gallery_receipt::remember(item.filePath,binding,bytes,modified);
@@ -676,8 +680,6 @@ UploadQueue::UploadResult UploadQueue::uploadWithGalleryReceipt(QueueItem& item)
 }
 
 UploadQueue::UploadResult UploadQueue::doUpload(QueueItem& item) {
-    services::media_upload::current().set(0,0);
-    if(strcmp(item.type,"video")==0)return doVideoUpload(item);
     const auto config = core::secrets::backendConfig();
     const char* liveUrl = config.url;
     const char* liveKey = config.apiKey;

@@ -1,6 +1,6 @@
 /**
  * @file photos_app.cpp
- * @brief Photos â€” browse JPEG photos and AVI videos together on SD card.
+ * @brief Photos — browse JPEG photos and AVI videos together on SD card.
  *
  * The photo-library service scans JPEGs in /photos on enter and owns browsing
  * reservations, sync handoff and local-delete/upload ordering. Camera captures
@@ -9,20 +9,32 @@
  *
  * PhotoPreview reduces still images into the canvas. Video thumbnails and playback
  * use the video services. Cover and exit free the gallery decoder workspace.
- * All UI chrome uses ui::scene::Builder â€” no direct TFT calls in this file.
+ *
+ * Presentation: media fills the panel (status bar hidden), cover-cropped so
+ * there are no bars. ui/photos_view.h draws an index pill at the top, the
+ * capture date/time at the bottom (from EXIF; omitted when unknown), a play
+ * badge on videos, and on demand an action sheet, a delete
+ * confirmation and a brief "Added  to  upload  queue" notice. Overlays repaint in place over the decoded
+ * image; only closing an overlay or changing item re-decodes.
+ *
+ * Input: apps/photos_flow.h owns the control state machine (shared with Kami
+ * Screen Studio's interactive Photos demo). This file performs its effects.
+ * Turn = previous/next; press = open the action sheet; RB = play the video
+ * under the cursor (nothing on a photo); LB = close overlay, else leave Photos.
+ * Upload only adds the item to the upload queue; the queue uploads it as usual
+ * (browsing pauses uploads, so transfers continue after leaving Photos).
  */
 
 #include "apps/photos_app.h"
 #include "apps/videos_app.h"
 #include "services/video_thumbnail.h"
-#include "apps/photos_policy.h"
+#include "apps/photos_flow.h"
 
 #include <Arduino.h>
 #include <string.h>
 #include "app.h"
 #include "services/photo_library.h"
 #include "services/uploads.h"
-#include "services/media_upload_progress.h"
 #include "services/gallery_receipt.h"
 #include "config/ui_layout.h"
 #include "config/ui_theme.h"
@@ -33,24 +45,32 @@
 #include "scene/screen.h"
 #include "ui/draw.h"
 #include "ui/nav_controls.h"
-#include "ui/scene.h"
+#include "ui/photos_view.h"
+#include "ui/photos_loader.h"
+#include "apps/photos_cards.h"
+#include "core/exif_capture_time.h"
+#include "core/board_time.h"
+#include <time.h>
 
 namespace apps {
 namespace photos {
 
-enum PhotosState { PH_EMPTY, PH_VIEWING, PH_SYNCING, PH_ERROR };
+namespace view = ui::photos_view;
+using flow::Mode;
+using flow::Command;
 
-static PhotosState s_state      = PH_EMPTY;
-static int         s_count      = 0;
-static int         s_idx        = 0;   // 0 = newest photo
+static constexpr uint32_t kNoticeMs = 1800;
+
+static flow::Model s_m;                        // mode, index, count, sheet focus
 static bool        s_needRender = false;
-static bool        s_needPhotoRender = true;
-static bool s_offerUpload=false;
-static bool        s_actionsOpen = false;
-static policy::Action s_action = policy::Action::Escape;
+static bool        s_needPhotoRender = true;   // re-decode media (clears overlays)
+static bool        s_overlayFull = false;      // draw scrim + whole overlay, not just focus
+static bool        s_offerUpload = true;       // cloud has not confirmed this item (sheet header)
 static bool        s_deleteFailed = false;
 static const char* s_uploadError=nullptr;
-static void startSync();
+static const char* s_notice = nullptr;         // brief queued confirmation over the photo
+static uint32_t    s_noticeUntil = 0;
+static char        s_captionDate[20] = "";     // last drawn caption, for status/tests
 static const char* s_error = "Cannot read photos";
 static services::photos::Library s_library;
 static services::video::Thumbnail s_thumbnail;
@@ -65,27 +85,32 @@ static uint32_t s_openMs = 0;
 static uint32_t s_pauseMs = 0;
 static uint32_t s_pauseStartedMs = 0;
 static bool s_openPending = false;
-static bool s_browsePending = false, s_reloadAfterPause = false;
+static bool s_browsePending = false;
+static uint32_t s_loaderStart = 0;      // shuffle clock for the loading screen
+static uint32_t s_loaderFrameMs = 0;
+static bool s_loaderPainted = false;    // full loader on canvas; later frames repaint the stack only
+static uint32_t s_loaderFrames = 0;     // frames painted since open (serial evidence)
+static bool s_animateWait = true;       // shuffle while uploads pause (dev toggle: photos wait-anim)
+
+static const services::photos::Library::File& current() { return s_library[s_m.index]; }
 
 void dumpStatus(Stream& output) {
-    const bool viewing = s_state == PH_VIEWING && s_count > 0;
-    output.printf("[photos] status active=%d ready=%d index=%d count=%d ok=%d pixels=%08lx nonblack=%u menu=%d action=%s delete_error=%d open_ms=%lu pause_ms=%lu catalog_us=%lu alloc_us=%lu metadata=%lu path=%s\n",
+    const bool viewing = s_m.viewing() && s_m.count > 0;
+    output.printf("[photos] status active=%d ready=%d index=%d count=%d ok=%d pixels=%08lx nonblack=%u menu=%d confirm=%d action=%s rows=%d cloud=%s delete_error=%d date=%s notice=%s open_ms=%lu pause_ms=%lu catalog_us=%lu alloc_us=%lu metadata=%lu path=%s\n",
                   NavHandler::instance().top() == &app ? 1 : 0,
-                  viewing && !s_needRender && (!s_library[s_idx].video || s_thumbnailIndex==s_idx) ? 1 : 0, viewing ? s_idx + 1 : 0, s_count,
+                  viewing && !s_needRender && (!current().video || s_thumbnailIndex==s_m.index) ? 1 : 0,
+                  viewing ? s_m.index + 1 : 0, s_m.count,
                   s_lastRendered ? 1 : 0, (unsigned long)s_lastPixels, s_lastNonblack,
-                  s_actionsOpen ? 1 : 0, s_action == policy::Action::Upload ? "upload" : s_action == policy::Action::Delete ? "delete" : "esc",
-                  s_deleteFailed ? 1 : 0,
+                  s_m.overlay() ? 1 : 0, s_m.mode == Mode::Confirm ? 1 : 0,
+                  s_m.focusName(), s_m.overlay() ? s_m.sheet.count : 0,
+                  s_m.overlay() ? (s_offerUpload ? "no" : "yes") : "-",
+                  s_deleteFailed ? 1 : 0, s_captionDate[0] ? s_captionDate : "-", s_noticeUntil && s_notice ? s_notice : "-",
                   (unsigned long)s_openMs, (unsigned long)s_pauseMs,
                   (unsigned long)s_library.timings().totalUs,
                   (unsigned long)s_library.timings().allocationUs,
                   (unsigned long)s_library.timings().metadataReads,
-                  viewing ? s_library[s_idx].path : "-");
+                  viewing ? current().path : "-");
 }
-
-// Sync (B): drain the upload queue to the cloud with a progress bar.
-static int      s_syncTotal   = 0;   // pending items at the moment sync started
-static uint32_t s_syncDoneMs  = 0;   // millis() when the queue first hit empty (0 = not done)
-static uint32_t s_syncPollMs  = 0;   // redraw rate-limit
 
 static bool pauseBrowsingIo() {
     const auto result = s_library.beginBrowsing(true);
@@ -96,14 +121,16 @@ static bool pauseBrowsingIo() {
     return false;
 }
 
-static void loadPhotos() {
-    s_reloadAfterPause = true;
-    s_actionsOpen = false;
-    s_deleteFailed = false;
+static void redrawImage() {
     s_needPhotoRender = true;
-    s_idx = 0;
-    s_count = 0;
-    s_state = PH_ERROR;
+    s_needRender = true;
+}
+
+static void loadPhotos() {
+    s_deleteFailed = false;
+    s_uploadError = nullptr;
+    s_noticeUntil = 0;
+    flow::loadFailed(s_m);
     s_thumbnail.clear();s_thumbnailIndex=-1;
     s_library.clear();
     if (!s_browsePending) s_pauseStartedMs = millis();
@@ -112,146 +139,174 @@ static void loadPhotos() {
     if (paused) {
         const auto result = s_library.load();
         switch (result) {
-            case services::photos::Library::LoadResult::Ok:
-                s_count = (int)s_library.count();
-                s_state = s_count ? PH_VIEWING : PH_EMPTY;
+            case services::photos::Library::LoadResult::Ok: {
+                const int count = (int)s_library.count();
+                int index = 0;
+                if (s_resumePath[0])
+                    for (int i = 0; i < count; ++i) if (!strcmp(s_resumePath, s_library[i].path)) { index = i; break; }
+                flow::loaded(s_m, count, index);
                 break;
+            }
             case services::photos::Library::LoadResult::NoSd: s_error = "SD card unavailable"; break;
             case services::photos::Library::LoadResult::NoMemory: s_error = "Not enough memory"; break;
             case services::photos::Library::LoadResult::ReadError: s_error = "Cannot read photos"; break;
         }
     }
-    if(s_resumePath[0] && !s_browsePending){
-        for(int i=0;i<s_count;++i)if(!strcmp(s_resumePath,s_library[i].path)){s_idx=i;break;}
-        s_resumePath[0]=0;
+    if (!s_browsePending) s_resumePath[0] = 0;
+    Serial.printf("[photos] catalog count=%d state=%d loader_frames=%lu ms=%lu newest=%s\n", s_m.count, (int)s_m.mode, (unsigned long)s_loaderFrames, (unsigned long)(millis() - s_loaderStart),
+                  s_m.count ? s_library[0].path : "-");
+    redrawImage();
+}
+
+// ---------------------------------------------------------------------------
+// Effects
+// ---------------------------------------------------------------------------
+
+static void deletePhoto() {
+    if (!s_library.browsing() || s_m.count <= 0) return;
+    char path[sizeof(services::photos::Library::File::path)];
+    strlcpy(path, current().path, sizeof(path));
+    int removedUploads = 0;
+    if (!s_library.removeAt((size_t)s_m.index, &removedUploads)) {
+        Serial.printf("[photos] delete ok=0 path=%s\n", path);
+        s_deleteFailed = true;
+        flow::deleteFailed(s_m);
+        s_overlayFull = true;
+        redrawImage();
+        return;
     }
-    Serial.printf("[photos] catalog count=%d state=%d newest=%s\n", s_count, (int)s_state,
-                  s_count ? s_library[0].path : "-");
-    s_needRender = true;
+    s_thumbnail.clear();s_thumbnailIndex=-1;
+    flow::removed(s_m, (int)s_library.count());
+    s_lastRendered = false;
+    s_deleteFailed = false;
+    redrawImage();
+    Serial.printf("[photos] delete ok=1 queue=%d count=%d path=%s\n", removedUploads, s_m.count, path);
+}
+
+static void uploadFailed(const char* message) {
+    s_uploadError = message;
+    flow::uploadFailed(s_m);   // header shows the error
+    s_overlayFull = true;
+    redrawImage();
+}
+
+// Add the selected item to the upload queue and keep browsing. The queue's
+// worker uploads it as usual once the gallery's browsing pause ends.
+static void uploadSelected() {
+    using E=UploadQueue::VideoEnqueue;
+    if(!s_library.browsing() || s_m.index<0 || s_m.index>=s_m.count)return;
+    if(!services::uploads::ensureInit()){ uploadFailed("Upload unavailable"); return; }
+    auto queued = [](const char* message) {
+        s_uploadError = nullptr;
+        flow::uploadQueued(s_m);
+        s_notice = message;
+        s_noticeUntil = millis() + kNoticeMs;
+        if (!s_noticeUntil) s_noticeUntil = 1;
+        redrawImage();
+    };
+    if(!current().video){
+        auto& queue=services::uploads::queue();
+        const auto& file=current();
+        const char* name=strrchr(file.path,'/');
+        const auto view=queue.view(name?name+1:file.path);
+        if(view.count && !strcasecmp(view.item.filePath,file.path)){
+            if(view.item.status==QSTATUS_FAILED && queue.forceSend(view.item.id)!=UploadQueue::ForceResult::Scheduled){
+                uploadFailed("Queue busy, try again"); return;
+            }
+            queued(view.item.status==QSTATUS_FAILED ? "Added  to  upload  queue" : "Already  in  upload  queue"); return;
+        }
+        if(queue.enqueue("image",file.path,"image/jpeg",false)){ queued("Added  to  upload  queue"); return; }
+        uploadFailed("Cannot queue photo"); return;
+    }
+    switch(services::uploads::queue().enqueueVideo(current().path)){
+      case E::Queued: queued("Added  to  upload  queue"); return;
+      case E::AlreadyQueued: queued("Already  in  upload  queue"); return;
+      case E::Busy: uploadFailed("Upload busy, try again"); return;
+      case E::Full: uploadFailed("Upload queue full"); return;
+      case E::AccountRequired: uploadFailed("Connect account first"); return;
+      case E::AccountChanged: uploadFailed("Queued for other account"); return;
+      case E::Invalid: uploadFailed("Cannot upload video"); return;
+      case E::StorageUnavailable: uploadFailed("Cannot save request"); return;
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Draw
 // ---------------------------------------------------------------------------
 
-static void closeActions() {
-    s_uploadError=nullptr;
-    s_actionsOpen = false;
-    s_deleteFailed = false;
-    s_needPhotoRender = true;
-    s_needRender = true;
+static void drawSheet(TFT_eSprite& canvas, view::Bounds s, bool full) {
+    view::SheetRow rows[3];
+    for (int i = 0; i < s_m.sheet.count; ++i) {
+        const auto action = s_m.sheet.at(i);
+        rows[i] = action == policy::Action::Play   ? view::SheetRow{"Play", view::Icon::Play, false}
+                : action == policy::Action::Upload ? view::SheetRow{"Upload", view::Icon::Upload, false}
+                                                   : view::SheetRow{"Delete", view::Icon::Trash, true};
+    }
+    const view::SheetModel model{current().video ? "Video" : "Photo", s_m.index + 1, s_m.count, !s_offerUpload,
+                                 s_deleteFailed ? "Cannot delete" : s_uploadError,
+                                 rows, s_m.sheet.count, s_m.row};
+    view::sheet(canvas, s, model, full);
 }
 
-static void deletePhoto() {
-    if (!s_library.browsing() || s_count <= 0) return;
-    char path[sizeof(services::photos::Library::File::path)];
-    strlcpy(path, s_library[s_idx].path, sizeof(path));
-    int removedUploads = 0;
-    if (!s_library.removeAt((size_t)s_idx, &removedUploads)) {
-        Serial.printf("[photos] delete ok=0 path=%s\n", path);
-        s_deleteFailed = true;
-        s_action = policy::Action::Escape;
-        s_needRender = true;
-        return;
-    }
-    s_thumbnail.clear();s_thumbnailIndex=-1;
-    s_count = (int)s_library.count();
-    s_idx = policy::indexAfterRemoval(s_idx, s_count);
-    s_state = s_count ? PH_VIEWING : PH_EMPTY;
-    s_lastRendered = false;
-    closeActions();
-    Serial.printf("[photos] delete ok=1 queue=%d count=%d path=%s\n", removedUploads, s_count, path);
+static void drawOverlay(TFT_eSprite& canvas, view::Bounds s, bool full) {
+    if (s_m.mode == Mode::Sheet) drawSheet(canvas, s, full);
+    else if (s_m.mode == Mode::Confirm) view::confirmDelete(canvas, s, current().video, s_m.confirmDelete, full);
 }
 
-static void uploadSelected() {
-    using E=UploadQueue::VideoEnqueue;
-    if(!s_library.browsing() || s_idx<0 || s_idx>=s_count)return;
-    if(!services::uploads::ensureInit()){
-        s_uploadError="Upload queue unavailable";s_needRender=true;return;
+// Loading screen: shuffling cards of the newest photos (or placeholders).
+static void paintLoader(TFT_eSprite& canvas, bool full) {
+    const view::Bounds s{(int)canvas.width(), (int)canvas.height()};
+    const auto deck = cards::deck();
+    const uint32_t ms = millis() - s_loaderStart;
+    if (full || !s_loaderPainted) {
+        ui::photos_loader::photosLoader(canvas, s, deck, ms);
+        hal::display::markAllDirty();
+    } else {
+        namespace pl = ui::photos_loader;
+        pl::stack(canvas, s, deck, ms);
+        hal::display::markDirtyRect(pl::kStackX, pl::kStackY, pl::kStackW, pl::kStackH);
     }
-    if(!s_library[s_idx].video){
-        auto& queue=services::uploads::queue();
-        const auto& file=s_library[s_idx];
-        const char* name=strrchr(file.path,'/');
-        const auto view=queue.view(name?name+1:file.path);
-        if(view.count && !strcasecmp(view.item.filePath,file.path)){
-            if(view.item.status==QSTATUS_FAILED && queue.forceSend(view.item.id)!=UploadQueue::ForceResult::Scheduled){
-                s_uploadError="Queue busy. Try again.";s_needRender=true;return;
-            }
-            closeActions();startSync();return;
-        }
-        if(queue.enqueue("image",file.path,"image/jpeg",false)){
-            closeActions();startSync();return;
-        }
-        s_uploadError="Cannot queue photo";s_needRender=true;return;
-    }
-    const auto result=services::uploads::queue().enqueueVideo(s_library[s_idx].path);
-    switch(result){
-      case E::Queued: case E::AlreadyQueued: closeActions();startSync();return;
-      case E::Busy:s_uploadError="Upload busy. Try again.";break;
-      case E::Full:s_uploadError="Upload queue full";break;
-      case E::AccountRequired:s_uploadError="Connect your account first";break;
-      case E::AccountChanged:s_uploadError="Queued for another account";break;
-      case E::Invalid:s_uploadError="Cannot upload this video";break;
-      case E::StorageUnavailable:s_uploadError="Cannot save upload request";break;
-    }
-    s_needRender=true;
+    s_loaderPainted = true;
+    ++s_loaderFrames;
+    s_loaderFrameMs = millis();
 }
 
-static void drawActions(ui::scene::Scene& scene, int16_t W, int16_t H) {
-    const int16_t width = 122;
-    const int16_t height = 32;
-    const int16_t gap = 6;
-    const int16_t x = W - kScreenInsetX - width;
-    const int rows=s_offerUpload?3:2;
-    const int16_t top = kSystemStatusBarH + (H - kSystemStatusBarH - 22 - height * rows - gap*(rows-1)) / 2;
-    for (int row = 0; row < rows; ++row) {
-        const auto action=policy::actionAt(row,s_offerUpload);
-        const bool selected=action==s_action;
-        const uint16_t bg = selected ? TFT_BLACK : TFT_WHITE;
-        const uint16_t fg = selected ? TFT_WHITE : TFT_BLACK;
-        const int16_t y = top + row * (height + gap);
-        const char* id = action==policy::Action::Upload?"photos.action.upload":action==policy::Action::Delete?"photos.action.delete":"photos.action.esc";
-        auto* border = scene.addRect(id, {x, y, width, height}, bg, 6, 2);
-        if (border) {
-            border->strokeColor = selected ? TFT_WHITE : TFT_BLACK;
-            border->strokeWidth = 1;
-        }
-        if (selected) {
-            // An explicit cursor avoids relying on black/white inversion to
-            // communicate which of these destructive/non-destructive rows is active.
-            scene.addLine("photos.focus.top", x + 6, y + 9, x + 13, y + 16, fg, 3);
-            scene.addLine("photos.focus.bottom", x + 6, y + 23, x + 13, y + 16, fg, 3);
-            scene.addLine("photos.focus.top.bold", x + 5, y + 9, x + 12, y + 16, fg, 3);
-            scene.addLine("photos.focus.bottom.bold", x + 5, y + 23, x + 12, y + 16, fg, 3);
-        }
-        scene.addLabel(action==policy::Action::Upload?"photos.action.upload.label":action==policy::Action::Delete?"photos.action.delete.label":"photos.action.esc.label",
-                       {(int16_t)(x + 18), y, 76, height}, action==policy::Action::Upload?"Upload":action==policy::Action::Delete?"Delete":"Esc",
-                       fg, bg, 2, ui::scene::TextAlign::MiddleCenter, 3);
-        const int16_t ix = x + width - 23;
-        const int16_t iy = y + 8;
-        if(action==policy::Action::Upload){
-            scene.addLine("photos.upload.shaft",ix+8,iy+16,ix+8,iy,fg,3);
-            scene.addLine("photos.upload.left",ix+2,iy+6,ix+8,iy,fg,3);
-            scene.addLine("photos.upload.right",ix+14,iy+6,ix+8,iy,fg,3);
-        } else if (action == policy::Action::Delete) {
-            auto* body = scene.addRect("photos.trash.body", {(int16_t)(ix + 2), (int16_t)(iy + 5), 12, 13}, bg, 0, 3);
-            if (body) { body->strokeColor = fg; body->strokeWidth = 1; }
-            scene.addLine("photos.trash.lid", ix, iy + 3, ix + 16, iy + 3, fg, 3);
-            scene.addLine("photos.trash.handle", ix + 5, iy, ix + 11, iy, fg, 3);
-            scene.addLine("photos.trash.left", ix + 6, iy + 8, ix + 6, iy + 14, fg, 3);
-            scene.addLine("photos.trash.right", ix + 10, iy + 8, ix + 10, iy + 14, fg, 3);
-        } else {
-            scene.addLine("photos.escape.shaft", ix, iy + 8, ix + 16, iy + 8, fg, 3);
-            scene.addLine("photos.escape.top", ix + 10, iy + 2, ix + 16, iy + 8, fg, 3);
-            scene.addLine("photos.escape.bottom", ix + 10, iy + 14, ix + 16, iy + 8, fg, 3);
-        }
+
+// First loader frame before the synchronous catalog read (replaces the old splash).
+static void showLoaderNow() {
+    if (hal::display::isOptimizedRender()) return;
+    cards::load();
+    s_loaderStart = millis();
+    s_loaderFrames = 0;
+    s_loaderPainted = false;
+    paintLoader(hal::display::canvas(), true);
+    hal::display::flush();
+}
+
+// Formats the photo's EXIF capture time as local "24 Nov" / "4:12 pm". Times
+// with an offset (Origami writes UTC +00:00) convert through the device
+// timezone; times without one are already local. Leaves both empty when the
+// photo carries no capture time, so nothing is drawn.
+static void captureCaption(const uint8_t* jpeg, size_t bytes, char* date, char* clock) {
+    core::exif::CaptureTime t{};
+    if (!core::exif::readCaptureTime(jpeg, bytes, t)) return;
+    int year = t.year, month = t.month, day = t.day, hour = t.hour, minute = t.minute;
+    if (t.hasOffset) {
+        const time_t utc = (time_t)core::exif::toUnix(t);
+        struct tm local{};
+        if (!localtime_r(&utc, &local)) return;
+        year = local.tm_year + 1900; month = local.tm_mon + 1; day = local.tm_mday;
+        hour = local.tm_hour; minute = local.tm_min;
     }
-    if (s_deleteFailed || s_uploadError) {
-        scene.addRect("photos.delete.error.bg", {0, (int16_t)(H - 44), W, 22}, TFT_WHITE, 0, 4);
-        scene.addLabel("photos.delete.error", {0, (int16_t)(H - 44), W, 22}, s_uploadError?s_uploadError:"Cannot delete item",
-                       TFT_BLACK, TFT_WHITE, 1, ui::scene::TextAlign::MiddleCenter, 5);
+    int currentYear = year;  // without a trusted clock, never claim a different year
+    if (core::time::isSynced()) {
+        const time_t now = ::time(nullptr);
+        struct tm today{};
+        if (localtime_r(&now, &today)) currentYear = today.tm_year + 1900;
     }
+    const auto text = view::formatCapture(year, month, day, hour, minute, currentYear);
+    strlcpy(date, text.date, 20);
+    strlcpy(clock, text.time, 12);
 }
 
 static void onDraw(TFT_eSprite& canvas) {
@@ -260,129 +315,99 @@ static void onDraw(TFT_eSprite& canvas) {
 
     const int16_t W  = (int16_t)canvas.width();
     const int16_t H  = (int16_t)canvas.height();
-    const int16_t cH = H - kSystemStatusBarH;
+    const view::Bounds s{W, H};
 
-    ui::scene::Scene& scene = ui::scene::scratchScene();
-    scene.clear();
-    ui::scene::setCurrentScene(&scene);
-    ui::scene::Builder b(scene, W, H);
+    if (s_m.mode == Mode::Error && s_browsePending) {
+        // Waiting for uploads to pause: animate instead of showing an error.
+        if (s_loaderPainted && (!s_animateWait || millis() - s_loaderFrameMs < ui::photos_loader::kFrameMs)) return;
+        paintLoader(canvas, false);
+        return;
+    }
+    // On open, keep the cards up until the first item's thumbnail is ready
+    // instead of flashing a black "Loading preview..." frame.
+    if (s_loaderPainted && s_m.viewing() && s_m.count && current().video && s_thumbnailIndex != s_m.index) {
+        s_needRender = true;   // the loader already on screen stays until then
+        return;
+    }
+    s_loaderPainted = false;
 
-    if (s_state == PH_SYNCING) {
-        const auto sync = s_library.syncStatus();
-        const int pend = sync.pending;
-        const int failed = sync.failed;
-        const int done = s_syncTotal > 0 && sync.confirmed >= (uint32_t)s_syncTotal
-            ? s_syncTotal : (int)sync.confirmed;
-        const bool finished = (pend == 0);
-
-        b.clearContent(kUiBg);
-        b.panelHeader("sync.title", "Sync to cloud");
-        char line[48];
-        const auto bytes=services::media_upload::current().snapshot();
-        if (s_syncTotal < 0) {
-            b.labelCenterMuted("sync.msg", "Upload queue unavailable");
-        } else if (s_syncTotal == 0) {
-            b.labelCenterMuted("sync.msg", "Nothing to sync");
-        } else if (!sync.connected && !finished) {
-            b.statusLine("sync.msg", "Connecting Wi-Fi...", kUiMuted);
-        } else if (finished) {
-            if (failed > 0) snprintf(line, sizeof(line), "Synced %d, %d failed", done, failed);
-            else if (done == s_syncTotal) snprintf(line, sizeof(line), "All synced (%d)", done);
-            else snprintf(line, sizeof(line), "%d uploads confirmed", done);
-            b.statusLine("sync.msg", line, kUiFg);
-        } else {
-            if(sync.transferring && bytes.total)
-                snprintf(line,sizeof(line),"%lu.%02lu / %lu.%02lu MB",
-                         (unsigned long)(bytes.sent/1000000), (unsigned long)(bytes.sent%1000000/10000),
-                         (unsigned long)(bytes.total/1000000), (unsigned long)(bytes.total%1000000/10000));
-            else snprintf(line,sizeof(line),"Waiting to upload...");
-            b.statusLine("sync.msg", line, kUiFg);
-        }
-        if (!finished && sync.connected && sync.transferring && bytes.total) b.progressBar("sync.bar",bytes.sent,bytes.total);
-        else if (finished && s_syncTotal>0 && done==s_syncTotal) b.progressBar("sync.bar",1,1);
-
-        scene.render(canvas);
+    if (s_m.mode == Mode::Error || s_m.mode == Mode::Empty) {
+        if (s_m.mode == Mode::Error) view::message(canvas, s, s_error, "Press the dial to try again.", nullptr);
+        else view::message(canvas, s, "No photos yet", "Photos and videos from Camera", "will show up here.");
         hal::display::markAllDirty();
         return;
     }
 
-    if (s_state == PH_ERROR || s_state == PH_EMPTY) {
-        b.clearContent(kUiBg);
-        if (s_state == PH_ERROR) b.statusLine("photos.error", s_error, kUiFg);
-        else b.emptyState("photos.empty", "No photos or videos yet.", "");
-        scene.render(canvas);
-        hal::display::markAllDirty();
-        return;
-    }
-
-    // Menu focus changes reuse the existing image on the canvas.
-    if (s_actionsOpen && !s_needPhotoRender) {
-        drawActions(scene, W, H);
-        scene.render(canvas);
+    // In-place updates over the decoded image: no SD/JPEG work.
+    if (!s_needPhotoRender) {
+        drawOverlay(canvas, s, s_overlayFull);
+        s_overlayFull = false;
         hal::display::markAllDirty();
         return;
     }
     s_needPhotoRender = false;
 
-    // Shared page background around the photo.
-    b.clearContent(kUiBg);
-    scene.render(canvas);
-    scene.clear();
-
-    // Decode and scale JPEG into canvas â€” all low-level work in the HAL
-    const char* path = s_library[s_idx].path;
-    const bool video=s_library[s_idx].video;
+    // Media fills the panel: cover scaling crops the overflow, so no bars.
+    canvas.fillRect(0, 0, W, H, view::kBlack);
+    const char* path = current().path;
+    const bool video = current().video;
+    const uint32_t decodeStarted = millis();
+    s_preview.setCover(true);  // photos and video thumbnails fill the panel (cover crop)
     const bool rendered = video
-        ? s_thumbnailIndex==s_idx && hal::display::drawJpegBufferScaled(s_thumbnail.data(),s_thumbnail.size(),0,kSystemStatusBarH,W,cH-22)
-        : s_preview.draw(path,0,kSystemStatusBarH,W,cH-22);
-    if (!rendered) b.statusLine("photos.read_error", video && s_thumbnailIndex!=s_idx ? "Loading preview..." : "Cannot open media", kUiFg);
+        ? s_thumbnailIndex==s_m.index && (s_preview.drawBuffer(s_thumbnail.data(),s_thumbnail.size(),0,0,W,H) ||
+                                          hal::display::drawJpegBufferScaled(s_thumbnail.data(),s_thumbnail.size(),0,0,W,H,
+                                                                             hal::display::ImageFit::Cover))
+        : s_preview.draw(path,0,0,W,H);
+    const uint32_t decodeMs = millis() - decodeStarted;
 
-    // A sparse canvas fingerprint makes blank/stale gallery renders testable over serial.
+    // A sparse canvas fingerprint makes blank/stale gallery renders testable over
+    // serial. Taken before any chrome so it describes the decoded media only.
     uint32_t pixels = 2166136261u;
     unsigned nonblack = 0;
-    for (int y = kSystemStatusBarH; y < H - 22; y += 8) {
+    for (int y = 0; y < H; y += 8) {
         for (int x = 0; x < W; x += 8) {
             const uint16_t pixel = canvas.readPixel(x, y);
             pixels = (pixels ^ pixel) * 16777619u;
             if (pixel) ++nonblack;
         }
     }
-    Serial.printf("[photos] render index=%d count=%d ok=%d pixels=%08lx nonblack=%u modified=%llu path=%s\n",
-                  s_idx + 1, s_count, rendered ? 1 : 0, (unsigned long)pixels, nonblack,
-                  (unsigned long long)s_library[s_idx].modified, path);
+    Serial.printf("[photos] render index=%d count=%d ok=%d decode_ms=%lu pixels=%08lx nonblack=%u modified=%llu path=%s\n",
+                  s_m.index + 1, s_m.count, rendered ? 1 : 0, (unsigned long)decodeMs, (unsigned long)pixels, nonblack,
+                  (unsigned long long)current().modified, path);
     s_lastRendered = rendered;
     s_lastPixels = pixels;
     s_lastNonblack = nonblack;
-    if (s_openPending && (!video || s_thumbnailIndex==s_idx)) {
+    if (s_openPending && (!video || s_thumbnailIndex==s_m.index)) {
         s_openMs = millis() - s_openStartedMs;
         s_openPending = false;
     }
 
-    // Overlay: photo index counter at the bottom
-    char indexBuf[24];
-    snprintf(indexBuf, sizeof(indexBuf), "%d / %d", s_idx + 1, s_count);
-    char footer[64];
-    const char* name = strrchr(path, '/');
-    name = name ? name + 1 : path;
-    int nameChars = (W - 16) / 6 - (int)strlen(indexBuf) - 2;
-    if (nameChars < 0) nameChars = 0;
-    snprintf(footer, sizeof(footer), "%.*s  %s", nameChars, name, indexBuf);
-    ui::scene::Builder b2(scene, W, H);
-    scene.addRect("photos.footer.bg", {0, (int16_t)(H - 24), (int16_t)W, 24}, kUiBg);
-    scene.addLabel("photos.index", {14, (int16_t)(H - 22), (int16_t)(W - 28), 20},
-                   footer, kUiFg, kUiBg, 1, ui::scene::TextAlign::MiddleCenter, 2);
-    if(video && !s_actionsOpen){
-        const int x=W/2,y=H/2;
-        scene.addLine("photos.play.top",x-8,y-12,x+12,y,TFT_WHITE,3);
-        scene.addLine("photos.play.bottom",x+12,y,x-8,y+12,TFT_WHITE,3);
-        scene.addLine("photos.play.left",x-8,y+12,x-8,y-12,TFT_WHITE,3);
-        char duration[40];const uint32_t seconds=(s_thumbnail.durationMs()+999)/1000;
-        snprintf(duration,sizeof(duration),"B: PLAY  %lu:%02lu",(unsigned long)(seconds/60),(unsigned long)(seconds%60));
-        scene.addRect("photos.video.badge",{0,int16_t(H-48),W,24},TFT_BLACK,0,2);
-        scene.addLabel("photos.video.duration",{0,int16_t(H-48),W,24},duration,TFT_WHITE,TFT_BLACK,1,ui::scene::TextAlign::MiddleCenter,3);
+    if (!rendered) {
+        view::textCenter(canvas, s, video && s_thumbnailIndex!=s_m.index ? "Loading preview..." : "Cannot open this file",
+                         W / 2, H / 2 - view::capHeight(18) / 2, 18, view::kMuted);
     }
-    if (s_actionsOpen) drawActions(scene, W, H);
-    scene.render(canvas);
+    // Loader cards sample the media before any chrome; cover fills all rows.
+    if (rendered) cards::capture(canvas, s_m.index, path, current().modified, 0, H);
+    const bool notice = s_noticeUntil && s_notice && s_m.mode == Mode::Browse;
+    if (video && rendered) view::playBadge(canvas, s, W / 2, H / 2);
+    view::indexPill(canvas, s, s_m.index + 1, s_m.count);
+
+    // Bottom caption: capture date and time (photos with EXIF), plus the
+    // duration for videos. The queued notice takes this spot while shown.
+    char date[20] = "", clock[12] = "", duration[12] = "";
+    if (!video && rendered && s_preview.jpeg()) captureCaption(s_preview.jpeg(), s_preview.jpegBytes(), date, clock);
+    if (video && rendered) {
+        const uint32_t seconds = (s_thumbnail.durationMs() + 999) / 1000;
+        snprintf(duration, sizeof duration, "%lu:%02lu", (unsigned long)(seconds / 60), (unsigned long)(seconds % 60));
+    }
+    strlcpy(s_captionDate, date, sizeof s_captionDate);
+    if (notice) view::notice(canvas, s, s_notice, true);
+    else {
+        const char* parts[] = {date, clock, duration};
+        view::dateCaption(canvas, s, parts, 3);
+    }
+    if (s_m.overlay()) drawOverlay(canvas, s, true);
+    s_overlayFull = false;
 
     hal::display::markAllDirty();
 }
@@ -395,134 +420,135 @@ static void activateGallery() {
     s_resumePath[0]=0;
     s_openStartedMs = millis();
     s_openPending = true;
-    ui::showAppOpeningSplash("Photos");
+    showLoaderNow();
     loadPhotos();
 }
 
-static void exitApp() {
-    s_preview.close();
-    s_browsePending = false;
-    s_actionsOpen = false;
-    s_thumbnail.clear();s_thumbnailIndex=-1;
-    s_library.close();
-    s_count = 0;
-    s_state = PH_EMPTY; // A covered/closed gallery is no longer watching sync.
+static void saveCards() {
+    if (!s_library.browsing()) return;
+    cards::Key keys[cards::kMax];
+    int n = 0;
+    for (; n < cards::kMax && n < (int)s_library.count(); ++n) keys[n] = {s_library[n].path, s_library[n].modified};
+    cards::keepAndSave(keys, n);
 }
 
-static void coverGallery(){
-    if(s_count && s_state==PH_VIEWING)strlcpy(s_resumePath,s_library[s_idx].path,sizeof(s_resumePath));
-    exitApp();
+// Saving is skipped when only covered (playing a video) so playback starts promptly.
+static void closeGallery(bool save) {
+    if (save) saveCards();
+    s_loaderPainted = false;
+    s_preview.close();
+    s_browsePending = false;
+    s_noticeUntil = 0;
+    s_thumbnail.clear();s_thumbnailIndex=-1;
+    s_library.close();
+    flow::closed(s_m);
 }
-static void resumeGallery(){loadPhotos();}
+static void exitApp() { closeGallery(true); }
+
+static void coverGallery(){
+    if(s_m.count && s_m.viewing())strlcpy(s_resumePath,current().path,sizeof(s_resumePath));
+    closeGallery(false);
+}
+static void resumeGallery(){showLoaderNow();loadPhotos();}
 
 // ---------------------------------------------------------------------------
 // Tick / Input
 // ---------------------------------------------------------------------------
 
-// Begin draining the upload queue to the cloud. Photos stopped WiFi for memory,
-// so bring it back; the background upload worker does the actual transfers once
-// connected and unpaused.
-static void startSync() {
-    s_browsePending = false;
-    s_state = PH_SYNCING;
-    NavHandler::instance().runtimePolicyChanged();
-    s_syncTotal = s_library.beginSync();
-    s_syncDoneMs = 0;
-    s_syncPollMs = 0;
-    s_needRender = true;
+#ifdef ORIGAMI_DEV_SERIAL_INPUT
+void setWaitAnimationForDevelopment(bool on) { s_animateWait = on; }
+bool previewLoaderForDevelopment(bool video, uint32_t ms) {
+    if (NavHandler::instance().top() != &app || !s_m.viewing() || !s_m.count) return false;
+    TFT_eSprite& canvas = hal::display::canvas();
+    const view::Bounds s{(int)canvas.width(), (int)canvas.height()};
+    if (!video) {
+        ui::photos_loader::photosLoader(canvas, s, cards::deck(), ms);
+    } else {
+        if (!current().video || s_thumbnailIndex != s_m.index) return false;
+        canvas.fillRect(0, 0, s.w, s.h, view::kBlack);
+        if (!s_preview.drawBuffer(s_thumbnail.data(), s_thumbnail.size(), 0, 0, s.w, s.h))
+            hal::display::drawJpegBufferScaled(s_thumbnail.data(), s_thumbnail.size(), 0, 0, s.w, s.h,
+                                               hal::display::ImageFit::Cover);
+        char name[40];
+        const char* base = strrchr(current().path, '/');
+        strlcpy(name, base ? base + 1 : current().path, sizeof(name));
+        if (char* dot = strrchr(name, '.')) *dot = 0;
+        char duration[16];
+        const uint32_t sec = (s_thumbnail.durationMs() + 999) / 1000;
+        snprintf(duration, sizeof duration, "%lu:%02lu", (unsigned long)(sec / 60), (unsigned long)(sec % 60));
+        ui::photos_loader::videoLoader(canvas, s, name, duration, ms);
+    }
+    hal::display::markAllDirty();
+    return true;
 }
-
-// Reacquire the browsing I/O pause before shutting WiFi down again.
-static void endSync() {
-    s_reloadAfterPause = false;
-    s_syncDoneMs = 0;
-    s_state = pauseBrowsingIo() ? (s_count > 0 ? PH_VIEWING : PH_EMPTY) : PH_ERROR;
-    s_needRender = true;
-    s_needPhotoRender = true;
-}
+#endif
 
 static void onTick(uint32_t now) {
-    if (s_browsePending) {
-        if (s_reloadAfterPause) loadPhotos();
-        else endSync();
-        return;
-    }
-    if(s_state==PH_VIEWING && s_thumbnailIndex!=s_idx){
+    if (s_browsePending) { loadPhotos(); return; }
+    if(s_m.viewing() && s_thumbnailIndex!=s_m.index){
         s_thumbnail.clear();
-        if(s_library[s_idx].video)s_thumbnail.load(s_library[s_idx].path);
-        s_thumbnailIndex=s_idx;s_needRender=true;
+        const uint32_t started=millis();
+        if(current().video)s_thumbnail.load(current().path);
+        if(current().video)Serial.printf("[photos] thumbnail index=%d ms=%lu\n",s_m.index+1,(unsigned long)(millis()-started));
+        s_thumbnailIndex=s_m.index;
+        redrawImage();
     }
-    if (s_state != PH_SYNCING) return;
-    const int pending = s_library.syncStatus().pending;
-
-    if (pending == 0) {
-        if (s_syncDoneMs == 0) s_syncDoneMs = now;
-        // Hold the "All synced" result briefly, then return to browsing.
-        if ((uint32_t)(now - s_syncDoneMs) > 2500) { endSync(); return; }
-    } else {
-        s_syncDoneMs = 0;
-    }
-
-    if ((uint32_t)(now - s_syncPollMs) >= 300) {
-        s_syncPollMs = now;
-        s_needRender = true;   // advance the progress bar
+    if (s_noticeUntil && (int32_t)(now - s_noticeUntil) >= 0) {
+        s_noticeUntil = 0;
+        if (s_m.mode == Mode::Browse) redrawImage();   // clears the notice
     }
 }
 
 static void onInput(hal::input::InputEvent ev) {
     using ET = hal::input::EventType;
+    flow::Input in;
+    if (ui::nav::isBackTap(ev)) in = flow::Input::Back;
+    else if (ev.type == ET::ButtonB_Tap) in = flow::Input::Right;
+    else if (ui::nav::isEnterPress(ev)) in = flow::Input::Press;
+    else if (ev.type == ET::Scroll && ev.delta != 0) in = flow::Input::Turn;
+    else return;
 
-    if (s_actionsOpen) {
-        if (ui::nav::isBackTap(ev)) closeActions();
-        else if (ev.type == ET::Scroll) {
-            const auto next = policy::moveAction(s_action, ev.delta,s_offerUpload);
-            if (next != s_action) { s_action = next; s_needRender = true; }
-        } else if (ui::nav::isEnterPress(ev) && !s_needRender) {
-            if (s_action == policy::Action::Escape) closeActions();
-            else if(s_action==policy::Action::Upload)uploadSelected();
-            else deletePhoto();
-        }
-        return;  // RB must not start cloud sync while choosing a destructive action.
-    }
+    // While the library handoff is pending only leaving is allowed.
+    if (s_browsePending && !s_m.overlay() && in != flow::Input::Back) return;
 
-    if (ui::nav::isBackTap(ev)) {
-        if(s_state==PH_SYNCING) { endSync(); return; }
-        NavHandler::instance().pop();
-        return;
+    flow::Item item{false, false};
+    if (s_m.viewing() && s_m.count) {
+        item.video = current().video;
+        // The receipt lookup is only needed when a sheet may open, not per dial tick.
+        const bool mayOpenSheet = s_m.mode == Mode::Browse && in == flow::Input::Press;
+        item.uploaded = mayOpenSheet && services::gallery_receipt::confirmed(current().path);
     }
-    if (s_browsePending) return;
-    if (ui::nav::isEnterPress(ev) && (s_state == PH_ERROR || s_state == PH_EMPTY)) {
-        loadPhotos();
-        return;
-    }
-    if(ev.type==ET::ButtonB_Tap && s_state==PH_VIEWING && s_library[s_idx].video){
-        (void)apps::videos::openFile(s_library[s_idx].path);return;
-    }
-    if (ev.type == ET::ButtonB_Tap) {      // B = sync to cloud for photos
-        if (s_state == PH_SYNCING) { endSync(); return; }  // B again = stop watching
-        startSync();
-        return;
-    }
-
-    if (s_state != PH_VIEWING) return;     // ignore scroll while syncing / empty
-
-    if (ui::nav::isEnterPress(ev) && !s_needRender) {
-        s_uploadError=nullptr;
-        s_offerUpload=!services::gallery_receipt::confirmed(s_library[s_idx].path);
-        s_actionsOpen = true;
-        s_action = policy::Action::Escape;
-        s_deleteFailed = false;
-        s_needRender = true;
-        return;
-    }
-
-    if (ev.type == ET::Scroll && ev.delta != 0) {
-        const int prev = s_idx;
-        s_idx = policy::moveIndex(s_idx, ev.delta, s_count);
-        if (s_idx != prev) {
+    switch (flow::apply(s_m, in, ev.delta, item, !s_needRender)) {
+        case Command::None: break;
+        case Command::Repaint: s_needRender = true; break;
+        case Command::RedrawImage:
+            s_uploadError = s_m.mode == Mode::Sheet ? s_uploadError : nullptr;
+            s_deleteFailed = s_m.mode == Mode::Sheet && s_deleteFailed;
+            s_overlayFull = true;
+            redrawImage();
+            break;
+        case Command::OpenSheet:
+            s_uploadError = nullptr;
+            s_deleteFailed = false;
+            s_offerUpload = !item.uploaded;
+            s_overlayFull = true;  // scrim over the image already on the canvas
             s_needRender = true;
-            s_needPhotoRender = true;
-        }
+            break;
+        case Command::Browse:
+            s_noticeUntil = 0;
+            redrawImage();
+            break;
+        case Command::Play:
+            // Hand over the thumbnail already in memory so the player can show it while it starts.
+            if (s_thumbnailIndex == s_m.index && s_thumbnail.size())
+                (void)apps::videos::openFile(current().path, s_thumbnail.data(), s_thumbnail.size(), s_thumbnail.durationMs());
+            else
+                (void)apps::videos::openFile(current().path);
+            break;
+        case Command::Upload: uploadSelected(); break;
+        case Command::Delete: deletePhoto(); break;
+        case Command::Exit: NavHandler::instance().pop(); break;
+        case Command::Reload: loadPhotos(); break;
     }
 }
 
@@ -536,6 +562,7 @@ static bool onChord() { return false; }
 static void enterView() {
     s_needRender = true;
     s_needPhotoRender = true;
+    s_overlayFull = true;
 }
 
 const ::scene::Screen kScreenPhotos = {
@@ -553,12 +580,16 @@ const ::scene::Screen kScreenPhotos = {
 static const ::scene::Screen* const kScreens[] = { &kScreenPhotos };
 static core::health::RuntimePolicy runtimePolicy() {
     core::health::RuntimePolicy policy{};
-    policy.reportActivity = s_browsePending || s_state == PH_SYNCING;
-    policy.allowIdleReturn = s_state != PH_SYNCING;
+    policy.reportActivity = s_browsePending;
+    policy.allowIdleReturn = true;
     return policy;
 }
+// Media owns the whole panel; the gallery draws no system status strip.
+static AppPresentation presentation() {
+    return AppPresentation{true, false, AppPresentation::StatusBar::Hidden};
+}
 App app = {"Photos",&kScreenPhotos,nullptr,nullptr,exitApp,"photos","src/apps/photos_app.cpp",
-    kScreens,uint8_t(sizeof(kScreens)/sizeof(kScreens[0])),nullptr,runtimePolicy,
+    kScreens,uint8_t(sizeof(kScreens)/sizeof(kScreens[0])),presentation,runtimePolicy,
     activateGallery,resumeGallery,nullptr,coverGallery};
 
 }  // namespace photos

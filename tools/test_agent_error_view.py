@@ -31,6 +31,9 @@ void dismissNotice(){events.push_back(2);}
 void openNoticeSettings(){events.push_back(3);}
 void serviceNotice(uint32_t){events.push_back(7);}
 void startRecording(){events.push_back(8);}
+void startHandsFree(){events.push_back(9);}
+bool beginTurnGesture(){events.push_back(8);return true;}
+bool turnStarted=false;bool serviceTurnGesture(uint32_t){events.push_back(10);return turnStarted;}
 }
 namespace render {
 void paintError(AgentState& s){assert(!strcmp(s.errBuf,"test error"));events.push_back(4);}
@@ -47,9 +50,11 @@ int main(){
  strcpy(testState.errBuf,"test error");clockMs=100;kScreenError.onEnter();
  assert((events==std::vector<int>{4,6}));assert(!testState.noticeInput.armed);
  events.clear();kScreenError.onTick(90000);
- assert((events==std::vector<int>{7,5})); // Persistent notice, no automatic dismissal.
+ assert((events==std::vector<int>{10,7,5})); // Persistent notice, no automatic dismissal.
+ flow::turnStarted=true;events.clear();kScreenError.onTick(90000);assert((events==std::vector<int>{10,5})); // A+B decision took over.
+ flow::turnStarted=false;
  hal::input::InputEvent ev{};
- for(E event:{E::ButtonA_Release,E::ButtonA_Tap,E::ButtonB_Tap}){
+ for(E event:{E::ButtonA_Release,E::ButtonA_Tap,E::ButtonB_Tap,E::ButtonC_Tap}){
   events.clear();ev.type=event;kScreenError.onInput(ev);
   assert((events==std::vector<int>{1})); // Entry gesture cannot act.
  }
@@ -62,7 +67,8 @@ int main(){
   assert(events==(kind==notice::Kind::Mic?std::vector<int>{1}:std::vector<int>{1,3}));
  }
  events.clear();assert(kScreenError.onChord());assert((events==std::vector<int>{8}));
- assert(testState.recStartedByChord);
+ // A+B retries through the tap/hold gesture; C has no retry meaning any more.
+ events.clear();ev.type=E::ButtonC_Tap;kScreenError.onInput(ev);assert((events==std::vector<int>{1}));
  events.clear();kScreenError.onExit();assert(!testState.errBuf[0]&&events.empty());
 }
 '''
@@ -73,4 +79,4 @@ with tempfile.TemporaryDirectory(prefix='kami-error-view-') as directory:
     cpp=path/'check.cpp';binary=path/'check';cpp.write_text(prelude+source+checks)
     subprocess.run(['c++','-std=c++17','-fsanitize=address,undefined','-I'+str(path),'-I'+str(ROOT/'include'),str(cpp),'-o',str(binary)],check=True)
     subprocess.run([str(binary)],check=True)
-print('PASS persistent Error view, guarded fresh input, Settings/retry routing and exit cleanup')
+print('PASS persistent Error view, guarded fresh input, Settings and A+B retry routing, exit cleanup')

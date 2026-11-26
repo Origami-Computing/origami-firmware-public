@@ -181,7 +181,12 @@ PreviewDecoder::Result PreviewDecoder::decodeVideo(const uint8_t* data,size_t le
         if (abort && abort(user)) return Result::Interrupted;
         return Result::Decoded;
     }
-    if (!core::avi::supportedDimensions(header.width,header.height) || (header.width==1280 && !fit)) return Result::Invalid;
+    if (!core::avi::supportedDimensions(header.width,header.height)) return Result::Invalid;
+    // Without fit, cover the 280x240 viewport: scale to the full 240 rows and
+    // keep the centre 280 columns (4:3 crops 20 per side, 16:9 crops ~73).
+    const int coverWidth=header.width*240/header.height;
+    const int coverLeft=(coverWidth-280)/2;
+    if (!fit && coverWidth<280) return Result::Invalid;
     int bytes=0,blocks=0;
     if (jpeg_dec_get_outbuf_len(videoDecoder_,&bytes)!=JPEG_ERR_OK || bytes<=0 || bytes>header.width*16*2 ||
         bytes%(header.width*2)!=0 || jpeg_dec_get_process_count(videoDecoder_,&blocks)!=JPEG_ERR_OK ||
@@ -204,7 +209,7 @@ PreviewDecoder::Result PreviewDecoder::decodeVideo(const uint8_t* data,size_t le
     // division and stride multiplication for each destination pixel. Bounded
     // UI-stack scratch; the output geometry and native byte order are unchanged.
     uint16_t sourceX[280],rowOffsets[240];
-    for (int x=0;x<280;++x) sourceX[x]=fit ? x*header.width/280 : (x+20)*header.width/320;
+    for (int x=0;x<280;++x) sourceX[x]=fit ? x*header.width/280 : (x+coverLeft)*header.height/240;
     int sourceRow=0;
     for (int block=0;block<blocks;++block) {
         if (abort && abort(user)) return Result::Interrupted;
@@ -247,6 +252,8 @@ PreviewDecoder::Result PreviewDecoder::decode(const uint8_t* data, size_t length
     const uint32_t started=micros();
 #endif
     if (reducedVideo_ && !supportedVideoJpeg(data,length)) return Result::Invalid;
+    // The reduced-decode trial keeps its fitted HD mapping; cover is native-only.
+    if (reducedVideo_) fit = true;
     Decode context{destination, shouldAbort, user, false, fit, 240, 210, 15, {}, {}};
     JPEGDEC& jpeg = *decoder_;
     if (!jpeg.openRAM(const_cast<uint8_t*>(data), (int)length, writeBlock)) return Result::Invalid;

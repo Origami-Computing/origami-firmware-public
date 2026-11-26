@@ -55,6 +55,10 @@ size_t dmaLargest=32768;
 size_t heap_caps_get_largest_free_block(unsigned caps){assert(caps==MALLOC_CAP_DMA);return dmaLargest;}
 unsigned criticalDepth=0;
 std::mutex s_audioMux;
+char s_documentId[37]={};
+struct ReplyAudio {bool load(){return true;}} s_replyAudio;
+struct Continuous {bool value=false; bool load(){return value;}} s_continuous;
+struct StartHeld {bool value=false; bool load(){return value;}} s_startHeld;
 #define portENTER_CRITICAL(m) do{(m)->lock();++criticalDepth;}while(0)
 #define portEXIT_CRITICAL(m) do{--criticalDepth;(m)->unlock();}while(0)
 #define LOGD(...) ((void)0)
@@ -69,7 +73,7 @@ uint32_t clockMs=1000;
 uint32_t millis(){return clockMs;}
 constexpr uint32_t frameSamples=cfg::agent::kAudioFrameBytes/2;
 constexpr uint32_t cap=64*512;
-int16_t ring[cap],s_wsFrame[cfg::agent::kAudioFrameBytes/2];
+int16_t ring[cap],s_wsFrame[(cfg::agent::kAudioFrameBytes+14)/2];
 int16_t* pcm(){return ring;}
 uint32_t capacity(){return cap;}
 namespace services {namespace agent_coordination {
@@ -100,7 +104,8 @@ struct Socket {
   if(failText==(start?1u:2u)){failText=0;damaged=true;return false;}
   return true;
  }
- bool sendBIN(const uint8_t* data,uint32_t bytes){
+ bool sendBIN(const uint8_t* data,uint32_t bytes,bool headerToPayload){
+  assert(headerToPayload); data+=14;
   assert(!criticalDepth);assert(bytes<=cfg::agent::kAudioFrameBytes);++writes;
   if(writes==cancelAt)s_sendCancel=true;
   if(writes==pauseAt)services::agent_coordination::paused=true;
@@ -128,6 +133,7 @@ if not args.negative_control:
     code += function('bool sendTextRequest(const char* wire)')
 code += r'''
 void reset(uint32_t samples){
+ s_continuous.value=false;
  resetSessionFlags();resetAudioRingLocked();services::agent_coordination::active=true;
  services::agent_coordination::paused=false;s_socketConnected=s_serverReady=true;s_audioAttached=true;
  s_listening=false;s_replyReceived=false;s_wsConnectedSinceMs=0;clockMs=1000;
@@ -154,15 +160,15 @@ else:
     code += r'''
 int main(){
  // Pressure preserves queued PCM and commit; retry drains the exact take.
- reset(2048);s_startSent=s_listening=true;s_commitRequested=true;
+ reset(4*frameSamples);s_startSent=s_listening=true;s_commitRequested=true;
  core::memory::available.dramFree=12287;pumpAudio();
- assert(!writes&&!commits&&s_ringUsed==2048);
+ assert(!writes&&!commits&&s_ringUsed==4*frameSamples);
  core::memory::available.dramFree=12288;dmaLargest=4095;
  pumpAudio();assert(!writes&&!commits);
  dmaLargest=4096;pressureAfterWrite=true;pumpAudio();
- assert(writes==1&&!commits&&s_ringUsed==1536&&!disconnects);
- pressureAfterWrite=false;core::memory::available={0,0,65536,32768};pumpAudio();
- assert(writes==4&&commits==1&&received.size()==2048&&!disconnects);
+ assert(writes==1&&!commits&&s_ringUsed==3*frameSamples&&!disconnects);
+ pressureAfterWrite=false;core::memory::available={0,0,65536,32768};for(unsigned i=0;i<4&&!s_commitSent;++i)pumpAudio();
+ assert(writes==4&&commits==1&&received.size()==4*frameSamples&&!disconnects);
  for(unsigned i=0;i<received.size();++i)assert(received[i]==int16_t(i));
  puts("PASS low-memory backpressure and exact replay after recovery without reconnect");
  // Upgrade != server authentication != recording accepted. No premature audio/commit.
@@ -171,16 +177,18 @@ int main(){
  assert(starts==1&&!writes&&!commits);pumpAudio();assert(starts==1&&!writes);
  acknowledge();pumpAudio();assert(writes==1&&commits==1&&s_commitSent);
  pumpAudio();assert(commits==1);puts("PASS ready/listening gates and one commit");
+ reset(85);s_startSent=s_listening=true;pumpAudio();
+ assert(writes==1&&received.size()==85&&s_ringUsed==0); // Never wait to fill a frame.
  // A sustained producer cannot trap the worker inside one pump.
  reset(frameSamples);s_startSent=s_listening=true;refillUntil=40;pumpAudio();
  assert(writes==cfg::agent::kAudioFramesPerPump&&s_ringUsed==frameSamples);
  puts("PASS bounded draining with concurrent capture");
  // Partial audio frame: close, rewind ALL acknowledged sends, start/ack then replay.
- reset(3072);s_startSent=s_listening=true;s_commitRequested=true;failAudioAt=3;pumpAudio();
+ reset(6*frameSamples);s_startSent=s_listening=true;s_commitRequested=true;failAudioAt=3;for(unsigned i=0;i<4&&!disconnects;++i)pumpAudio();
  assert(disconnects==1&&!damaged&&!s_socketConnected&&!s_serverReady&&!s_listening);
- assert(s_ringUsed==3072&&s_sentSamples==0&&!commits);reconnect();pumpAudio();
+ assert(s_ringUsed==6*frameSamples&&s_sentSamples==0&&!commits);reconnect();pumpAudio();
  assert(starts==1&&writes==3);acknowledge();for(unsigned i=0;i<16&&!s_commitSent;++i)pumpAudio();
- assert(s_commitSent&&commits==1&&received.size()==3072);
+ assert(s_commitSent&&commits==1&&received.size()==6*frameSamples);
  for(unsigned i=0;i<received.size();++i)assert(received[i]==int16_t(i));
  puts("PASS failed write closes stream and replays exact take on new connection");
  // Even a failed start can have a prefix on wire.
@@ -191,6 +199,10 @@ int main(){
  assert(failures==1&&disconnects==1&&!services::agent_coordination::active);
  reconnect();pumpAudio();assert(commits==1);
  puts("PASS start failure recovery and no replay after ambiguous commit");
+ // A continuous session may already have dispatched an input before a drop.
+ // Replaying its PCM could execute that input again.
+ reset(frameSamples);s_continuous.value=true;s_startSent=s_listening=true;
+ handleSessionDrop();assert(s_transportLost);
  for(bool pause:{false,true}){
   reset(4096);s_startSent=s_listening=true;s_commitRequested=true;
   if(pause)pauseAt=1;else cancelAt=1;pumpAudio();

@@ -6,6 +6,19 @@ with tempfile.TemporaryDirectory() as td:
  p=Path(td)
  def write(name,text):
   f=p/name;f.parent.mkdir(parents=True,exist_ok=True);f.write_text(text)
+ # No FAT volume in the host fake: the catalog takes its Arduino SD listing path.
+ write('ff.h',r'''#pragma once
+#include <cstdint>
+#define FF_VOLUMES 1
+#define AM_DIR 0x10
+typedef uint16_t WORD;
+typedef enum {FR_OK=0,FR_NO_FILE=4,FR_NO_PATH=5,FR_NO_FILESYSTEM=13} FRESULT;
+typedef struct {int unused;} FF_DIR;
+typedef struct {uint16_t fdate,ftime;uint8_t fattrib;char fname[256];} FILINFO;
+inline FRESULT f_opendir(FF_DIR*,const char*){return FR_NO_FILESYSTEM;}
+inline FRESULT f_readdir(FF_DIR*,FILINFO* info){info->fname[0]=0;return FR_OK;}
+inline FRESULT f_closedir(FF_DIR*){return FR_OK;}
+''')
  write('hal/hal_bus.h','namespace hal {namespace bus {inline void lockSpi(){} inline void unlockSpi(){}}}')
  write('hal/hal_sd.h','''#pragma once
 #include <cstdint>

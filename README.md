@@ -59,13 +59,12 @@ flowchart TB
         slotA["0x010000 · Firmware slot A<br/>6 MiB · one complete kamiOS image"]
         slotB["0x610000 · Firmware slot B<br/>6 MiB · one complete kamiOS image"]
         system["0xC10000 · Crash data: 64 KiB<br/>0xC20000 · Shipping state: 12 KiB"]
-        spare["0xC23000–0xFFFFFF · Unallocated<br/>Optional app storage can use 0xC30000 onward"]
-        boot --- settings --- slotA --- slotB --- system --- spare
+        apps["0xC30000 · Installed apps: about 3.8 MiB<br/>LittleFS, kept across updates"]
+        boot --- settings --- slotA --- slotB --- system --- apps
     end
     classDef firmware fill:#dbeafe,stroke:#2563eb,color:#172554
-    classDef unused fill:#f1f5f9,stroke:#64748b,color:#0f172a,stroke-dasharray:5 5
     class slotA,slotB firmware
-    class spare unused
+    class apps firmware
 ```
 
 **Either firmware slot can be active.** The other is the OTA download target—not custom-app storage. [Partition source](partitions_ota_n16r8.csv).
@@ -80,7 +79,7 @@ flowchart TB
 | --- | --- |
 | Signed native app | Installed through App Store; ELF payload up to 512 KiB, subject to available memory and API compatibility. |
 | C++ built into kamiOS | Requires a firmware build; the complete OS must fit one 6 MiB slot. |
-| Optional native-app flash | About 3.8 MiB at `0xC30000` (`0x3D0000` bytes). **Not enabled by the current partition table.** Needs a verified partition migration; OTA alone does not create it. |
+| Installed apps | About 3.8 MiB at `0xC30000` (`0x3D0000` bytes), formatted on the first install. Present on Kamis flashed over USB with this table. OTA cannot add a partition, so a Kami still on an older table installs apps to its SD card instead. |
 
 ## How OTA works
 

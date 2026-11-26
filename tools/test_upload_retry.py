@@ -59,6 +59,15 @@ int main(){
  {UploadQueue q;q.add("video",true);strcpy(q.m_items[0].type,"video");q.deleteFileIfOwnedUnlocked(q.m_items[0]);assert(SD.deleted.empty());}
  {UploadQueue q;q.add("video");q.duringUpload=[&]{q.removeItemAtUnlocked(0);assert(!strcmp(q.m_inFlightId,"video"));};assert(q.processOnePending()&&!q.m_inFlightId[0]);}
 using Kind=UploadQueue::UploadResultKind;
+ // A rejected video remains inspectable without running again or blocking the
+ // next item. Explicit retry uses the existing force/reset pending transition.
+ {UploadQueue q;q.add("video");strcpy(q.m_items[0].type,"video");q.add("photo");
+  q.result={Kind::PermanentItemFailure,413,false,0};assert(q.processOnePending());
+  assert(q.m_count==2&&q.m_items[0].status==QSTATUS_FAILED&&!strcmp(q.m_items[0].lastError,"injected"));
+  assert(q.m_items[0].attempts==0&&SD.deleted.empty());
+  q.result={Kind::HttpResponse,200,true,0};assert(q.processOnePending());
+  assert(q.m_count==1&&q.m_items[0].status==QSTATUS_FAILED&&!q.processOnePending()&&q.requests==2);
+  clearRetryState(q.m_items[0]);assert(q.processOnePending()&&q.m_count==0&&SD.deleted.empty());}
  // The UI retains a reason after a terminal item disappears; a new watched
  // attempt clears both its error and success, and never reports another file.
  for(auto kind:{Kind::HttpResponse,Kind::PermanentItemFailure,Kind::RetryableFailure}){

@@ -70,8 +70,12 @@ bool begin() {
   return ok;
 }
 
-bool reinitAfterI2CRestart() {
+static bool reconnectBus(bool restart) {
   hal::bus::lockI2c();
+  if (restart) {
+    Wire.end();
+    Wire.begin(SDA_PIN, SCL_PIN);
+  }
   bool ok = false;
   for (int attempt = 1; attempt <= 5; ++attempt) {
     if (s_tca.reconnect(Wire, kTcaAddr)) {
@@ -88,6 +92,9 @@ bool reinitAfterI2CRestart() {
   hal::bus::unlockI2c();
   return true;
 }
+
+bool reinitAfterI2CRestart() { return reconnectBus(false); }
+bool restartBusAndReconnect() { return reconnectBus(true); }
 
 namespace {
 

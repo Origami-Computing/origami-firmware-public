@@ -50,6 +50,12 @@ public:
     // a TX startup failure stops playback. Stop/close use normal retirement.
     bool startPcm(const int16_t* pcm, uint32_t frames, uint32_t rate, bool loop=false);
     // Terminal embedded-AVI read/demux failure; reset on start/restart.
+    // UI-task live PCM producer; same worker/ring/TX ownership as file playback.
+    // append returns accepted mono frames; retain the remainder for a later tick.
+    // Empty, unfinished streams wait for data; finish drains before wantsNext.
+    bool startPcmStream(uint32_t rate);
+    uint32_t appendPcmStream(const int16_t* pcm, uint32_t frames);
+    bool finishPcmStream();
     bool failed() const { return streamFailed_.load(); }
     // UI-task query: closeSession may retain ownership until worker acknowledgment.
     bool sessionOpen() const { return sessionOpen_; }
@@ -60,7 +66,7 @@ public:
     void pause();
     void resume();
     bool isPlaying() const { return playing_; }
-    bool isOpen() const { return fileOpen_ || memoryPcm_ != nullptr; }
+    bool isOpen() const { return fileOpen_ || memoryPcm_ != nullptr || livePcm_; }
 
     void setVolume(int vol0to100) { services::audio::media_volume::setVolume(vol0to100); }
     int  volume() const { return services::audio::media_volume::volume(); }
@@ -124,6 +130,7 @@ private:
     int16_t* memoryPcm_ = nullptr;
     uint32_t memoryFrames_ = 0, memoryPosition_ = 0;
     bool memoryLoop_ = false;
+    bool livePcm_ = false, liveFinished_ = false;
 
     // StreamReader owns each SPI operation. Existing pump/header batches retain
     // the recursive SPI lock across their bounded sequence of stream calls.

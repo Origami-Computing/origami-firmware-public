@@ -39,6 +39,7 @@ Result backendFailure(Work& w,const BackendResult& result){
     if(result.outcome==BackendOutcome::NoMemory)return deferred("Video memory unavailable");
     if(result.outcome==BackendOutcome::Invalid)return rejected("Video binding invalid");
     if(result.outcome==BackendOutcome::HttpError){
+        if(result.httpStatus==413)return {Step::Rejected,413,0,"Video too large"};
         if(result.httpStatus==401){
             core::secrets::setDeviceTokenFor(w.backend,"");
             return {Step::Deferred,401,60000,"Device registration required"};
@@ -47,7 +48,9 @@ Result backendFailure(Work& w,const BackendResult& result){
         if(result.httpStatus==404)return rejected("Video session unavailable");
         if(result.httpStatus==400)return rejected("Video request rejected");
     }
-    return {Step::Retry,result.httpStatus,0,"Video backend retry"};
+    return {Step::Retry,result.httpStatus,0,result.httpStatus==429?"Server busy; retrying":
+        result.httpStatus>=500?"Server unavailable":
+        result.httpStatus==0?"Connection failed":"Video backend retry"};
 }
 Result finishReply(Work& w){
     if(w.response.state==State::Complete)return {Step::Complete,200,0,"Video receipt verified"};
@@ -141,9 +144,14 @@ Result advance(const char* id,const char* path,bool (*checkpoint)(void*),void* c
     if(sent.outcome==Transfer::Storage)return deferred("Video storage unavailable");
     if(sent.outcome==Transfer::Invalid)return rejected("Video transfer state invalid");
     if(sent.outcome==Transfer::Progress)return progress();
+    if(sent.httpStatus==413)return {Step::Rejected,413,0,"Video too large"};
     const bool expired=sent.httpStatus==404||sent.httpStatus==410;
     const bool possiblyStored=sent.outcome==Transfer::Uncertain||expired||sent.httpStatus==409||sent.httpStatus==400;
-    if(sent.outcome!=Transfer::Verify&&!possiblyStored)return {Step::Retry,sent.httpStatus,0,"Video storage retry"};
+    if(sent.outcome!=Transfer::Verify&&!possiblyStored)return {Step::Retry,sent.httpStatus,0,
+        sent.httpStatus==401||sent.httpStatus==403?"Storage access denied":
+        sent.httpStatus==429?"Storage busy; retrying":
+        sent.httpStatus>=500?"Storage unavailable":
+        sent.httpStatus==0?"Connection failed":"Storage reply invalid"};
     // Provider resource expiry/conflict can also mean the object already exists.
     // Ask the backend to verify before allocating another resource URL.
     result=w.call(BackendOperation::Complete);

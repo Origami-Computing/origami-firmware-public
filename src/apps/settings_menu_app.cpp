@@ -67,6 +67,7 @@
 #include "sfx/sfx_lib.h"
 #include "ui/home_eyes.h"
 #include "ui/list_view.h"
+#include "ui/menu_list.h"
 #include "ui/nav_controls.h"
 #include "ui/scene.h"
 #include "ui/edit_field.h"
@@ -1160,6 +1161,9 @@ static void buildSettingsScene(ui::scene::Scene& scene, int16_t width, int16_t h
       refreshUploadView();
       const auto& v=s_uploadView;
       const auto counts=v.counts;
+      const bool failed=v.index>=0 && v.item.status==QSTATUS_FAILED;
+      const bool hasError=v.index>=0 && v.item.lastError[0] && v.item.status!=QSTATUS_UPLOADING;
+      const uint16_t cardBg=hasError?kUiErrorBg:kUiBg;
       const auto server=core::secrets::serverMode();
       char title[32],metric[12],name[40],state[80],position[24];
       snprintf(title,sizeof(title),"UPLOADS  /  %s",core::secrets::serverModeName(server));
@@ -1184,7 +1188,7 @@ static void buildSettingsScene(ui::scene::Scene& scene, int16_t width, int16_t h
       else if(strlen(v.item.fileName)>17) snprintf(name,sizeof(name),"%.14s...",v.item.fileName);
       else strlcpy(name,v.item.fileName,sizeof(name));
       if(!v.count) strlcpy(state,"Photos and recordings appear here",sizeof(state));
-      else if(v.item.status==QSTATUS_FAILED) snprintf(state,sizeof(state),"Failed: %.28s",v.item.lastError);
+      else if(failed) snprintf(state,sizeof(state),"Stopped: %.32s",v.item.lastError);
       else if(v.item.status==QSTATUS_UPLOADING) strlcpy(state,"Sending to your account",sizeof(state));
       else if(!online) strlcpy(state,"Waiting for WiFi",sizeof(state));
       else if(!configured) strlcpy(state,"Pair device in WiFi Setup",sizeof(state));
@@ -1192,13 +1196,14 @@ static void buildSettingsScene(ui::scene::Scene& scene, int16_t width, int16_t h
         strlcpy(state,"Account rejected - pair in WiFi Setup",sizeof(state));
       else if(v.paused) strlcpy(state,"Paused while Kami is busy",sizeof(state));
       else if(v.forced) strlcpy(state,"Send requested",sizeof(state));
-      else if(v.waitMs) snprintf(state,sizeof(state),"Retry in %lum %lus",
-          (unsigned long)(v.waitMs/60000u),(unsigned long)((v.waitMs/1000u)%60));
+      else if(v.waitMs) snprintf(state,sizeof(state),"%.28s | Retry %lus",
+          v.item.lastError[0]?v.item.lastError:"Waiting",(unsigned long)(v.waitMs/1000u));
+      else if(hasError) snprintf(state,sizeof(state),"%.28s | Retry pending",v.item.lastError);
       else strlcpy(state,"Ready to send",sizeof(state));
-      auto* card=scene.addRect("uploads.card",{12,120,(int16_t)(width-24),60},kUiBg,8,1);
+      auto* card=scene.addRect("uploads.card",{12,120,(int16_t)(width-24),60},cardBg,8,1);
       if(card) {card->strokeColor=kUiPanel;card->strokeWidth=1;}
-      scene.addLabel("uploads.file",{24,128,(int16_t)(width-48),24},name,kUiFg,kUiBg,2,ui::scene::TextAlign::TopLeft,2);
-      scene.addLabel("uploads.state",{24,157,(int16_t)(width-48),18},state,kUiMuted,kUiBg,1,ui::scene::TextAlign::TopLeft,2);
+      scene.addLabel("uploads.file",{24,128,(int16_t)(width-48),24},name,kUiFg,cardBg,2,ui::scene::TextAlign::TopLeft,2);
+      scene.addLabel("uploads.state",{24,157,(int16_t)(width-48),18},state,hasError?kUiFg:kUiMuted,cardBg,1,ui::scene::TextAlign::TopLeft,2);
       if(v.count) {
         snprintf(position,sizeof(position),"%d / %d",v.index+1,v.count);
         scene.addLabel("uploads.position",{static_cast<int16_t>(width-65),110,50,12},position,kUiMuted,kUiBg,1,ui::scene::TextAlign::TopLeft,2);
@@ -1214,7 +1219,7 @@ static void buildSettingsScene(ui::scene::Scene& scene, int16_t width, int16_t h
       }
       const bool notice=s_uploadNotice[0] && millis()-s_uploadNoticeMs<3500u;
       scene.addLabel("uploads.hint",{16,224,(int16_t)(width-32),13},
-          notice?s_uploadNotice:"Turn: action   C: select   LB: back",kUiMuted,kUiBg,1,ui::scene::TextAlign::TopLeft,2);
+          notice?s_uploadNotice:failed?"Fix error, then use Send file now.":"Turn: action   C: select   LB: back",kUiMuted,kUiBg,1,ui::scene::TextAlign::TopLeft,2);
 
       break;
     }
@@ -1276,7 +1281,28 @@ static void buildAboutScene(ui::scene::Scene& scene, int16_t width, int16_t heig
   buildSettingsScene(scene, width, height, SUB_ABOUT);
 }
 
+// Only the reviewed menu pages use full-panel chrome. Editors, saved-network
+// details and upload workflows retain their existing presentation.
+static ui::ListView* cleanMenuList(){
+ switch(s_sub){
+ case SUB_MAIN:s_mainList.totalItems=kRows+(s_updateNotice?1:0);s_mainList.selected=s_sel+(s_updateNotice?1:0);return &s_mainList;
+ case SUB_WIFI_MENU:s_wifiMenuList.totalItems=kWifiRows;s_wifiMenuList.selected=s_wifiMenuSel;return &s_wifiMenuList;
+ case SUB_SOUND_MENU:s_soundMenuList.totalItems=kSoundRows;s_soundMenuList.selected=s_soundMenuSel;return &s_soundMenuList;
+ case SUB_SLEEP_MENU:s_sleepMenuList.totalItems=kSleepRows;s_sleepMenuList.selected=s_sleepMenuSel;return &s_sleepMenuList;
+ case SUB_SENSORS_MENU:s_sensorsMenuList.totalItems=kSensorRows;s_sensorsMenuList.selected=s_sensorsMenuSel;return &s_sensorsMenuList;
+ case SUB_MUSIC_OUTPUT:s_musicList.totalItems=kMusicOutRows;s_musicList.selected=s_musicOutSel;return &s_musicList;
+ default:return nullptr;
+ }
+}
+static bool cleanMenuScreen(){return s_sub==SUB_MAIN||s_sub==SUB_WIFI_MENU||s_sub==SUB_SOUND_MENU||s_sub==SUB_SLEEP_MENU||s_sub==SUB_SENSORS_MENU||s_sub==SUB_MUSIC_OUTPUT;}
+static AppPresentation presentation(){return cleanMenuScreen()?AppPresentation{true,true,AppPresentation::StatusBar::Hidden}:AppPresentation{};}
+static ui::menu_list::State s_cleanViews[6];
+static int cleanMenuIndex(){switch(s_sub){case SUB_WIFI_MENU:return 1;case SUB_SOUND_MENU:return 2;case SUB_SLEEP_MENU:return 3;case SUB_SENSORS_MENU:return 4;case SUB_MUSIC_OUTPUT:return 5;default:return 0;}}
 void onDraw(TFT_eSprite& canvas) {
+  if(auto* list=cleanMenuList()) {
+    if(s_cleanViews[cleanMenuIndex()].draw(canvas,*list,[](int i){return selectedIconItem(i);},millis(),s_needRedraw||s_iconDirty))hal::display::markAllDirty();
+    s_needRedraw=s_iconDirty=false;return;
+  }
   if (!s_needRedraw) {
     if (s_iconDirty && !s_valueEditing) {
       const int selected = selectedIconRow();
@@ -1602,7 +1628,7 @@ static const ::scene::Screen* const kScreens[] = {
 
 App app = SCENE_APP_CATALOG_LIFECYCLE_HOOKS("Settings", "settings", &kScreenSettingsMain,
                             prepareWorkflow, prepareWorkflow, exitApp,
-                            "src/apps/settings_menu_app.cpp", kScreens, nullptr, nullptr);
+                            "src/apps/settings_menu_app.cpp", kScreens, presentation, nullptr);
 
 }  // namespace settings_menu
 }  // namespace apps

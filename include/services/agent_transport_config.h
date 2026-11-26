@@ -4,10 +4,11 @@ namespace cfg { namespace agent {
 /** Persistent WebSocket endpoint appended to the configured backend URL. */
 constexpr const char* kWebSocketPath = "/api/device-agent";
 
-/** PCM payload per binary WebSocket frame (512 mono int16 samples). */
-constexpr uint32_t kAudioFrameBytes = 1024;
-/** Yield to WebSocket receive/control work after at most 128 ms of PCM. */
-constexpr uint32_t kAudioFramesPerPump = 4;
+/** Maximum PCM payload per frame. Send available samples immediately; never
+ * wait to fill this. Larger frames let a reconnect backlog drain efficiently. */
+constexpr uint32_t kAudioFrameBytes = 4096;
+/** Yield to receive/cancel work after at most 256 ms of queued PCM. */
+constexpr uint32_t kAudioFramesPerPump = 2;
 
 /** Reconnect if authenticated ready or the turn start acknowledgment never arrives. */
 constexpr uint32_t kReadyTimeoutMs = 8000;

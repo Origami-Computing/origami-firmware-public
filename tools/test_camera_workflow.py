@@ -29,10 +29,17 @@ code = r'''
 #include <cstring>
 #include <string>
 #include "core/cine_controls.h"
+#include "core/haptic_catalog.h"
 std::string trace;
 void advanceShutter();
 uint32_t clockMs=0;void delay(unsigned ms){clockMs+=ms;}uint32_t millis(){return clockMs;}uint32_t micros(){return clockMs*1000;}
-bool soundOk=true,startOk=true,captureOk=true;
+bool soundOk=true,startOk=true,captureOk=true,queueOk=true,hapticsOn=true,hapticOk=true;
+bool inputFeedbackSuppressed=false;
+namespace services { namespace vibration {
+void suppressInputFeedback(){inputFeedbackSuppressed=true;}
+bool hapticsEnabled(){return hapticsOn;}
+bool playEffect(const core::haptic::Effect&){trace+="haptic;";return hapticOk;}
+}}
 struct TFT_eSprite{};
 namespace hal {namespace display {
 TFT_eSprite& canvas(){static TFT_eSprite c;return c;}
@@ -42,14 +49,14 @@ enum class EventType{ButtonB_Press,ButtonB_Release,ButtonB_Tap,ButtonA_Press,But
 struct InputEvent{EventType type;};bool a=false,b=false,c=false;
 bool buttonADown(){return a;}bool buttonBDown(){return b;}bool buttonCDown(){return c;}
 }namespace camera{struct CineIspRequest{int color=3;};}}
-struct {template<class... T>void printf(const char*,T...){} }Serial;
+struct {template<class... T>void printf(const char*,T...){} void println(const char*){} }Serial;
 namespace sfx{using PcmClip=int;const int kCameraShutter=0,kRecordingStart=1,kRecordingStop=2;
 bool playAndRelease(int cue,void(*progress)()){assert(trace.size()>=6&&trace.substr(trace.size()-6)=="flush;");
 trace+=cue==0?"photo;":cue==1?"start;":"stop;";if(soundOk)for(int i=0;i<8;++i){clockMs+=23;progress();}return soundOk;}}
 namespace services {namespace camera {
 enum class CaptureResolution{Vga,Hd};
 struct VideoRecording{
- enum class State{Saved,Failed};static constexpr unsigned kMaxDurationMs=30000;
+ enum class State{Saved,Failed};static constexpr unsigned kMaxDurationMs=300000;
  bool active=false,saved=true;unsigned stops=0,closes=0;
  bool busy(){return active;}void stop(){++stops;trace+="stop-request;";}
  void close(){++closes;active=false;trace+="close;";}
@@ -65,20 +72,25 @@ namespace uploads{bool ensureInit(){return true;}struct Queue{void enqueueVideo(
 services::camera::VideoRecording recorder;
 struct {services::camera::CaptureResolution capture=services::camera::CaptureResolution::Vga;}cameraSettings;
 struct Session{
- struct Status{bool queued=false;unsigned sequence=5,capturedAtUnix=42;char photoPath[64]="/photo.jpg";}s;
+ enum class Preparation{Ready,Pending,Failed};Preparation preparation=Preparation::Ready;
+ Preparation prepareOpen(){return preparation;}
+ struct Status{bool queued=false;unsigned sequence=5,capturedAtUnix=42;char photoPath[64]="/photo.jpg";const char* message="";}s;
  hal::camera::CineIspRequest captureSettings(){return{};}
  bool beginClip(services::camera::VideoRecording& r,bool hd,bool mic){trace+="acquire;";lastHd=hd;lastMic=mic;r.active=startOk;return startOk;}
  bool lastHd=false,lastMic=false;
- bool capture(void(*feedback)(),bool enqueue){s.queued=false;trace+="expose;";if(!captureOk)return false;feedback();trace+="write;";s.queued=enqueue;return true;}
- const Status& status(){return s;}bool open(){trace+="open;";return true;}
+ bool capture(void(*feedback)(),bool enqueue){s.queued=false;trace+="expose;";if(!captureOk)return false;feedback();trace+="write;";s.queued=enqueue&&queueOk;return true;}
+ const Status& status(){return s;}bool open(void(*)()=nullptr){trace+="open;";return true;}
  bool restoreSettings(hal::camera::CineIspRequest){trace+="restore;";return true;}
  bool previewClip(services::camera::VideoRecording&){return false;}
  bool preview(bool(*)(void*)){return false;}void close(){trace+="sensor-close;";}
 }session;
+namespace cine {using Session=::Session;}
 enum class View{Menu,Opening,Preview,Error};View current=View::Preview;
 bool microphone=true,clipActive=false,stopping=false,transitionPulse=false,tutorialCapture=false;
 bool shutterHeld=false,cancelTap=false,restoreAfterClip=false,freshPreview=false;
 uint32_t clipStartedAt=0,shutterPressedAt=0,feedbackStage=0,feedbackAt=0,lastPreview=0,previewDecodeUs=0;
+constexpr uint32_t kIdleReturnMs=60000u;
+uint32_t lastCameraActivityAt=0,errorShownAt=0;
 hal::camera::CineIspRequest clipSettings;core::cine::WheelControl wheel;
 services::photos::Target tutorialPhoto;
 bool transitionFlushPending=false;
@@ -92,7 +104,8 @@ void invalidate(){}void draw(TFT_eSprite&){
  else trace+="draw;";
 }
 bool previewShouldAbort(void*){return false;}
-struct NavHandler{static NavHandler& instance(){static NavHandler n;return n;}void pop(){session.close();trace+="pop;";}};
+void paintOpening(){}
+struct NavHandler{static NavHandler& instance(){static NavHandler n;return n;}void pop(){session.close();trace+="pop;";}void popToRoot(){trace+="home;";}};
 '''
 for sig in ['void advanceShutter()', 'void presentCue(', 'void photoFeedback()', 'void snap()', 'bool finishClip()',
             'void restoreStill(', 'bool beginVideo()', 'void tick(uint32_t)']:
@@ -101,10 +114,16 @@ code += r'''
 void input(hal::input::InputEvent e){if(e.type==hal::input::EventType::ButtonB_Tap)snap();}
 '''+function('void shutterInput(')+r'''
 void reset(){trace.clear();clockMs=100;current=View::Preview;clipActive=stopping=shutterHeld=cancelTap=tutorialCapture=false;
- recorder={};hal::input::a=hal::input::b=hal::input::c=false;startOk=soundOk=captureOk=true;feedbackStage=0;}
+ inputFeedbackSuppressed=false;errorShownAt=0;
+ recorder={};hal::input::a=hal::input::b=hal::input::c=false;startOk=soundOk=captureOk=queueOk=hapticsOn=hapticOk=true;feedbackStage=0;lastCameraActivityAt=clockMs;}
 void press(){hal::input::b=true;shutterInput({hal::input::EventType::ButtonB_Press});}
 void release(){hal::input::b=false;shutterInput({hal::input::EventType::ButtonB_Release});shutterInput({hal::input::EventType::ButtonB_Tap});}
 int main(){
+ reset();current=View::Opening;session.preparation=Session::Preparation::Pending;
+ tick(0);tick(0);assert(current==View::Opening&&trace.empty());
+ session.preparation=Session::Preparation::Ready;tick(0);assert(current==View::Preview&&trace=="open;");
+ reset();current=View::Opening;session.preparation=Session::Preparation::Failed;
+ tick(0);assert(current==View::Error&&trace=="sensor-close;");session.preparation=Session::Preparation::Ready;
  for(bool audio:{false,true})for(bool hd:{false,true})for(bool sound:{false,true}){
   reset();microphone=audio;soundOk=sound;cameraSettings.capture=hd?services::camera::CaptureResolution::Hd:services::camera::CaptureResolution::Vga;
   press();clockMs+=1199;tick(0);assert(!clipActive&&trace.empty());++clockMs;tick(0);
@@ -117,13 +136,31 @@ int main(){
  reset();startOk=false;press();clockMs+=1200;tick(0);release();assert(!clipActive);
  assert(trace=="white;flush;start;clear;flush;acquire;close;open;restore;");
  reset();press();hal::input::a=true;clockMs+=1200;tick(0);release();assert(trace.empty()&&!clipActive);
- reset();press();clockMs+=200;release();assert(trace=="expose;white;flush;photo;clear;flush;write;draw;flush;");
+ for(bool sound:{false,true})for(bool admitted:{false,true}){
+  reset();soundOk=sound;hapticOk=admitted;press();clockMs+=200;release();
+  assert(trace=="expose;haptic;white;flush;photo;clear;flush;write;draw;flush;");
+  assert(inputFeedbackSuppressed); // No delayed navigator Select after capture.
+ }
+ reset();hapticsOn=false;press();release();assert(trace=="expose;white;flush;photo;clear;flush;write;draw;flush;");
+ reset();queueOk=false;press();release();assert(feedbackStage==8);
  reset();captureOk=false;press();release();assert(trace=="expose;draw;flush;");
+ assert(inputFeedbackSuppressed); // Failed captures must not announce success.
  reset();tutorialCapture=true;press();clockMs+=1300;tick(0);assert(!clipActive);release();
- assert(trace=="expose;white;flush;photo;clear;flush;write;sensor-close;pop;");
+ assert(trace=="expose;haptic;white;flush;photo;clear;flush;write;sensor-close;pop;");
  assert(tutorialPhoto.sequence==5&&tutorialPhoto.capturedAtUnix==42&&!strcmp(tutorialPhoto.path,"/photo.jpg"));
  reset();assert(beginVideo());recorder.saved=false;recorder.active=false;trace.clear();tick(0);
  assert(trace=="close;open;restore;"); // Failed recordings do not announce a saved clip.
+ reset();clockMs+=59999;tick(0);assert(trace.empty());++clockMs;tick(0);assert(trace=="home;");
+ reset();tutorialCapture=true;clockMs+=60000;tick(0);assert(trace=="sensor-close;pop;");
+ reset();tutorialCapture=true;current=View::Error;errorShownAt=clockMs;
+ clockMs+=2999;tick(0);assert(trace.empty());++clockMs;tick(0);assert(trace=="sensor-close;pop;");
+ reset();clockMs+=59000;shutterInput({hal::input::EventType::Other});
+ clockMs+=59999;tick(0);assert(trace.empty());++clockMs;tick(0);assert(trace=="home;");
+ reset();clockMs+=59000;press();clockMs+=200;release();trace.clear();
+ clockMs+=59999;tick(0);assert(trace.empty());++clockMs;tick(0);assert(trace=="home;");
+ reset();assert(beginVideo());trace.clear();clockMs+=90000;tick(0);assert(clipActive&&trace.empty());
+ recorder.active=false;tick(0);assert(!clipActive);trace.clear();
+ clockMs=lastCameraActivityAt+59999;tick(0);assert(trace.empty());++clockMs;tick(0);assert(trace=="home;");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='camera-workflow-') as td:
@@ -132,4 +169,4 @@ with tempfile.TemporaryDirectory(prefix='camera-workflow-') as td:
     subprocess.run(['c++','-std=c++17','-fsanitize=address,undefined',
                     '-I'+str(ROOT/'include'),str(p/'test.cpp'),'-o',str(p/'test')],check=True)
     subprocess.run([str(p/'test')],check=True)
-print('PASS sole Camera: actual hold/release, photo/tutorial, synchronized cues, VGA/HD + mic, sound/start/save failures and close-before-stop playback; ASan/UBSan')
+print('PASS sole Camera: photo/video workflow, 60s idle return, input/photo reset, recording exemption and post-record reset; ASan/UBSan')

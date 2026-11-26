@@ -1,3 +1,4 @@
+#include "ui/rounded_fill.h"
 #include "ui/clock_layout.h"
 #include "ui/scene.h"
 #include "ui/layout_metrics.h"
@@ -169,7 +170,10 @@ static void renderRect(TFT_eSPI& c, const Node& n) {
         return;
     }
     if (n.radius > 0) {
-        c.fillRoundRect(n.rect.x, n.rect.y, n.rect.w, n.rect.h, n.radius, n.fillColor);
+        if (n.smoothFill) rounded_fill::draw(c,
+            {float(n.rect.x),float(n.rect.y),float(n.rect.w),float(n.rect.h),float(n.radius)},
+            n.fillColor,n.bgColor,{n.rect.x,n.rect.y,n.rect.w,n.rect.h});
+        else c.fillRoundRect(n.rect.x, n.rect.y, n.rect.w, n.rect.h, n.radius, n.fillColor);
         if (n.strokeWidth > 0) c.drawRoundRect(n.rect.x, n.rect.y, n.rect.w, n.rect.h, n.radius, n.strokeColor);
     } else {
         c.fillRect(n.rect.x, n.rect.y, n.rect.w, n.rect.h, n.fillColor);

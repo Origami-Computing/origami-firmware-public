@@ -58,6 +58,7 @@ with tempfile.TemporaryDirectory() as temp:
  (d/'policy.cpp').write_text('''#include "core/health_policy.h"
 #include <cassert>
 bool home=false,waiting=false;namespace flow{bool waitingForDelegation(){return waiting;}}
+namespace services{namespace agent_speech{bool busy(){return false;}}}
 bool isRecording(){return false;}bool isSending(){return false;}bool isOnReplyScreen(){return !home;}bool isShowingError(){return false;}bool isAtHomescreen(){return home;}
 '''+policy+'''int main(){
  for(int i=0;i<2;++i){home=i;waiting=true;auto p=runtimePolicy();assert(!p.allowIdleReturn&&!p.allowBatterySleep&&!p.allowBackgroundUploads);

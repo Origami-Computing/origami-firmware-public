@@ -47,6 +47,7 @@
 #include "scene/screen.h"
 #include "services/firmware_update.h"
 #include "ui/list_view.h"
+#include "ui/menu_list.h"
 #include "ui/nav_controls.h"
 #include "ui/scene.h"
 
@@ -121,7 +122,9 @@ static const PageDef kPages[PAGE_COUNT] = {
 static Page s_page = PAGE_MAIN;
 static int s_selection[PAGE_COUNT] = {};
 static bool s_needRedraw = false;
-static ui::ListView s_list;
+static ui::ListView s_lists[PAGE_COUNT];
+static ui::menu_list::State s_views[PAGE_COUNT];
+static ui::ListView& currentList(){return s_lists[static_cast<int>(s_page)];}
 static const MenuEntry* s_priorityEntry = nullptr;
 static uint32_t s_motionStart = 0;
 static uint8_t s_motionFrame = 0;
@@ -189,17 +192,17 @@ static ui::ListItem menuItemFn(int idx, void*) {
 
 static void applyMenuListLayout(bool nested) {
   if (apps::tutorial::navigationLessonActive()) {
-    s_list.rowH=36; s_list.rowPitch=40; s_list.topPad=0; s_list.leftX=24;
-    s_list.scrollbarW=3; s_list.scrollbarPad=5; s_list.scrollbarRight=7;
+    currentList().rowH=36; currentList().rowPitch=40; currentList().topPad=0; currentList().leftX=24;
+    currentList().scrollbarW=3; currentList().scrollbarPad=5; currentList().scrollbarRight=7;
     return;
   }
-  s_list.rowH = menu_layout::kMenuListRowH;
-  s_list.rowPitch = menu_layout::kMenuListRowPitch;
-  s_list.topPad = nested ? menu_layout::kMenuSubListTopPad : menu_layout::kMenuListTopPad;
-  s_list.leftX = menu_layout::kMenuListLeftX;
-  s_list.scrollbarW = menu_layout::kMenuListScrollbarW;
-  s_list.scrollbarPad = menu_layout::kMenuListScrollbarPad;
-  s_list.scrollbarRight = menu_layout::kMenuListScrollbarRight;
+  currentList().rowH = menu_layout::kMenuListRowH;
+  currentList().rowPitch = menu_layout::kMenuListRowPitch;
+  currentList().topPad = nested ? menu_layout::kMenuSubListTopPad : menu_layout::kMenuListTopPad;
+  currentList().leftX = menu_layout::kMenuListLeftX;
+  currentList().scrollbarW = menu_layout::kMenuListScrollbarW;
+  currentList().scrollbarPad = menu_layout::kMenuListScrollbarPad;
+  currentList().scrollbarRight = menu_layout::kMenuListScrollbarRight;
 }
 
 static void redraw() {
@@ -222,7 +225,7 @@ static bool goBackOneLevel() {
 void enter() {
   if(apps::tutorial::navigationLessonActive()&&!apps::tutorial::navigationPracticed()){s_page=PAGE_MAIN;s_selection[PAGE_MAIN]=0;}
   refreshPriorityRow();
-  if (s_page == PAGE_MAIN && s_priorityEntry) s_selection[PAGE_MAIN] = 0;
+  if (s_views[PAGE_MAIN].selected<0 && s_page == PAGE_MAIN && s_priorityEntry) s_selection[PAGE_MAIN] = 0;
   redraw();
 }
 
@@ -237,9 +240,8 @@ static void menuTick(uint32_t now) {
   }
 }
 
-void exitApp() {
-  s_page = PAGE_MAIN;
-}
+void exitApp() {} // Covering a child app retains its parent page and viewport.
+static void finishWorkflow(){s_page=PAGE_MAIN;}
 
 bool onChord() {
   if(goBackOneLevel()){apps::tutorial::noteNavigationBack();return true;}
@@ -251,11 +253,11 @@ void onInput(hal::input::InputEvent ev) {
   int& selected = s_selection[static_cast<int>(s_page)];
 
   if (ev.type == ET::Scroll && ev.delta != 0) {
-    s_list.totalItems = visibleCount();
-    s_list.selected = selected;
-    s_list.scroll(ev.delta);
-    if (s_list.selected != selected) {
-      selected = s_list.selected;
+    currentList().totalItems = visibleCount();
+    currentList().selected = selected;
+    currentList().scroll(ev.delta);
+    if (currentList().selected != selected) {
+      selected = currentList().selected;
       redraw();
     }
     return;
@@ -298,9 +300,9 @@ static void buildMenuScene(ui::scene::Scene& scene, int16_t width, int16_t heigh
   }
 
   applyMenuListLayout(nested);
-  s_list.totalItems = visibleCount();
-  s_list.selected = s_selection[static_cast<int>(s_page)];
-  s_list.buildScene(scene,
+  currentList().totalItems = visibleCount();
+  currentList().selected = s_selection[static_cast<int>(s_page)];
+  currentList().buildScene(scene,
                     menu_layout::kMenuListAreaX,
                     nested ? menu_layout::kMenuSubListAreaY : menu_layout::kMenuListAreaY,
                     menu_layout::kMenuListAreaW,
@@ -316,6 +318,11 @@ void drawOnboardingPreview(TFT_eSprite& canvas){
  auto& sc=ui::scene::scratchScene();sc.clear();list.buildScene(sc,0,menu_layout::kMenuListAreaY,280,158,item,nullptr,kUiSelBg,kUiSelFg,kUiBg,kUiScrollTrack,kUiScrollThumb);ui::onboarding_menu::render(canvas,sc);sc.clear();
 }
 void onDraw(TFT_eSprite& canvas) {
+  if(!apps::tutorial::navigationLessonActive()) {
+    currentList().totalItems=visibleCount();currentList().selected=s_selection[static_cast<int>(s_page)];
+    if(s_views[static_cast<int>(s_page)].draw(canvas,currentList(),[](int i){return menuItemFn(i,nullptr);},millis(),s_needRedraw||s_iconDirty))hal::display::markAllDirty();
+    s_needRedraw=s_iconDirty=false;return;
+  }
   if (!s_needRedraw) {
     if (s_iconDirty && animatedMainMenu()) {
       const int selected=s_selection[PAGE_MAIN];
@@ -349,8 +356,11 @@ const ::scene::Screen kScreenMenu = {
 };
 
 static const ::scene::Screen* const kScreens[] = {&kScreenMenu};
-App app = SCENE_APP_CATALOG("Menu", "menu", &kScreenMenu, nullptr,
-                            "src/apps/menu_app.cpp", kScreens);
+static AppPresentation presentation(){
+ return apps::tutorial::navigationLessonActive()?AppPresentation{}:AppPresentation{true,true,AppPresentation::StatusBar::Hidden};
+}
+App app = SCENE_APP_CATALOG_PRESENTATION("Menu", "menu", &kScreenMenu, finishWorkflow,
+                            "src/apps/menu_app.cpp", kScreens, presentation);
 
 }  // namespace menu
 }  // namespace apps

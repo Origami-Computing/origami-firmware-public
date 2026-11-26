@@ -25,6 +25,29 @@ void goTo(Stage next);
 /** Start the recording flow. Acquires PSRAM, starts mic, transitions to Recording.
  *  On any failure, fills state.errBuf and transitions to Error. */
 void startRecording();
+// A C tap starts a locked voice conversation directly from Home or Reply.
+void startHandsFree();
+// UI screen tick only: resume a locked conversation after reply/audio completion.
+bool continueHandsFree();
+
+// ─── A+B turn gesture (UI task) ──────────────────────────────────────────────
+// beginTurnGesture: A+B went down on Home, a reply or an error. Opens the
+// microphone immediately (haptic tick, no sound: I2S is half-duplex) as
+// push-to-talk. takeTapAsAgentMode: both released within kTapHoldMs — drop the
+// capture unsent, play the lock cue, and arm agent mode. serviceTurnGesture
+// (screen ticks, never preTick) starts agent mode kLockLeadMs later. Returns
+// true when it changed the stage.
+bool beginTurnGesture();
+bool takeTapAsAgentMode(uint32_t now);
+bool serviceTurnGesture(uint32_t now);
+// Leave agent mode: cancel the open turn, go Home, cancel cue once the mic is closed.
+void leaveAgentMode();
+// Agent mode leaves by itself after kAgentSilenceMs without speech or replies.
+void serviceAgentSilence(uint32_t now);
+// Product cue. Plays now if the speaker is free, otherwise waits up to
+// kCueWaitMs for the microphone to close. serviceCue runs from preTick.
+void cue(uint8_t productSound);
+void serviceCue(uint32_t now);
 bool wifiReady();
 void dismissNotice();
 void openNoticeSettings();

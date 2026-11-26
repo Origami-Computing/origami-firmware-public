@@ -27,7 +27,7 @@ bool captureToFile(const char*);bool captureToSd(); const char* lastInitError();
         write('Arduino.h','#include <stdint.h>\nvoid delay(unsigned);')
         write('esp_camera.h','constexpr int PIXFORMAT_JPEG=4;')
         write('hal/hal_wifi.h','namespace hal { namespace wifi { void stop(); void powerDown(); void restore(); void scheduleRestore(); } }')
-        write('hal/hal_io.h','namespace hal { namespace io { bool reinitAfterI2CRestart(); } }')
+        write('hal/hal_io.h','namespace hal { namespace io { bool restartBusAndReconnect(); } }')
         write('Pins.h','constexpr int SDA_PIN=1, SCL_PIN=2;')
         write('Wire.h','struct FakeWire { void end(); void begin(int,int); }; extern FakeWire Wire;')
         write('services/background_network.h','#include <stdint.h>\nnamespace services { namespace background_network { void requestPeripheralIo();bool peripheralIoReady();bool suspendForPeripheralIo(uint32_t); void resumeAfterPeripheralIo(); } }')
@@ -59,7 +59,7 @@ bool TransportPause::pollAcquire(){assert(false);return false;}
 bool TransportPause::acquire(uint32_t){if(held_)return true;trace+='A';return held_=agentOk;}
 void TransportPause::release(){if(!held_)return;held_=false;trace+='a';}
 } }
-namespace hal { namespace io { bool reinitAfterI2CRestart(){trace+='r';return true;} }
+namespace hal { namespace io { bool restartBusAndReconnect(){trace+="ebr";return true;} }
 namespace wifi { void stop(){trace+='W';} void powerDown(){trace+='D';} void restore(){trace+='w';} void scheduleRestore(){trace+='d';} }
 namespace camera {
 bool configureCineIsp(const CineIspRequest&,CineIspReadback*){return true;}

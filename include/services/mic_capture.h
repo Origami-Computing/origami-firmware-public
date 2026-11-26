@@ -46,6 +46,8 @@ private:
     core::audio::RecordingWaveform waveform_;
     uint32_t  n_        = 0;
     int32_t   peak_     = 0;
+    int64_t   decimationSum_ = 0;
+    uint32_t  decimationCount_ = 0;
     SampleSink sink_    = nullptr;
     void*     sinkUser_ = nullptr;
     bool      streaming_ = false;

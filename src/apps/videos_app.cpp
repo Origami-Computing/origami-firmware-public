@@ -7,9 +7,12 @@
 #include "ui/scene.h"
 #include "ui/nav_controls.h"
 #include "hal/hal_display.h"
+#include "hal/hal_photo_preview.h"
 #include "nav_handler.h"
 #include "scene/screen.h"
 #include "config/ui_theme.h"
+#include "ui/photos_loader.h"
+#include <esp_heap_caps.h>
 #include <Arduino.h>
 #include <stdio.h>
 #include <algorithm>
@@ -21,9 +24,24 @@ static ui::CameraPreview s_preview;
 static int s_selected=0;
 static char s_requestedPath[272]{};
 static bool s_requestedEntry=false,s_singleClip=false;
-bool openFile(const char* path){
+// Loading screen for a clip opened from Photos: its thumbnail, dimmed, with
+// the timeline filling until the first frame is decoded.
+static uint8_t* s_poster=nullptr;
+static size_t s_posterBytes=0;
+static uint32_t s_posterMs=0;
+static bool s_loaderPainted=false;
+static uint32_t s_loaderStart=0,s_loaderFrameMs=0;
+static uint16_t* s_strip=nullptr;  // poster pixels under the track (PSRAM)
+static void freePoster(){if(s_poster)heap_caps_free(s_poster);s_poster=nullptr;s_posterBytes=0;if(s_strip)heap_caps_free(s_strip);s_strip=nullptr;}
+bool openFile(const char* path,const uint8_t* poster,size_t posterBytes,uint32_t durationMs){
     if(!path || strncmp(path,"/videos/",8) || strlen(path)>=sizeof(s_requestedPath))return false;
-    strcpy(s_requestedPath,path);s_requestedEntry=true;NavHandler::instance().push(&app);return true;
+    strcpy(s_requestedPath,path);s_requestedEntry=true;
+    freePoster();s_posterMs=durationMs;
+    if(poster && posterBytes && (s_poster=static_cast<uint8_t*>(heap_caps_malloc(posterBytes,MALLOC_CAP_SPIRAM)))){
+        memcpy(s_poster,poster,posterBytes);s_posterBytes=posterBytes;
+    }
+    s_loaderPainted=false;s_loaderStart=millis();
+    NavHandler::instance().push(&app);return true;
 }
 static bool s_frame=false,s_playing=false,s_ended=false,s_dirty=true,s_failed=false;
 static bool s_audioTail=false;
@@ -56,8 +74,10 @@ static uint32_t playbackTimeMs(uint32_t now) {
     }
     return s_elapsedMs + (s_playing ? uint32_t(now-s_startedMs) : 0);
 }
+static uint32_t s_cardSinceMs=0;  // when playback last (re)started; the title card fades after it
 static bool setPlaying(bool playing) {
     const uint32_t elapsed=playbackTimeMs(millis());
+    if (playing && !s_playing) s_cardSinceMs=millis();
     if (playing && !s_library.startAudio()) return false;
     if (!playing) s_library.pauseAudio();
     s_elapsedMs=elapsed;s_startedMs=millis();s_playing=playing;
@@ -86,24 +106,36 @@ static bool finishIfDone() {
 
 static void present() {
     if (!s_frame) return;
+    freePoster();s_loaderPainted=false;
     hal::display::enterOptimizedRender(true);
     const auto& info=s_library.info();
     const uint32_t durationMs=std::max(uint32_t((uint64_t(info.frames)*info.intervalUs+999)/1000),
         uint32_t(uint64_t(info.audioSamples)*1000/core::avi::kAudioRate));
     const uint32_t total=(durationMs+999)/1000;
     const uint32_t elapsed=s_ended?total:playbackTimeMs(millis())/1000;
-    const char* name=strrchr(s_library.path(s_selected),'/');
-    char title[40],controls[40];
-    snprintf(title,sizeof(title),"%d/%d %s",s_selected+1,s_library.count(),name?name+1:"");
-    snprintf(controls,sizeof(controls),"B:%s %02lu:%02lu/%02lu:%02lu",
-        s_ended?"REPLAY":s_playing?"PAUSE":"PLAY",
-        (unsigned long)(elapsed/60),(unsigned long)(elapsed%60),
-        (unsigned long)(total/60),(unsigned long)(total%60));
+    // Title card: file name, status, time and progress. Solid while paused or
+    // ended and briefly after playback starts, then it fades away.
+    const char* path=s_library.path(s_selected);
+    const char* slash=strrchr(path,'/');
+    char name[40];
+    strlcpy(name,slash?slash+1:path,sizeof(name));
+    if (char* dot=strrchr(name,'.')) *dot=0;
+    const uint32_t elapsedMs=s_ended?durationMs:playbackTimeMs(millis());
+    char time[24];
+    if (s_playing && uint32_t(millis()-s_cardSinceMs)<uint32_t(ui::photos_view::kCardHoldMs) && elapsedMs<1000)
+        snprintf(time,sizeof(time),"%lu:%02lu",(unsigned long)(total/60),(unsigned long)(total%60));
+    else
+        snprintf(time,sizeof(time),"%lu:%02lu / %lu:%02lu",(unsigned long)(elapsed/60),(unsigned long)(elapsed%60),
+                 (unsigned long)(total/60),(unsigned long)(total%60));
+    const char* status=s_ended?"Ended":!s_playing?"Paused":elapsedMs<1500?"Starting video":"Playing";
+    const unsigned progress=s_ended?1000u:durationMs?unsigned(uint64_t(elapsedMs)*1000/durationMs):0u;
+    const ui::photos_view::VideoCard card{name,status,time,progress};
+    const int cardAlpha=ui::photos_view::videoCardAlpha(s_playing,uint32_t(millis()-s_cardSinceMs));
     const uint32_t started=millis();
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
     const uint32_t profileStarted=micros();
 #endif
-    const auto presentation=s_preview.presentVideo(title,controls,s_ended?1000:durationMs ? uint64_t(playbackTimeMs(millis()))*1000/durationMs : 0);
+    const auto presentation=s_preview.presentVideo(card,cardAlpha);
     (void)presentation;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
     ++s_profileFrames;s_profilePresentUs+=uint32_t(micros()-profileStarted);
@@ -125,7 +157,7 @@ static void selectClip(bool autoplay=false) {
     resetDecode();s_preview.closeDecoder();
 #endif
     hal::display::exitOptimizedRender();
-    s_frame=false;s_playing=autoplay;s_ended=false;s_number=0;s_dirty=true;s_failed=false;
+    s_frame=false;s_playing=autoplay;s_ended=false;s_number=0;s_dirty=true;s_failed=false;s_cardSinceMs=millis();
     s_elapsedMs=s_skipped=s_decoded=s_held=0;s_startedMs=millis();s_audioTail=false;
 #ifdef ORIGAMI_DEV_SERIAL_INPUT
     s_peakTransferUs=s_profileFrames=s_profilePresentUs=s_profileSyncUs=s_profileTransferUs=s_profileSyncMisses=0;
@@ -139,6 +171,7 @@ static void close() {
 #ifdef ORIGAMI_ASYNC_VIDEO_PLAYBACK
     resetDecode();
 #endif
+    freePoster();s_loaderPainted=false;
     s_library.close();
     s_preview.close();
     hal::display::exitOptimizedRender();
@@ -169,9 +202,39 @@ static void drawScene(ui::scene::Scene& scene,int16_t w,int16_t h) {
     b.panelHeader("videos.title","Videos");
     b.labelCenterMuted("videos.message",s_message);
 }
+static bool showsLoader() {return s_singleClip && !s_failed && !s_frame;}
+static void drawLoader(TFT_eSprite& canvas) {
+    namespace pl=ui::photos_loader;
+    const ui::photos_view::Bounds s{(int)canvas.width(),(int)canvas.height()};
+    const uint32_t ms=millis()-s_loaderStart;
+    if (!s_loaderPainted) {
+        canvas.fillRect(0,0,s.w,s.h,ui::photos_view::kBlack);
+        if (s_poster) {
+            hal::display::PhotoPreview poster;   // reduced decode: far faster than full size
+            poster.setCover(true);               // same crop as playback, so the first frame lines up
+            if (!poster.drawBuffer(s_poster,s_posterBytes,0,0,s.w,s.h))
+                hal::display::drawJpegBufferScaled(s_poster,s_posterBytes,0,0,s.w,s.h,hal::display::ImageFit::Cover);
+        }
+        char name[40];
+        const char* base=strrchr(s_requestedPath,'/');base=base?base+1:s_requestedPath;
+        strlcpy(name,base,sizeof(name));
+        if (char* dot=strrchr(name,'.')) *dot=0;
+        char duration[16]="";
+        if (s_posterMs) {const uint32_t sec=(s_posterMs+999)/1000;snprintf(duration,sizeof(duration),"%lu:%02lu",(unsigned long)(sec/60),(unsigned long)(sec%60));}
+        if (!s_strip) s_strip=static_cast<uint16_t*>(heap_caps_malloc(pl::kStripPixels*2,MALLOC_CAP_SPIRAM));
+        pl::videoLoader(canvas,s,name,duration,ms,s_strip);
+        s_loaderPainted=true;hal::display::markAllDirty();
+    } else {
+        pl::videoBar(canvas,s,s_strip,ms);
+        hal::display::markDirtyRect(0,pl::kStripY,s.w,pl::kStripH);
+    }
+    s_loaderFrameMs=millis();
+}
 static void draw(TFT_eSprite& canvas) {
     if (!s_dirty || s_frame) return;
     s_dirty=false;
+    if (showsLoader()) {drawLoader(canvas);return;}
+    s_loaderPainted=false;
     auto& scene=ui::scene::scratchScene();drawScene(scene,canvas.width(),canvas.height());
     scene.render(canvas);hal::display::markAllDirty();
 }
@@ -223,6 +286,7 @@ static void tickAsync(uint32_t now) {
 }
 #endif
 static void tick(uint32_t now) {
+    if (showsLoader() && millis()-s_loaderFrameMs>=ui::photos_loader::kFrameMs) s_dirty=true;
     if (s_library.opening()) {open();return;}
     const uint32_t entered=millis();
     if(s_tickExit){const uint32_t gap=entered-s_tickExit;s_tickOutside+=gap;s_tickGapMax=std::max(s_tickGapMax,gap);}
@@ -326,7 +390,8 @@ bool copyPreviewForDevelopment(TFT_eSprite& target) {
 }
 #endif
 static AppPresentation presentation() {
-    return s_frame ? AppPresentation{true,false,AppPresentation::StatusBar::Hidden} : AppPresentation{};
+    const bool fullBleed=s_frame || ((s_requestedEntry || s_singleClip) && !s_failed);
+    return fullBleed ? AppPresentation{true,false,AppPresentation::StatusBar::Hidden} : AppPresentation{};
 }
 static core::health::RuntimePolicy runtime() {
     core::health::RuntimePolicy policy{};policy.reportActivity=s_playing || s_library.opening();return policy;

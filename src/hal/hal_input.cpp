@@ -86,6 +86,10 @@ static bool s_curC = false;
 
 bool buttonADown() { return s_curA; }
 bool buttonBDown() { return s_curB; }
+static uint32_t s_abDownSinceMs = 0, s_abSeenDownMs = 0;
+static bool s_abDown = false;
+uint32_t chordHeldMs() { return s_abSeenDownMs - s_abDownSinceMs; }
+bool chordDown() { return s_abDown; }
 bool buttonCDown() { return s_curC; }
 
 void suppressUntilButtonsReleased() {
@@ -153,6 +157,11 @@ void service(uint32_t nowMs) {
     const bool releasedA = !buttonA && s_prevA;
     const bool releasedB = !buttonB && s_prevB;
     const bool chordBoth = buttonA && buttonB;
+    if (chordBoth) {
+        if (!s_abDown) s_abDownSinceMs = nowMs;
+        s_abSeenDownMs = nowMs;
+    }
+    s_abDown = chordBoth;
 
     // --- Chord detection (edge-based) ---
     const bool chordEdgeAB    = (pressedA && buttonB) || (pressedB && buttonA);

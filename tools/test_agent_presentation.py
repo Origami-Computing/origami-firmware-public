@@ -24,6 +24,7 @@ with tempfile.TemporaryDirectory() as directory:
 #include "app.h"
 #include <cassert>
 #include <cstring>
+#include <initializer_list>
 #include <new>
 #include <cstdio>
 class TFT_eSprite {};
@@ -35,6 +36,9 @@ struct NavHandler {
     App* top(){return foreground;}
 };
 bool recording=false; int overlays=0;
+enum class Stage { Eyes, Recording, Thinking, Reply, Error };
+struct StageState { Stage stage=Stage::Eyes; } stageState;
+StageState& S(){return stageState;}
 bool isRecording(){return recording;}
 void drawRecordingOverlay(){++overlays;}
 ''' + policy + '\nnamespace boot {\n' + boot_policy + '}\n' + r'''
@@ -70,7 +74,16 @@ int main(){
         assert(!home.contentUsesStatusArea && !home.hideAppOverlays);
         recording=false;home.drawOverlay(surface);assert(overlays==iteration+1);
     }
-    puts("PASS deterministic default privileges and real Agent animated-to-Home policy");
+    // The conversation uses the whole panel; Home and errors keep the status bar.
+    for(Stage stage:{Stage::Recording,Stage::Thinking,Stage::Reply}){
+        stageState.stage=stage;auto p=presentationPolicy();
+        assert(p.statusBar==AppPresentation::StatusBar::Hidden && p.contentUsesStatusArea && !p.hideAppOverlays);
+    }
+    for(Stage stage:{Stage::Eyes,Stage::Error}){
+        stageState.stage=stage;auto p=presentationPolicy();
+        assert(p.statusBar==AppPresentation::StatusBar::Default && !p.contentUsesStatusArea);
+    }
+    puts("PASS deterministic default privileges, Agent animated-to-Home policy, full-panel conversation");
 }
 ''')
     subprocess.run(['c++','-std=c++11','-fsanitize=address,undefined','-I'+str(ROOT/'include'),
